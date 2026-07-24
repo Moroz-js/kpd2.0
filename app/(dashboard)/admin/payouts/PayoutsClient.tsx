@@ -392,7 +392,10 @@ export function PayoutsClient() {
       (groupBy === "payWeek" && primary?.field === "weekPlanFact") ||
       (groupBy === "month" && (primary?.field === "periodMonth" || primary?.field === "periodYear")) ||
       (groupBy === "bankAccount" && primary?.field === "bankAccountName");
-    const groupDir: SortDir = groupAligned ? (primary?.dir ?? "asc") : "asc";
+    // Неделя/месяц — от новых к старым; остальное — по алфавиту
+    const defaultGroupDir: SortDir =
+      groupBy === "payWeek" || groupBy === "month" ? "desc" : "asc";
+    const groupDir: SortDir = groupAligned ? (primary?.dir ?? defaultGroupDir) : defaultGroupDir;
     return buildGroupedFlatList(rows, getKey, getLabel, (r) => r.amount, collapsedGroups, {
       compareRows,
       compareGroups: (a, b) =>

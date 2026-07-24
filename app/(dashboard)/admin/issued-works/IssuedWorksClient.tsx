@@ -374,7 +374,9 @@ export function IssuedWorksClient() {
       (groupBy === "week" && primary?.field === "weekPlanFact") ||
       (groupBy === "project" && primary?.field === "projectName") ||
       (groupBy === "workType" && primary?.field === "workTypeName");
-    const groupDir: SortDir = groupAligned ? (primary?.dir ?? "asc") : "asc";
+    // Неделя — от новой к старой; остальное — по алфавиту (если сорт по полю группы — берём его направление)
+    const defaultGroupDir: SortDir = groupBy === "week" ? "desc" : "asc";
+    const groupDir: SortDir = groupAligned ? (primary?.dir ?? defaultGroupDir) : defaultGroupDir;
     return buildGroupedFlatList(rows, getKey, getLabel, (r) => r.amount, collapsedGroups, {
       compareRows,
       compareGroups: (a, b) =>

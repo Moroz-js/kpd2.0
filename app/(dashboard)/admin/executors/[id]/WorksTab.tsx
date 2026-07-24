@@ -517,7 +517,7 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
   // ── Рендер ───────────────────────────────────────────────────────────────────
   /** table-fixed + colgroup — колонки не растягиваются от длинного ТЗ/URL */
   const COL_COUNT = 14;
-  const COL_WIDTHS = [32, 40, 72, 140, 90, 48, 56, 120, 72, 88, 80, 140, 110, 96] as const;
+  const COL_WIDTHS = [32, 40, 72, 140, 90, 48, 56, 120, 72, 118, 80, 140, 110, 96] as const;
   const TABLE_MIN_WIDTH = COL_WIDTHS.reduce((s, w) => s + w, 0);
   const cellClip = "overflow-hidden max-w-0";
   const th = "border-b border-neutral-200 px-1.5 py-1 text-left text-[10px] leading-tight font-medium text-neutral-600 bg-neutral-100 whitespace-nowrap";

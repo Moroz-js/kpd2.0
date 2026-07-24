@@ -638,7 +638,11 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
       return r.order?.project?.name ?? "Не указано";
     };
     const groupDir: SortDir =
-      sort?.field === "week" && groupBy === "week" ? sort.dir : "asc";
+      sort?.field === "week" && groupBy === "week"
+        ? sort.dir
+        : groupBy === "week"
+          ? "desc"
+          : "asc";
     return buildGroupedFlatList(
       visible,
       getKey,
@@ -653,7 +657,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
         compareGroups: (a, b) =>
           groupBy === "week"
             ? compareGroupKeys(a.key, b.key, groupDir)
-            : compareGroupLabels(a.label, b.label, "asc"),
+            : compareGroupLabels(a.label, b.label, groupDir),
       }
     );
   }, [visible, groupBy, collapsedGroups, sort]);
