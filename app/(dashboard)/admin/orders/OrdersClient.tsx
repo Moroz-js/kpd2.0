@@ -32,6 +32,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner } from "@/lib/table-styles";
 import { sortByNameRu } from "@/lib/sort";
+import {
+  usePersistedInterfaceState,
+  usePersistedScroll,
+} from "@/components/PersistedInterfaceState";
 
 type Row = {
   id: string;
@@ -78,6 +82,20 @@ export function OrdersClient() {
   const [editing, setEditing] = React.useState<Row | "new" | null>(null);
   const [archiveTarget, setArchiveTarget] = React.useState<Row | null>(null);
   const [unarchiveTarget, setUnarchiveTarget] = React.useState<Row | null>(null);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  usePersistedInterfaceState(
+    "orders",
+    { companyFilter, clientFilter, projectFilter, statusFilter, sort },
+    (stored) => {
+      if (stored.companyFilter) setCompanyFilter(stored.companyFilter);
+      if (stored.clientFilter) setClientFilter(stored.clientFilter);
+      if (stored.projectFilter) setProjectFilter(stored.projectFilter);
+      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
+      if (stored.sort) setSort(stored.sort);
+    }
+  );
+  usePersistedScroll(scrollRef, "orders-table");
 
   const companyOptions = React.useMemo(() => {
     const companies = Array.from(new Set((data ?? []).map((r) => r.company ?? "__empty__")));
@@ -180,7 +198,7 @@ export function OrdersClient() {
         />
       </div>
 
-      <Table containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto">
+      <Table containerRef={scrollRef} containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto">
           <TableHeader>
             <TableRow>
               <SortableHead

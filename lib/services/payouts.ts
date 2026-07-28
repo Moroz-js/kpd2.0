@@ -23,7 +23,10 @@ import {
 import { propagatePlanDate } from "@/lib/services/payments";
 
 export type PayoutPatch = {
+  /** Personal: Payment.amount. Other-expense: сумма работы (OtherExpense.amount). */
   amount?: number;
+  /** Только other-expense: сумма выплаты (OtherExpense.paymentAmount). */
+  paymentAmount?: number;
   paymentStatus?: string;
   paidAt?: Date | null;
   plannedPayAt?: Date | null;
@@ -48,8 +51,17 @@ export async function updatePayout(
 }
 
 async function updatePaymentSource(paymentId: string, patch: PayoutPatch, userId: string) {
-  const before = await prisma.payment.findUnique({ where: { id: paymentId } });
+  const before = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    include: { _count: { select: { works: true } } },
+  });
   if (!before) throw new Error("Payment not found");
+
+  if (patch.amount !== undefined && before._count.works > 0 && patch.amount !== before.amount) {
+    throw new Error(
+      "Сумма выплаты привязана к работам. Изменение суммы доступно только через Личную смету исполнителя"
+    );
+  }
 
   const data: Record<string, unknown> = {};
   if (patch.amount !== undefined) data.amount = patch.amount;
@@ -124,10 +136,29 @@ async function updatePaymentSource(paymentId: string, patch: PayoutPatch, userId
 }
 
 async function updateOtherSource(otherId: string, patch: PayoutPatch, userId: string) {
+  // amount = сумма работы; paymentAmount = сумма выплаты.
+  // Обратная совместимость: если передан только amount — трактуем как обе суммы.
+  const workAmount = patch.amount;
+  const paymentAmount =
+    patch.paymentAmount !== undefined
+      ? patch.paymentAmount
+      : patch.amount !== undefined
+        ? patch.amount
+        : undefined;
+
+  if (
+    workAmount !== undefined &&
+    paymentAmount !== undefined &&
+    workAmount !== paymentAmount
+  ) {
+    throw new Error("Сумма работы и сумма выплаты не равны");
+  }
+
   return updateOtherExpense(
     otherId,
     {
-      ...(patch.amount !== undefined && { paymentAmount: patch.amount }),
+      ...(workAmount !== undefined && { amount: workAmount }),
+      ...(paymentAmount !== undefined && { paymentAmount }),
       ...(patch.paymentStatus !== undefined && { paymentStatus: patch.paymentStatus }),
       ...(patch.paidAt !== undefined && {
         paidAt: patch.paidAt ? patch.paidAt.toISOString() : null,

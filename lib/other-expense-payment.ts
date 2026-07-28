@@ -6,7 +6,7 @@ export function hasOtherExpensePayment(paymentStatus: string | null | undefined)
   return paymentStatus != null;
 }
 
-/** Запланировано → проверено; отправлено/оплачено → оплачено */
+/** Запланировано → проверено; оплачено → оплачено */
 export function workStatusFromPaymentStatus(paymentStatus: string): "checked" | "paid" {
   if (paymentStatus === "planned") return "checked";
   return "paid";

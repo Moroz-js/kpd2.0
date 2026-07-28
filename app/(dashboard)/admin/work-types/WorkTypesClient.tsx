@@ -18,6 +18,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner, compactTable, compactHead, compactCell, compactCellClip } from "@/lib/table-styles";
+import {
+  usePersistedInterfaceState,
+  usePersistedScroll,
+} from "@/components/PersistedInterfaceState";
 
 type Row = {
   id: string;
@@ -58,6 +62,28 @@ export function WorkTypesClient() {
   const [editing, setEditing] = React.useState<Row | "new" | null>(null);
   const [archiveTarget, setArchiveTarget] = React.useState<Row | null>(null);
   const [unarchiveTarget, setUnarchiveTarget] = React.useState<Row | null>(null);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  usePersistedInterfaceState(
+    "work-types",
+    {
+      segmentFilter,
+      projectTypeFilter,
+      sourceFilter,
+      statusFilter,
+      usageFilter,
+      sort,
+    },
+    (stored) => {
+      if (stored.segmentFilter) setSegmentFilter(stored.segmentFilter);
+      if (stored.projectTypeFilter) setProjectTypeFilter(stored.projectTypeFilter);
+      if (stored.sourceFilter) setSourceFilter(stored.sourceFilter);
+      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
+      if (stored.usageFilter) setUsageFilter(stored.usageFilter);
+      if (stored.sort) setSort(stored.sort);
+    }
+  );
+  usePersistedScroll(scrollRef, "work-types-table");
 
   const segmentUsage = React.useMemo(() => {
     const counts: Record<string, number> = {};
@@ -172,7 +198,7 @@ export function WorkTypesClient() {
         />
       </div>
 
-      <Table className={compactTable} containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto">
+      <Table className={compactTable} containerRef={scrollRef} containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto">
           <TableHeader>
             <TableRow>
               <SortableHead field="name" sortBy={sort.field} sortDir={sort.dir} onSort={handleSort} className={cn(compactHead, "w-[320px] max-w-[320px]")}>

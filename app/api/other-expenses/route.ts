@@ -4,6 +4,7 @@ import { canAccessOtherExpenses } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { createOtherExpense, listOtherExpenses } from "@/lib/services/other-expenses";
 import { prismaErrorMessage } from "@/lib/prisma-errors";
+import { zNullableDateString } from "@/lib/date-string";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -16,14 +17,14 @@ const createSchema = z.object({
   executionMonth: z.number().int().min(1).max(12),
   description: z.string().min(1),
   amount: z.number().positive(),
-  paymentAmount: z.number().nullable().optional(),
+  paymentAmount: z.number().positive().nullable().optional(),
   preferredPayMethod: z.string().nullable().optional(),
-  plannedPayAt: z.string().nullable().optional(),
-  paidAt: z.string().nullable().optional(),
+  plannedPayAt: zNullableDateString,
+  paidAt: zNullableDateString,
   comment: z.string().nullable().optional(),
 });
 
-export async function GET(_req: NextRequest) {
+export async function GET() {
   const user = await getSessionUser();
   if (!user || !canAccessOtherExpenses(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   // Все, у кого есть доступ к «Прочим тратам», видят все записи.
@@ -59,9 +60,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(expense, { status: 201 });
   } catch (e) {
     console.error("[other-expenses] POST failed:", e);
+    const message = e instanceof Error ? e.message : "";
+    const status = message.startsWith("Сумма работы и сумма выплаты") ? 422 : 500;
     return NextResponse.json(
       { error: prismaErrorMessage(e, "Не удалось создать запись") },
-      { status: 500 },
+      { status },
     );
   }
 }

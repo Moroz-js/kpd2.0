@@ -35,6 +35,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { sortByNameRu, sortByRu } from "@/lib/sort";
+import {
+  usePersistedInterfaceState,
+  usePersistedScroll,
+} from "@/components/PersistedInterfaceState";
 
 type Row = {
   id: string;
@@ -173,6 +177,27 @@ export function ProjectsClient({ scope }: { scope: "all" | "mine" }) {
 
   const isAdmin = scope === "all";
   const [activeTab, setActiveTab] = React.useState<"projects" | "verification">("projects");
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  usePersistedInterfaceState(
+    `projects:${scope}`,
+    {
+      responsibleFilter,
+      statusFilter,
+      clientFilter,
+      typeFilter,
+      sort,
+      activeTab,
+    },
+    (stored) => {
+      if (stored.responsibleFilter) setResponsibleFilter(stored.responsibleFilter);
+      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
+      if (stored.clientFilter) setClientFilter(stored.clientFilter);
+      if (stored.typeFilter) setTypeFilter(stored.typeFilter);
+      if (stored.sort) setSort(stored.sort);
+      if (stored.activeTab !== undefined) setActiveTab(stored.activeTab);
+    }
+  );
+  usePersistedScroll(scrollRef, `projects-table:${scope}:${activeTab}`);
   const detailHref = (id: string) =>
     isAdmin ? `/admin/projects/${id}` : `/responsible/projects/${id}`;
 
@@ -245,7 +270,7 @@ export function ProjectsClient({ scope }: { scope: "all" | "mine" }) {
         />
       </div>
 
-      <Table containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto">
+      <Table containerRef={scrollRef} containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto">
           <TableHeader>
             <TableRow>
               <SortableHead field="name" sortBy={sort.field} sortDir={sort.dir} onSort={handleSort}>

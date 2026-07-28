@@ -8,6 +8,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -45,6 +52,8 @@ type ExecutorDetail = {
   companyStatus: string | null;
   accessRevokedAt: string | null;
   contacts: string | null;
+  contactEmail: string | null;
+  accessEmail: string | null;
   requisites: string | null;
   recipientType: string | null;
   defaultBankAccountId: string | null;
@@ -89,15 +98,13 @@ export function SettingsTab({
   );
   const isPermanent = executorType === "permanent";
   const isService = executorType === "service";
-  const needsAccount = isPermanent && !executor.user;
-
   const [fullName, setFullName] = useState(executor.user?.fullName ?? executor.name);
-  const [email, setEmail] = useState(executor.user?.email ?? "");
   const [password, setPassword] = useState(() => generatePassword());
   const [companyStatuses, setCompanyStatuses] = useState<string[]>(() =>
     parseCompanyStatus(executor.companyStatus)
   );
   const [contacts, setContacts] = useState(executor.contacts ?? "");
+  const [contactEmail, setContactEmail] = useState(executor.contactEmail ?? "");
   const [requisites, setRequisites] = useState(executor.requisites ?? "");
   const [note, setNote] = useState(executor.note ?? "");
   const [contractFile, setContractFile] = useState(executor.contractFile ?? "");
@@ -128,7 +135,13 @@ export function SettingsTab({
   const [loadingPlanProjects, setLoadingPlanProjects] = useState(true);
   const [saving, setSaving] = useState(false);
   const [togglingAccess, setTogglingAccess] = useState(false);
-  const hasAccess = !executor.accessRevokedAt;
+  const [accessDialogOpen, setAccessDialogOpen] = useState(false);
+  const [grantAccessEmail, setGrantAccessEmail] = useState(
+    executor.accessEmail ?? executor.user?.email ?? ""
+  );
+  const hasAccess = Boolean(
+    executor.accessEmail?.trim() && !executor.accessRevokedAt && executor.user?.isActive
+  );
 
   // Сброс пароля администратором
   const [adminResettingPassword, setAdminResettingPassword] = useState(false);
@@ -161,9 +174,10 @@ export function SettingsTab({
   useEffect(() => {
     setExecutorType(normalizeExecutorType(executor.type));
     setFullName(executor.user?.fullName ?? executor.name);
-    setEmail(executor.user?.email ?? "");
     setCompanyStatuses(parseCompanyStatus(executor.companyStatus));
     setContacts(executor.contacts ?? "");
+    setContactEmail(executor.contactEmail ?? "");
+    setGrantAccessEmail(executor.accessEmail ?? executor.user?.email ?? "");
     setRequisites(executor.requisites ?? "");
     setNote(executor.note ?? "");
     setContractFile(executor.contractFile ?? "");
@@ -197,13 +211,17 @@ export function SettingsTab({
   }
 
   async function handleToggleAccess() {
+    if (!hasAccess) {
+      setAccessDialogOpen(true);
+      return;
+    }
     setTogglingAccess(true);
     try {
       const r = await fetch(`/api/executors/${executorId}/access`, {
-        method: hasAccess ? "DELETE" : "POST",
+        method: "DELETE",
       });
       if (!r.ok) throw new Error();
-      toast.success(hasAccess ? "Доступ отозван" : "Доступ выдан");
+      toast.success("Доступ отозван");
       onChanged();
     } catch {
       toast.error("Не удалось изменить доступ");
@@ -212,12 +230,38 @@ export function SettingsTab({
     }
   }
 
-  async function handleSave() {
-    if (needsAccount) {
-      if (!email.trim()) return toast.error("Введите email");
-      if (password.length < 6) return toast.error("Пароль не короче 6 символов");
+  async function handleGrantAccess() {
+    if (!grantAccessEmail.trim()) return toast.error("Введите Email для доступа");
+    if (!executor.user && password.length < 6) {
+      return toast.error("Пароль не короче 6 символов");
     }
+    setTogglingAccess(true);
+    try {
+      const r = await fetch(`/api/executors/${executorId}/access`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessEmail: grantAccessEmail.trim().toLowerCase(),
+          ...(!executor.user && { password }),
+        }),
+      });
+      const body = (await r.json().catch(() => ({}))) as {
+        error?: string;
+        warning?: string | null;
+      };
+      if (!r.ok) throw new Error(body.error ?? "Не удалось дать доступ");
+      toast.success("Доступ выдан");
+      if (body.warning) toast.warning(body.warning);
+      setAccessDialogOpen(false);
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Не удалось дать доступ");
+    } finally {
+      setTogglingAccess(false);
+    }
+  }
 
+  async function handleSave() {
     setSaving(true);
     try {
       const payload: Record<string, unknown> = {
@@ -226,6 +270,7 @@ export function SettingsTab({
         name: fullName.trim(),
         companyStatus: isPermanent ? serializeCompanyStatus(companyStatuses) : null,
         contacts: contacts || null,
+        contactEmail: contactEmail.trim().toLowerCase() || null,
         requisites: requisites || null,
         note: note || null,
         inTgChat: isService ? false : inTgChat,
@@ -237,11 +282,6 @@ export function SettingsTab({
         isResponsible: canBeResponsible(executorType) ? isResponsible : false,
         workTypeIds: selectedWorkTypeIds,
       };
-      if (needsAccount) {
-        payload.email = email.trim().toLowerCase();
-        payload.password = password;
-      }
-
       const r = await fetch(`/api/executors/${executorId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -255,7 +295,6 @@ export function SettingsTab({
       if (isAdmin && executor.user) {
         const userPatch: Record<string, unknown> = {
           fullName: fullName || undefined,
-          email: email.trim().toLowerCase() || undefined,
         };
         if (viewerIsSuperAdmin) {
           userPatch.role = isUserAdmin ? "admin" : "executor";
@@ -335,75 +374,56 @@ export function SettingsTab({
         </div>
       )}
 
-      {isAdmin && needsAccount && (
-        <div className="border border-blue-200 rounded-lg p-4 space-y-3 bg-blue-50/40">
-          <h3 className="text-sm font-semibold text-neutral-800">Учётная запись</h3>
-          <p className="text-xs text-neutral-500">
-            Для постоянного исполнителя нужен логин — после сохранения появится смета и онбординг.
-          </p>
-          <div className="space-y-1.5">
-            <Label>Email (логин) *</Label>
-            <Input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="executor@company.ru"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Пароль *</Label>
-            <div className="flex gap-2">
+      <div className="border rounded-lg p-4 space-y-3">
+        <h3 className="text-sm font-semibold text-neutral-800">Контакт email и доступ</h3>
+        <div className="space-y-1.5">
+          <Label>Контакт email</Label>
+          <Input
+            type="email"
+            value={contactEmail}
+            onChange={(e) => setContactEmail(e.target.value)}
+            disabled={!canEdit}
+            placeholder="contact@example.com"
+          />
+        </div>
+        {isAdmin && (
+          <>
+            <div className="space-y-1.5">
+              <Label>Email для доступа</Label>
               <Input
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="font-mono"
+                value={executor.accessEmail ?? ""}
+                readOnly
+                placeholder="Доступ не выдан"
+                className="bg-neutral-50"
               />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <span
+                  className={`text-sm font-medium ${hasAccess ? "text-green-700" : "text-red-600"}`}
+                >
+                  {hasAccess ? "Доступ активен" : "Доступ не выдан"}
+                </span>
+              </div>
               <Button
-                type="button"
                 variant="outline"
-                size="icon"
-                onClick={() => setPassword(generatePassword())}
-                title="Сгенерировать"
+                size="sm"
+                onClick={handleToggleAccess}
+                disabled={togglingAccess || executorArchived}
+                className={
+                  hasAccess
+                    ? "border-red-300 text-red-600 hover:bg-red-50"
+                    : "border-green-300 text-green-700 hover:bg-green-50"
+                }
               >
-                <RefreshCw className="h-4 w-4" />
+                {hasAccess ? "Отозвать доступ" : "Дать доступ"}
               </Button>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </div>
 
-      {isAdmin && !isService && executor.user && (
-        <div className="border rounded-lg p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-neutral-800">Доступ к системе</h3>
-          <div className="flex items-center justify-between">
-            <div>
-              <span
-                className={`text-sm font-medium ${hasAccess ? "text-green-700" : "text-red-600"}`}
-              >
-                {hasAccess ? "Доступ активен" : "Доступ отозван"}
-              </span>
-              {executor.user.email && (
-                <p className="text-xs text-neutral-400 mt-0.5">Логин: {executor.user.email}</p>
-              )}
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleToggleAccess}
-              disabled={togglingAccess}
-              className={
-                hasAccess
-                  ? "border-red-300 text-red-600 hover:bg-red-50"
-                  : "border-green-300 text-green-700 hover:bg-green-50"
-              }
-            >
-              {hasAccess ? "Отозвать доступ" : "Выдать доступ"}
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {isAdmin && executor.user && executorType !== "service" && executorType !== "bank" && (
+      {isAdmin && executor.user && (
         <div className="border rounded-lg p-4 space-y-3">
           <h3 className="text-sm font-semibold text-neutral-800">Сброс пароля</h3>
           <p className="text-xs text-neutral-500">
@@ -440,12 +460,6 @@ export function SettingsTab({
             </p>
           )}
         </div>
-        {isAdmin && executor.user && (
-          <div className="space-y-1.5">
-            <Label>Email (логин)</Label>
-            <Input value={email} onChange={(e) => setEmail(e.target.value)} />
-          </div>
-        )}
         {isPermanent && (
           <div className="space-y-1.5">
             <Label>Статус в компании</Label>
@@ -453,7 +467,7 @@ export function SettingsTab({
           </div>
         )}
         <div className="space-y-1.5">
-          <Label>Контакты</Label>
+          <Label>Контакт общее</Label>
           <Input
             value={contacts}
             onChange={(e) => setContacts(e.target.value)}
@@ -692,6 +706,67 @@ export function SettingsTab({
           </Button>
         </div>
       )}
+
+      <Dialog open={accessDialogOpen} onOpenChange={setAccessDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Дать доступ</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="grantAccessEmail">Email для доступа *</Label>
+              <Input
+                id="grantAccessEmail"
+                type="email"
+                value={grantAccessEmail}
+                onChange={(e) => setGrantAccessEmail(e.target.value)}
+                placeholder="executor@example.com"
+              />
+            </div>
+            {!executor.user && (
+              <div className="space-y-1.5">
+                <Label htmlFor="grantPassword">Пароль *</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="grantPassword"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="font-mono"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={() => setPassword(generatePassword())}
+                    title="Сгенерировать"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+            {grantAccessEmail.trim().toLowerCase() !== contactEmail.trim().toLowerCase() && (
+              <p className="text-xs text-amber-700">
+                Поле &quot;Контакт email&quot; не перезаписывается автоматически. При необходимости
+                исправьте его вручную.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setAccessDialogOpen(false)}
+              disabled={togglingAccess}
+            >
+              Отмена
+            </Button>
+            <Button type="button" onClick={handleGrantAccess} disabled={togglingAccess}>
+              {togglingAccess ? "Выдача..." : "Дать доступ"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
     </div>
   );

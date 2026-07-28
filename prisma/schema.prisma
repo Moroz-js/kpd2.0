@@ -10,25 +10,25 @@ datasource db {
 // ─────────────────── ПОЛЬЗОВАТЕЛИ ───────────────────
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  password  String
-  fullName  String
-  role         String  // admin | responsible | executor
-  isSuperAdmin Boolean @default(false)
-  isActive     Boolean @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(cuid())
+  email        String   @unique
+  password     String
+  fullName     String
+  role         String // admin | responsible | executor
+  isSuperAdmin Boolean  @default(false)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  executor                  Executor?
-  responsibleProjects       Project[]          @relation("ProjectResponsible")
-  responsibleForExecutors   Executor[]         @relation("ExecutorResponsible")
-  otherExpensesCreated      OtherExpense[]     @relation("OtherExpenseCreatedBy")
-  otherExpensesResponsible  OtherExpense[]     @relation("OtherExpenseResponsible")
-  spendingPlanLinesCreated  SpendingPlanLine[] @relation("SpendingPlanLineCreatedBy")
-  vacationApprovals         VacationEntry[]    @relation("VacationApprovedBy")
-  activityLogs              ActivityLog[]
-  cashflowCellComments      CashflowCellComment[]
+  executor                 Executor?
+  responsibleProjects      Project[]             @relation("ProjectResponsible")
+  responsibleForExecutors  Executor[]            @relation("ExecutorResponsible")
+  otherExpensesCreated     OtherExpense[]        @relation("OtherExpenseCreatedBy")
+  otherExpensesResponsible OtherExpense[]        @relation("OtherExpenseResponsible")
+  spendingPlanLinesCreated SpendingPlanLine[]    @relation("SpendingPlanLineCreatedBy")
+  vacationApprovals        VacationEntry[]       @relation("VacationApprovedBy")
+  activityLogs             ActivityLog[]
+  cashflowCellComments     CashflowCellComment[]
 
   @@map("users")
 }
@@ -36,45 +36,47 @@ model User {
 // ─────────────────── ИСПОЛНИТЕЛИ ───────────────────
 
 model Executor {
-  id              String    @id @default(cuid())
-  userId          String?   @unique // NULL для юрлиц/сервисов/банков (без логина)
-  user            User?     @relation(fields: [userId], references: [id])
-  name            String // computed по типу: "Фамилия Имя" / "Название ТипЮрлица" / UPPER для сервисов
-  type            String    @default("permanent") // permanent | external | service | bank
-  companyStatus   String? // Ядро | Орбита (для permanent)
-  legalForm       String? // legacy, не используется в UI
-  recipientType   String? // физлицо | юрлицо | самозанятый | ...
-  specialty       String?
-  contractFile    String? // URL
-  ndaFile         String? // URL
-  inTgChat        Boolean   @default(false)
-  contacts        String?
-  requisites      String?
-  note            String?
+  id                   String       @id @default(cuid())
+  userId               String?      @unique // сохраняется при отзыве доступа; не зависит от типа
+  user                 User?        @relation(fields: [userId], references: [id])
+  name                 String // computed по типу: "Фамилия Имя" / "Название ТипЮрлица" / UPPER для сервисов
+  type                 String       @default("permanent") // permanent | external | service | bank
+  companyStatus        String? // Ядро | Орбита (для permanent)
+  legalForm            String? // legacy, не используется в UI
+  recipientType        String? // физлицо | юрлицо | самозанятый | ...
+  specialty            String?
+  contractFile         String? // URL
+  ndaFile              String? // URL
+  inTgChat             Boolean      @default(false)
+  contacts             String?
+  requisites           String?
+  note                 String?
+  contactEmail         String?
+  accessEmail          String?
   defaultBankAccountId String?
   defaultBankAccount   BankAccount? @relation("ExecutorDefaultBankAccount", fields: [defaultBankAccountId], references: [id])
   responsibleUserId    String?
-  responsibleUser      User? @relation("ExecutorResponsible", fields: [responsibleUserId], references: [id])
-  isResponsible     Boolean   @default(false)
-  responsibleActive Boolean   @default(true) // статус ответственного (≠ Executor.status)
-  oldEstimateUrl  String?
-  specialties     String?   // JSON array of segments
-  status          String    @default("active") // active | archived
-  accessRevokedAt DateTime?
-  onboardingSeeded Boolean  @default(false)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  responsibleUser      User?        @relation("ExecutorResponsible", fields: [responsibleUserId], references: [id])
+  isResponsible        Boolean      @default(false)
+  responsibleActive    Boolean      @default(true) // статус ответственного (≠ Executor.status)
+  oldEstimateUrl       String?
+  specialties          String? // JSON array of segments
+  status               String       @default("active") // active | archived
+  accessRevokedAt      DateTime?
+  onboardingSeeded     Boolean      @default(false)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
 
-  projectExecutors  ProjectExecutor[]
-  works             Work[]
-  worksResponsible  Work[]            @relation("WorkResponsible")
-  payments          Payment[]
-  otherExpenses     OtherExpense[]
-  otherExpensesResponsibleExec OtherExpense[] @relation("OtherExpenseResponsibleExecutor")
-  executorWorkTypes ExecutorWorkType[]
-  spendingPlanLines SpendingPlanLine[]
-  vacationEntries   VacationEntry[]
-  tasks             Task[]
+  projectExecutors             ProjectExecutor[]
+  works                        Work[]
+  worksResponsible             Work[]             @relation("WorkResponsible")
+  payments                     Payment[]
+  otherExpenses                OtherExpense[]
+  otherExpensesResponsibleExec OtherExpense[]     @relation("OtherExpenseResponsibleExecutor")
+  executorWorkTypes            ExecutorWorkType[]
+  spendingPlanLines            SpendingPlanLine[]
+  vacationEntries              VacationEntry[]
+  tasks                        Task[]
 
   @@index([status])
   @@index([type])
@@ -113,12 +115,12 @@ model Project {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  projectExecutors  ProjectExecutor[]
-  projectWorkTypes  ProjectWorkType[]
-  works             Work[]
-  otherExpenses     OtherExpense[]
-  orders            Order[]
-  spendingPlanLines SpendingPlanLine[]
+  projectExecutors    ProjectExecutor[]
+  projectWorkTypes    ProjectWorkType[]
+  works               Work[]
+  otherExpenses       OtherExpense[]
+  orders              Order[]
+  spendingPlanLines   SpendingPlanLine[]
   verificationResults ProjectVerificationResult[]
 
   @@unique([clientId, shortName])
@@ -163,7 +165,7 @@ model BankAccount {
   charges               Charge[]
   otherExpenses         OtherExpense[]
   bankOperations        BankOperation[]
-  defaultForExecutors   Executor[]      @relation("ExecutorDefaultBankAccount")
+  defaultForExecutors   Executor[]                        @relation("ExecutorDefaultBankAccount")
   reconciliationResults BankAccountReconciliationResult[]
 
   @@map("bank_accounts")
@@ -181,10 +183,10 @@ model Currency {
 // ─────────────────── ВИДЫ РАБОТ ───────────────────
 
 model WorkType {
-  id      String  @id @default(cuid())
-  name    String  @unique
+  id      String @id @default(cuid())
+  name    String @unique
   segment String // Транзитные платежи | Видео | Аналитика | Продвижение | Экспертиза | Сервисы | Менеджмент | Визуал | Текст | IT
-  status  String  @default("active") // active | archived
+  status  String @default("active") // active | archived
 
   works             Work[]
   otherExpenses     OtherExpense[]
@@ -208,26 +210,29 @@ model ExecutorWorkType {
 // ─────────────────── РАБОТЫ (Личная смета) ───────────────────
 
 model Work {
-  id              String    @id @default(cuid())
-  projectId       String
-  project         Project   @relation(fields: [projectId], references: [id])
-  executorId      String
-  executor        Executor  @relation(fields: [executorId], references: [id])
-  workTypeId      String
-  workType        WorkType  @relation(fields: [workTypeId], references: [id])
-  executionYear   Int
-  executionMonth  Int
-  techTask        String? // ТЗ — текст
-  report          String? // URL отчёта
-  link            String? // URL произвольная ссылка
-  volume          Float?
-  rate            Float?
-  amount          Float // Сумма к выплате
-  plannedPayAt    DateTime? // Дата оплаты — план (раздельная с Payment)
-  paidAt          DateTime?
-  workStatus      String    @default("submitted") // submitted | checked | paid | rework
-  checkedAt       DateTime? // Дата проверки
-  comment         String?
+  id                     String    @id @default(cuid())
+  issuedWorkNumber       String?   @unique
+  issuedWorkNumberYear   Int?
+  issuedWorkNumberSerial Int?
+  projectId              String
+  project                Project   @relation(fields: [projectId], references: [id])
+  executorId             String
+  executor               Executor  @relation(fields: [executorId], references: [id])
+  workTypeId             String
+  workType               WorkType  @relation(fields: [workTypeId], references: [id])
+  executionYear          Int
+  executionMonth         Int
+  techTask               String? // ТЗ — текст
+  report                 String? // URL отчёта
+  link                   String? // URL произвольная ссылка
+  volume                 Float?
+  rate                   Float?
+  amount                 Float // Сумма к выплате
+  plannedPayAt           DateTime? // Дата оплаты — план (раздельная с Payment)
+  paidAt                 DateTime?
+  workStatus             String    @default("submitted") // submitted | checked | paid | rework
+  checkedAt              DateTime? // Дата проверки
+  comment                String?
 
   // Ответственный (KPD-284): любой активный постоянный исполнитель; по умолчанию = РП проекта
   responsibleExecutorId String?
@@ -239,6 +244,7 @@ model Work {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([issuedWorkNumberYear, issuedWorkNumberSerial])
   @@index([executorId, executionYear, executionMonth])
   @@index([projectId])
   @@index([workStatus])
@@ -249,25 +255,29 @@ model Work {
 // ─────────────────── ВЫПЛАТЫ ───────────────────
 
 model Payment {
-  id             String       @id @default(cuid())
-  executorId     String
-  executor       Executor     @relation(fields: [executorId], references: [id])
-  periodYear     Int
-  periodMonth    Int
-  amount         Float
-  paymentStatus  String       @default("planned") // planned | paid
-  plannedPayAt   DateTime?
-  paidAt         DateTime?
-  bankAccountId  String?
-  bankAccount    BankAccount? @relation(fields: [bankAccountId], references: [id])
-  comment        String?
-  filledTechTask  String? // URL «Заполненное ТЗ»
-  filledAct       String? // URL «Заполненный акт»
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  id                 String       @id @default(cuid())
+  payoutNumber       String?      @unique
+  payoutNumberYear   Int?
+  payoutNumberSerial Int?
+  executorId         String
+  executor           Executor     @relation(fields: [executorId], references: [id])
+  periodYear         Int
+  periodMonth        Int
+  amount             Float
+  paymentStatus      String       @default("planned") // planned | paid
+  plannedPayAt       DateTime?
+  paidAt             DateTime?
+  bankAccountId      String?
+  bankAccount        BankAccount? @relation(fields: [bankAccountId], references: [id])
+  comment            String?
+  filledTechTask     String? // URL «Заполненное ТЗ»
+  filledAct          String? // URL «Заполненный акт»
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
 
   works Work[]
 
+  @@unique([payoutNumberYear, payoutNumberSerial])
   @@index([executorId, periodYear, periodMonth])
   @@index([paymentStatus])
   @@map("payments")
@@ -276,38 +286,51 @@ model Payment {
 // ─────────────────── ПРОЧИЕ ТРАТЫ ───────────────────
 
 model OtherExpense {
-  id                   String       @id @default(cuid())
-  projectId            String
-  project              Project      @relation(fields: [projectId], references: [id])
-  executorId           String
-  executor             Executor     @relation(fields: [executorId], references: [id])
-  workTypeId           String
-  workType             WorkType     @relation(fields: [workTypeId], references: [id])
+  id                       String       @id @default(cuid())
+  sourceUid                String?      @unique
+  otherExpenseNumber       String?      @unique
+  otherExpenseNumberYear   Int?
+  otherExpenseNumberSerial Int?
+  issuedWorkNumber         String?      @unique
+  issuedWorkNumberYear     Int?
+  issuedWorkNumberSerial   Int?
+  payoutNumber             String?      @unique
+  payoutNumberYear         Int?
+  payoutNumberSerial       Int?
+  projectId                String
+  project                  Project      @relation(fields: [projectId], references: [id])
+  executorId               String
+  executor                 Executor     @relation(fields: [executorId], references: [id])
+  workTypeId               String
+  workType                 WorkType     @relation(fields: [workTypeId], references: [id])
   // legacy «Ответственный»-пользователь (оставлен для совместимости/миграции)
-  responsibleUserId    String?
-  responsibleUser      User?        @relation("OtherExpenseResponsible", fields: [responsibleUserId], references: [id])
+  responsibleUserId        String?
+  responsibleUser          User?        @relation("OtherExpenseResponsible", fields: [responsibleUserId], references: [id])
   // Ответственный (KPD-285): активный постоянный исполнитель
-  responsibleExecutorId String?
-  responsibleExecutor   Executor?   @relation("OtherExpenseResponsibleExecutor", fields: [responsibleExecutorId], references: [id])
-  bankAccountId        String?
-  bankAccount          BankAccount? @relation(fields: [bankAccountId], references: [id])
-  executionYear        Int
-  executionMonth       Int
-  description          String
-  amount               Float
-  paymentAmount        Float?
-  plannedPayAt         DateTime?
-  paidAt               DateTime?
-  checkedAt            DateTime?
-  workStatus           String       @default("submitted") // submitted | checked | paid | rework
-  paymentStatus        String?      // planned | paid | null (null = ожидает проверки)
-  preferredPayMethod   String?
-  comment              String?
-  createdById          String
-  createdBy            User         @relation("OtherExpenseCreatedBy", fields: [createdById], references: [id])
-  createdAt            DateTime     @default(now())
-  updatedAt            DateTime     @updatedAt
+  responsibleExecutorId    String?
+  responsibleExecutor      Executor?    @relation("OtherExpenseResponsibleExecutor", fields: [responsibleExecutorId], references: [id])
+  bankAccountId            String?
+  bankAccount              BankAccount? @relation(fields: [bankAccountId], references: [id])
+  executionYear            Int
+  executionMonth           Int
+  description              String
+  amount                   Float
+  paymentAmount            Float?
+  plannedPayAt             DateTime?
+  paidAt                   DateTime?
+  checkedAt                DateTime?
+  workStatus               String       @default("submitted") // submitted | checked | paid | rework
+  paymentStatus            String? // planned | paid | null (null = ожидает проверки)
+  preferredPayMethod       String?
+  comment                  String?
+  createdById              String
+  createdBy                User         @relation("OtherExpenseCreatedBy", fields: [createdById], references: [id])
+  createdAt                DateTime     @default(now())
+  updatedAt                DateTime     @updatedAt
 
+  @@unique([otherExpenseNumberYear, otherExpenseNumberSerial])
+  @@unique([issuedWorkNumberYear, issuedWorkNumberSerial])
+  @@unique([payoutNumberYear, payoutNumberSerial])
   @@index([projectId])
   @@index([executorId])
   @@index([responsibleUserId])
@@ -315,6 +338,16 @@ model OtherExpense {
   @@index([workStatus])
   @@index([paymentStatus])
   @@map("other_expenses")
+}
+
+model NumberCounter {
+  scope     String
+  year      Int
+  lastValue Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@id([scope, year])
+  @@map("number_counters")
 }
 
 // ─────────────────── ЗАКАЗЫ ───────────────────
@@ -338,23 +371,23 @@ model Order {
 // ─────────────────── НАЧИСЛЕНИЯ ───────────────────
 
 model Charge {
-  id              String       @id @default(cuid())
-  chargeNumber    String       @unique // Н001, Н002, ... (см. TDNB-20)
-  bankAccountId   String?
-  bankAccount     BankAccount? @relation(fields: [bankAccountId], references: [id])
-  invoiceNumber   String?      @unique // № счёта (см. TDNB-20)
-  orderId         String?
-  order           Order?       @relation(fields: [orderId], references: [id])
-  amount          Float        @default(0)
-  issuedPlanAt    DateTime?
-  issuedAt        DateTime?
-  paidPlanAt      DateTime?
-  paidAt          DateTime?
-  paymentPurpose  String?
-  status          String       @default("planned") // planned | issued | paid | overdue
-  documents       String? // URL
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  id             String       @id @default(cuid())
+  chargeNumber   String       @unique // Н001, Н002, ... (см. TDNB-20)
+  bankAccountId  String?
+  bankAccount    BankAccount? @relation(fields: [bankAccountId], references: [id])
+  invoiceNumber  String?      @unique // № счёта (см. TDNB-20)
+  orderId        String?
+  order          Order?       @relation(fields: [orderId], references: [id])
+  amount         Float        @default(0)
+  issuedPlanAt   DateTime?
+  issuedAt       DateTime?
+  paidPlanAt     DateTime?
+  paidAt         DateTime?
+  paymentPurpose String?
+  status         String       @default("planned") // planned | issued | paid | overdue
+  documents      String? // URL
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   @@index([bankAccountId])
   @@index([orderId])
@@ -464,7 +497,7 @@ model CashflowCellComment {
   week        Int
   rowKey      String
   text        String   @default("")
-  highlight   String?  // yellow | green | red
+  highlight   String? // yellow | green | red
   createdById String
   createdBy   User     @relation(fields: [createdById], references: [id])
   createdAt   DateTime @default(now())
@@ -494,12 +527,44 @@ model ActivityLog {
   @@map("activity_logs")
 }
 
+// ─────────────────── ЕЖЕДНЕВНЫЕ СНИМКИ ───────────────────
+
+model SnapshotRun {
+  id             String    @id @default(cuid())
+  businessDate   DateTime
+  cutoffAt       DateTime
+  startedAt      DateTime
+  completedAt    DateTime?
+  status         String    @default("pending") // pending | running | completed | failed
+  runKind        String    @default("scheduled") // scheduled | manual
+  scheduleKey    String?   @unique // идемпотентность планового запуска; null для ручных снимков
+  executionLock  String?   @unique // общий lock создания; очищается после завершения
+  timezone       String    @default("Europe/Moscow")
+  schemaVersion  Int
+  schemaHash     String
+  appCommit      String?
+  formulaVersion String
+  rowCounts      String? // JSON: model -> row count
+  byteSize       Int?
+  contentHash    String?
+  objectPrefix   String?
+  manifestKey    String?
+  error          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status, cutoffAt])
+  @@index([businessDate, cutoffAt])
+  @@index([createdAt])
+  @@map("snapshot_runs")
+}
+
 model BankAccountReconciliation {
-  id          String   @id @default(cuid())
+  id          String                            @id @default(cuid())
   date        DateTime
   isoWeekYear Int // ISO-год недели
   isoWeek     Int // номер ISO-недели (1–53)
-  createdAt   DateTime @default(now())
+  createdAt   DateTime                          @default(now())
   createdBy   String
   results     BankAccountReconciliationResult[]
 
@@ -511,10 +576,10 @@ model BankAccountReconciliationResult {
   id               String                    @id @default(cuid())
   reconciliationId String
   bankAccountId    String
-  foreignAmount    Float?                    // сумма в валюте счёта (ручной ввод)
-  exchangeRate     Float?                    // курс к рублю (ручной ввод; null для RUB)
-  amount           Float?                    // рублёвый остаток = foreignAmount × exchangeRate
-  comment          String?                   // только для поля «Руб»
+  foreignAmount    Float? // сумма в валюте счёта (ручной ввод)
+  exchangeRate     Float? // курс к рублю (ручной ввод; null для RUB)
+  amount           Float? // рублёвый остаток = foreignAmount × exchangeRate
+  comment          String? // только для поля «Руб»
   updatedAt        DateTime                  @updatedAt
   reconciliation   BankAccountReconciliation @relation(fields: [reconciliationId], references: [id], onDelete: Cascade)
   bankAccount      BankAccount               @relation(fields: [bankAccountId], references: [id])
@@ -526,9 +591,9 @@ model BankAccountReconciliationResult {
 }
 
 model ProjectVerification {
-  id        String   @id @default(cuid())
+  id        String                      @id @default(cuid())
   date      DateTime
-  createdAt DateTime @default(now())
+  createdAt DateTime                    @default(now())
   createdBy String
   results   ProjectVerificationResult[]
 

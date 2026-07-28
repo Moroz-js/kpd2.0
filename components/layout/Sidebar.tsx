@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { signOutAction } from "@/app/(dashboard)/actions";
 import {
   FolderOpen,
@@ -163,6 +163,7 @@ export function Sidebar({
   hasProfile = false,
 }: SidebarProps) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [resettingPwd, setResettingPwd] = useState(false);
   const [collapsed, toggleCollapsed] = useSidebarCollapsed();
   const navGroups = buildNavGroups({
@@ -173,6 +174,8 @@ export function Sidebar({
     hasProfile,
   });
   const displayRole = isPm ? ROLE_LABELS.responsible : (ROLE_LABELS[role] ?? role);
+
+  if (searchParams.get("comparePanel")) return null;
 
   async function handleSelfReset() {
     if (!userId) return;

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { Pencil, Trash2, CircleDollarSign, X } from "lucide-react";
@@ -38,16 +39,24 @@ import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner } from "@/lib/table-styles";
 import { sortByNameRu } from "@/lib/sort";
 import { PayoutEditDialog } from "./PayoutEditDialog";
+import {
+  usePersistedInterfaceState,
+  usePersistedScroll,
+} from "@/components/PersistedInterfaceState";
 
 type Row = {
   sourceType: "personal" | "other-expense";
   sourceId: string;
+  number: string | null;
+  numberYear: number | null;
+  numberSerial: number | null;
   periodYear: number;
   periodMonth: number;
   weekPlanFact: number | null;
   yearPlanFact: number | null;
   executorId: string;
   executorName: string;
+  executorAccessEmail: string | null;
   amount: number;
   paymentStatus: string;
   plannedPayAt: string | null;
@@ -55,6 +64,9 @@ type Row = {
   bankAccountId: string | null;
   bankAccountName: string | null;
   comment: string | null;
+  hasLinkedWorks?: boolean;
+  workAmount?: number | null;
+  paymentAmount?: number | null;
 };
 export type PayoutRowDTO = Row;
 
@@ -68,7 +80,7 @@ const fetcher = <T,>(url: string): Promise<T> =>
   });
 
 type SortField =
-  | "weekPlanFact" | "executorName" | "bankAccountName"
+  | "number" | "weekPlanFact" | "executorName" | "bankAccountName"
   | "amount" | "paymentStatus" | "periodYear" | "periodMonth";
 type SortDir = "asc" | "desc";
 
@@ -158,11 +170,11 @@ const PayoutRow = React.memo(function PayoutRow({
       <TableCell className="w-8">
         <RowSelectCheckbox checked={checked} rowIndex={rowIndex} rowId={key} onSelect={onSelect} />
       </TableCell>
+      <TableCell className="w-24 whitespace-nowrap tabular-nums">{r.number ?? "—"}</TableCell>
       <TableCell className={cn(periodYearMonthClass, yearColCell)}>{r.periodYear}</TableCell>
       <TableCell className={cn(periodYearMonthClass, "text-xs whitespace-nowrap")}>{monthLabel(r.periodMonth)}</TableCell>
       <TableCell className={cn(weekColClass, "text-xs whitespace-nowrap")}>{r.weekPlanFact != null ? weekLabel(r.weekPlanFact) : "—"}</TableCell>
       <TableCell>{r.executorName}</TableCell>
-      <TableCell className="max-w-48 truncate" title={r.comment ?? ""}>{r.comment ?? "—"}</TableCell>
       <TableCell>
         <Select value={r.paymentStatus} onValueChange={(v) => v && onPatchInlineStatus(r, v)}>
           <SelectTrigger className="h-6 w-auto min-w-[120px] border-0 bg-transparent shadow-none p-0 focus:ring-0 [&>svg]:hidden">
@@ -199,7 +211,7 @@ const PayoutRow = React.memo(function PayoutRow({
       <TableCell
         className={cn(
           "cursor-pointer hover:bg-neutral-50 min-w-[100px]",
-          (r.paymentStatus === "paid" || r.paymentStatus === "sent") && !r.paidAt && "bg-red-100 text-red-700"
+          r.paymentStatus === "paid" && !r.paidAt && "bg-red-100 text-red-700"
         )}
         onClick={() => inlineActive !== "paidAt" && onStartInline(r, "paidAt")}
       >
@@ -250,7 +262,20 @@ const PayoutRow = React.memo(function PayoutRow({
           </span>
         )}
       </TableCell>
-      <TableCell>{SMETA_LABEL[r.sourceType]}</TableCell>
+      <TableCell>
+        {r.sourceType === "personal"
+          ? r.executorAccessEmail
+            ? (
+                <Link
+                  href={`/admin/executors/${r.executorId}?tab=works`}
+                  className="hover:underline text-blue-600"
+                >
+                  {SMETA_LABEL.personal}
+                </Link>
+              )
+            : SMETA_LABEL.personal
+          : SMETA_LABEL["other-expense"]}
+      </TableCell>
       <TableCell className={cn(stickyActionsCell, checked && "bg-blue-50")}>
         <div className={stickyActionsInner}>
           {r.paymentStatus === "planned" && (
@@ -308,8 +333,44 @@ export function PayoutsClient() {
   const [inlineEdit, setInlineEdit] = React.useState<{ key: string; field: "paidAt" | "plannedPayAt" | "bankAccountId" } | null>(null);
   const [inlineVal, setInlineVal] = React.useState("");
 
+  usePersistedInterfaceState(
+    "payouts",
+    {
+      periodYearFilter,
+      periodMonthFilter,
+      weekFilter,
+      executorFilter,
+      statusFilter,
+      bankFilter,
+      smetaFilter,
+      groupBy,
+      collapsedGroups,
+      sort,
+    },
+    (stored) => {
+      if (stored.periodYearFilter) setPeriodYearFilter(stored.periodYearFilter);
+      if (stored.periodMonthFilter) setPeriodMonthFilter(stored.periodMonthFilter);
+      if (stored.weekFilter) setWeekFilter(stored.weekFilter);
+      if (stored.executorFilter) setExecutorFilter(stored.executorFilter);
+      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
+      if (stored.bankFilter) setBankFilter(stored.bankFilter);
+      if (stored.smetaFilter) setSmetaFilter(stored.smetaFilter);
+      if (stored.groupBy !== undefined) setGroupBy(stored.groupBy);
+      if (stored.collapsedGroups instanceof Set) setCollapsedGroups(stored.collapsedGroups);
+      if (stored.sort) setSort(stored.sort);
+    }
+  );
+  usePersistedScroll(scrollRef, "payouts-table");
+
   function compareRows(a: Row, b: Row): number {
     for (const s of sort) {
+      if (s.field === "number") {
+        const cmp =
+          (a.numberYear ?? Number.MAX_SAFE_INTEGER) - (b.numberYear ?? Number.MAX_SAFE_INTEGER) ||
+          (a.numberSerial ?? Number.MAX_SAFE_INTEGER) - (b.numberSerial ?? Number.MAX_SAFE_INTEGER);
+        if (cmp !== 0) return s.dir === "asc" ? cmp : -cmp;
+        continue;
+      }
       const av = a[s.field];
       const bv = b[s.field];
       const cmp =
@@ -725,7 +786,7 @@ export function PayoutsClient() {
       )}
 
       <Table
-        className="min-w-[1420px]"
+        className="min-w-[1516px]"
         containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto"
         containerRef={scrollRef}
       >
@@ -737,6 +798,15 @@ export function PayoutsClient() {
                   onCheckedChange={() => toggleAll(orderedRowIds)}
                 />
               </TableHead>
+              <SortableHead
+                field="number"
+                sortBy={activeSortField()}
+                sortDir={activeSortDir()}
+                onSort={handleSort}
+                className="w-24 text-[10px]"
+              >
+                Номер
+              </SortableHead>
               <SortableHead
                 field="periodYear"
                 sortBy={activeSortField()}
@@ -777,7 +847,6 @@ export function PayoutsClient() {
                 </span>
               </SortableHead>
               <SortableHead field="executorName" sortBy={activeSortField()} sortDir={activeSortDir()} onSort={handleSort}>Исполнитель</SortableHead>
-              <TableHead>Комментарий</TableHead>
               <SortableHead field="paymentStatus" sortBy={activeSortField()} sortDir={activeSortDir()} onSort={handleSort}><span className="flex items-center gap-1">Статус <Pencil className="h-3 w-3 text-neutral-400" /></span></SortableHead>
               <SortableHead field="amount" sortBy={activeSortField()} sortDir={activeSortDir()} onSort={handleSort} className="text-right">Выплата</SortableHead>
               <TableHead><span className="flex items-center gap-1">Дата оплаты план <Pencil className="h-3 w-3 text-neutral-400" /></span></TableHead>

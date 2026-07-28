@@ -55,6 +55,7 @@ export function ExecutorEditDialog({
   );
   const [specialty, setSpecialty] = React.useState(row.specialty ?? "");
   const [contacts, setContacts] = React.useState(row.contacts ?? "");
+  const [contactEmail, setContactEmail] = React.useState(row.contactEmail ?? "");
   const [requisites, setRequisites] = React.useState(row.requisites ?? "");
   const [recipientTypes, setRecipientTypes] = React.useState<string[]>(row.recipientTypes);
   const [responsibleUserId, setResponsibleUserId] = React.useState(row.responsibleUserId ?? "");
@@ -89,6 +90,7 @@ export function ExecutorEditDialog({
         companyStatus: serializeCompanyStatus(companyStatuses),
         specialty: specialty || null,
         contacts: contacts || null,
+        contactEmail: contactEmail.trim().toLowerCase() || null,
         requisites: requisites || null,
         recipientTypes,
         responsibleUserId: responsibleUserId || null,
@@ -232,13 +234,23 @@ export function ExecutorEditDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="contacts">Контакт</Label>
+            <Label htmlFor="contacts">Контакт общее</Label>
             <Textarea
               id="contacts"
               value={contacts}
               onChange={(e) => setContacts(e.target.value)}
               rows={2}
-              placeholder="Мессенджеры, телефоны и т.п. (email — на вкладке учётной записи)"
+              placeholder="Мессенджеры, телефоны и т.п."
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="contactEmail">Контакт email</Label>
+            <Input
+              id="contactEmail"
+              type="email"
+              value={contactEmail}
+              onChange={(e) => setContactEmail(e.target.value)}
             />
           </div>
 

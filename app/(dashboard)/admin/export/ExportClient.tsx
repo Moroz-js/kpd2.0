@@ -4,7 +4,9 @@ import * as React from "react";
 import { toast } from "sonner";
 import { Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
+import { snapshotLabel, snapshotSourceLabel, type SnapshotOption } from "@/lib/snapshots/labels";
 
 const EXPORTED_SHEETS = [
   "Кэшфлоу проектов",
@@ -23,11 +25,22 @@ const EXPORTED_SHEETS = [
 
 export function ExportClient() {
   const [loading, setLoading] = React.useState(false);
+  const [source, setSource] = React.useState("live");
+  const [snapshots, setSnapshots] = React.useState<SnapshotOption[]>([]);
+
+  React.useEffect(() => {
+    fetch("/api/snapshots")
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((payload: { snapshots?: SnapshotOption[] }) =>
+        setSnapshots(payload.snapshots ?? [])
+      )
+      .catch(() => setSnapshots([]));
+  }, []);
 
   async function handleDownload() {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/export-excel");
+      const res = await fetch(`/api/admin/export-excel?snapshot=${encodeURIComponent(source)}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error((err as { error?: string }).error ?? "Не удалось сформировать файл");
@@ -61,8 +74,25 @@ export function ExportClient() {
 
       <div className="max-w-2xl space-y-4 rounded-lg border bg-white p-6">
         <p className="text-sm text-neutral-600">
-          Выгрузка актуальных данных из системы в формат исходной сметы.
+          Выгрузка выбранного состояния системы в формат исходной сметы.
         </p>
+
+        <div className="max-w-sm space-y-1.5">
+          <p className="text-sm font-medium text-neutral-700">Источник данных</p>
+          <Select value={source} onValueChange={(value) => value && setSource(value)}>
+            <SelectTrigger>
+              <SelectValue>{snapshotSourceLabel(source, snapshots)}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="live">Актуальные данные</SelectItem>
+              {snapshots.map((snapshot) => (
+                <SelectItem key={snapshot.id} value={snapshot.id}>
+                  {snapshotLabel(snapshot)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
         <div>
           <p className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-400">

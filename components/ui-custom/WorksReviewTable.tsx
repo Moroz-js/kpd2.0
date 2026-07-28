@@ -315,6 +315,27 @@ export function WorksReviewTable({
     }
   }
 
+  async function checkRow(r: ReviewRow) {
+    const id = rowId(r);
+    setBusyIds((prev) => new Set(prev).add(id));
+    try {
+      const res = await fetch(`/api/issued-works/${id}/check`, { method: "POST" });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error((d as { error?: string }).error ?? "Ошибка");
+      }
+      await mutate();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setBusyIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
   async function handleCheckAll() {
     if (checkableRows.length === 0) return;
     setBulkBusy(true);
@@ -561,7 +582,7 @@ export function WorksReviewTable({
                           size="sm"
                           variant="ghost"
                           disabled={busy}
-                          onClick={() => patchRow(r, { workStatus: "checked" })}
+                          onClick={() => checkRow(r)}
                           title="Проставить «Проверено»"
                         >
                           <CheckCircle2 className="h-3.5 w-3.5" />

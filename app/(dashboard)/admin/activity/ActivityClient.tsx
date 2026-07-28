@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import useSWR from "swr";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
@@ -9,6 +9,10 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { DisplayChange } from "@/lib/audit/display-changes";
 import { formatDateTime } from "@/lib/format";
+import {
+  usePersistedInterfaceState,
+  usePersistedScroll,
+} from "@/components/PersistedInterfaceState";
 
 const fetcher = (url: string) => fetch(url).then(r => r.json());
 
@@ -83,6 +87,18 @@ export function ActivityClient() {
   const [entityType, setEntityType] = useState("_all");
   const [userFilter, setUserFilter] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  usePersistedInterfaceState(
+    "activity",
+    { page, entityType, userFilter },
+    (stored) => {
+      if (stored.page !== undefined) setPage(stored.page);
+      if (stored.entityType !== undefined) setEntityType(stored.entityType);
+      if (stored.userFilter) setUserFilter(stored.userFilter);
+    }
+  );
+  usePersistedScroll(scrollRef, "activity-list");
 
   const { data: users } = useSWR<UserOption[]>("/api/users", fetcher);
 
@@ -143,7 +159,7 @@ export function ActivityClient() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-neutral-200 bg-white overflow-auto flex-1 min-h-0">
+      <div ref={scrollRef} className="rounded-lg border border-neutral-200 bg-white overflow-auto flex-1 min-h-0">
         {!data && <div className="p-6 text-sm text-neutral-500">Загрузка…</div>}
         {data && data.items.length === 0 && <div className="p-6 text-sm text-neutral-400 text-center">Нет записей</div>}
         {data && data.items.length > 0 && (

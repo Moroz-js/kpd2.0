@@ -13,7 +13,7 @@
 import { prisma } from "@/lib/db";
 import { logActivity, diff } from "@/lib/audit/log";
 import type { IssuedWorkSource } from "@/lib/views/issuedWorks";
-import { updateOtherExpense } from "@/lib/services/other-expenses";
+import { checkOtherExpense, updateOtherExpense } from "@/lib/services/other-expenses";
 import { hasOtherExpensePayment } from "@/lib/other-expense-payment";
 import { isAdmin, isResponsible, type SessionLike } from "@/lib/permissions";
 
@@ -152,75 +152,57 @@ async function updateOther(otherId: string, patch: IssuedWorkPatch, userId: stri
     throw new Error("Статус оплаченной работы меняется только через выплату");
   }
 
-  if (patch.plannedPayAt !== undefined) {
-    return updateOtherExpense(
-      otherId,
-      {
+  // Единый путь «Проверено» для прочих трат — создаёт выплату и плановую дату.
+  if (patch.workStatus === "checked" && before.workStatus !== "checked") {
+    const rest: UpdateOtherExpenseInputFromPatch = {};
+    if (patch.projectId !== undefined) rest.projectId = patch.projectId;
+    if (patch.workTypeId !== undefined) rest.workTypeId = patch.workTypeId;
+    if (patch.executionMonth !== undefined) rest.executionMonth = patch.executionMonth;
+    if (patch.executionYear !== undefined) rest.executionYear = patch.executionYear;
+    if (patch.executorId !== undefined) rest.executorId = patch.executorId;
+    if (patch.plannedPayAt !== undefined) {
+      rest.plannedPayAt = patch.plannedPayAt ? patch.plannedPayAt.toISOString() : null;
+    }
+    if (patch.responsibleExecutorId !== undefined) {
+      rest.responsibleExecutorId = patch.responsibleExecutorId ?? undefined;
+    }
+    if (patch.comment !== undefined) rest.comment = patch.comment;
+    // Сначала применяем остальные поля: checkOtherExpense увидит пользовательскую
+    // плановую дату и сохранит её либо пересчитает, если она уже прошла.
+    if (Object.keys(rest).length > 0) {
+      await updateOtherExpense(otherId, rest, userId);
+    }
+    return checkOtherExpense(otherId, userId);
+  }
+
+  return updateOtherExpense(
+    otherId,
+    {
+      ...(patch.projectId !== undefined && { projectId: patch.projectId }),
+      ...(patch.workTypeId !== undefined && { workTypeId: patch.workTypeId }),
+      ...(patch.executionMonth !== undefined && { executionMonth: patch.executionMonth }),
+      ...(patch.executionYear !== undefined && { executionYear: patch.executionYear }),
+      ...(patch.executorId !== undefined && { executorId: patch.executorId }),
+      ...(patch.plannedPayAt !== undefined && {
         plannedPayAt: patch.plannedPayAt ? patch.plannedPayAt.toISOString() : null,
-        ...(patch.projectId !== undefined && { projectId: patch.projectId }),
-        ...(patch.workTypeId !== undefined && { workTypeId: patch.workTypeId }),
-        ...(patch.executionMonth !== undefined && { executionMonth: patch.executionMonth }),
-        ...(patch.executionYear !== undefined && { executionYear: patch.executionYear }),
-        ...(patch.executorId !== undefined && { executorId: patch.executorId }),
-        ...(patch.workStatus !== undefined && { workStatus: patch.workStatus }),
-        ...(patch.responsibleExecutorId !== undefined && {
-          responsibleExecutorId: patch.responsibleExecutorId ?? undefined,
-        }),
-        ...(patch.comment !== undefined && { comment: patch.comment }),
-      },
-      userId
-    );
-  }
-
-  const data: Record<string, unknown> = {};
-  if (patch.projectId !== undefined) data.projectId = patch.projectId;
-  if (patch.workTypeId !== undefined) data.workTypeId = patch.workTypeId;
-  if (patch.executionMonth !== undefined) data.executionMonth = patch.executionMonth;
-  if (patch.executionYear !== undefined) data.executionYear = patch.executionYear;
-  if (patch.executorId !== undefined) data.executorId = patch.executorId;
-  if (patch.responsibleExecutorId !== undefined) data.responsibleExecutorId = patch.responsibleExecutorId;
-  if (patch.comment !== undefined) data.comment = patch.comment;
-  if (patch.workStatus !== undefined) {
-    data.workStatus = patch.workStatus;
-    if (patch.workStatus === "checked" && before.workStatus !== "checked") {
-      data.checkedAt = new Date();
-    }
-  }
-
-  const updated = await prisma.otherExpense.update({ where: { id: otherId }, data });
-
-  const changes = diff(
-    {
-      projectId: before.projectId,
-      workTypeId: before.workTypeId,
-      executionMonth: before.executionMonth,
-      executionYear: before.executionYear,
-      executorId: before.executorId,
-      workStatus: before.workStatus,
-      responsibleExecutorId: before.responsibleExecutorId,
-      comment: before.comment,
+      }),
+      ...(patch.workStatus !== undefined && { workStatus: patch.workStatus }),
+      ...(patch.responsibleExecutorId !== undefined && {
+        responsibleExecutorId: patch.responsibleExecutorId ?? undefined,
+      }),
+      ...(patch.comment !== undefined && { comment: patch.comment }),
     },
-    {
-      projectId: updated.projectId,
-      workTypeId: updated.workTypeId,
-      executionMonth: updated.executionMonth,
-      executionYear: updated.executionYear,
-      executorId: updated.executorId,
-      workStatus: updated.workStatus,
-      responsibleExecutorId: updated.responsibleExecutorId,
-      comment: updated.comment,
-    }
+    userId
   );
-  if (Object.keys(changes).length > 0) {
-    await logActivity({
-      userId,
-      action: patch.workStatus === "checked" ? "status_change" : "update",
-      entityType: "OtherExpense",
-      entityId: otherId,
-      entityLabel: `Прочие траты · ${before.description.slice(0, 40)}`,
-      changes,
-    });
-  }
-
-  return updated;
 }
+
+type UpdateOtherExpenseInputFromPatch = {
+  projectId?: string;
+  workTypeId?: string;
+  executionMonth?: number;
+  executionYear?: number;
+  executorId?: string;
+  plannedPayAt?: string | null;
+  responsibleExecutorId?: string;
+  comment?: string | null;
+};

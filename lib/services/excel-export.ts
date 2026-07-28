@@ -23,7 +23,11 @@ import {
   PAYMENT_STATUS_EN_RU,
 } from "@/lib/excel/mappings";
 import { patchWorkbookTemplate, type ExcelRow, type SheetPatch } from "@/lib/excel/xlsx-template-patcher";
-import { listClients } from "@/lib/services/clients";
+import {
+  dataSourcePrismaAdapter,
+  LiveDataSource,
+  type DataSource,
+} from "@/lib/snapshots/data-source";
 
 type Row = ExcelRow;
 
@@ -36,27 +40,16 @@ function weekLabel(week: number | null | undefined): string | null {
 
 // ─── Сериализаторы (зеркало extract* из migrate-excel.mjs) ────────────────────
 
-async function serializeUsers(): Promise<Row[]> {
-  const users = await prisma.user.findMany({
-    where: { role: "responsible" },
-    orderBy: { fullName: "asc" },
-  });
-  return users.map((u) => ({
-    Имя: u.fullName,
-    Статус: u.isActive ? "Активный" : "Архивный",
-  }));
-}
-
-async function serializeBankAccounts(): Promise<Row[]> {
-  const accounts = await prisma.bankAccount.findMany({ orderBy: { name: "asc" } });
+async function serializeBankAccounts(db: typeof prisma): Promise<Row[]> {
+  const accounts = await db.bankAccount.findMany({ orderBy: { name: "asc" } });
   return accounts.map((b) => ({
     Счёт: b.name,
     Статус: ru(STATUS_EN_RU, b.status),
   }));
 }
 
-async function serializeWorkTypes(): Promise<Row[]> {
-  const wts = await prisma.workType.findMany({ orderBy: { name: "asc" } });
+async function serializeWorkTypes(db: typeof prisma): Promise<Row[]> {
+  const wts = await db.workType.findMany({ orderBy: { name: "asc" } });
   return wts.map((w) => ({
     "Вид работ": w.name,
     Сегмент: w.segment,
@@ -70,19 +63,47 @@ const CLIENT_PROJECTS_STATUS_RU: Record<string, string> = {
   none: "Нет проектов",
 };
 
-async function serializeClients(): Promise<Row[]> {
-  const clients = await listClients();
-  return clients.map((c) => ({
+async function serializeClients(db: typeof prisma): Promise<Row[]> {
+  const clients = await db.client.findMany({
+    include: {
+      projects: {
+        select: {
+          status: true,
+          orders: { select: { charges: { select: { amount: true, status: true } } } },
+        },
+      },
+    },
+  });
+  return clients.map((c) => {
+    const hasActive = c.projects.some((project) => project.status === "active");
+    const hasArchived = c.projects.some((project) => project.status === "archived");
+    const projectsStatus = hasActive ? "has_active" : hasArchived ? "all_archived" : "none";
+    const revenue = c.projects.reduce(
+      (total, project) =>
+        total +
+        project.orders.reduce(
+          (projectTotal, order) =>
+            projectTotal +
+            order.charges.reduce(
+              (orderTotal, charge) => orderTotal + (charge.status === "paid" ? charge.amount : 0),
+              0
+            ),
+          0
+        ),
+      0
+    );
+    return {
     Клиент: c.name,
     Компания: c.company,
     Департамент: c.department,
-    "Статус проектов": CLIENT_PROJECTS_STATUS_RU[c.projectsStatus] ?? c.projectsStatus,
-    Выручка: c.revenue,
-  }));
+    "Статус проектов": CLIENT_PROJECTS_STATUS_RU[projectsStatus] ?? projectsStatus,
+    Выручка: revenue,
+    };
+  });
 }
 
-async function serializeProjects(): Promise<Row[]> {
-  const projects = await prisma.project.findMany({
+async function serializeProjects(db: typeof prisma): Promise<Row[]> {
+  const projects = await db.project.findMany({
     orderBy: { name: "asc" },
     include: {
       client: { select: { name: true } },
@@ -99,8 +120,8 @@ async function serializeProjects(): Promise<Row[]> {
   }));
 }
 
-async function serializeExecutors(): Promise<Row[]> {
-  const executors = await prisma.executor.findMany({
+async function serializeExecutors(db: typeof prisma): Promise<Row[]> {
+  const executors = await db.executor.findMany({
     orderBy: { name: "asc" },
     include: {
       responsibleUser: { select: { fullName: true } },
@@ -119,20 +140,21 @@ async function serializeExecutors(): Promise<Row[]> {
     Ответственный: e.responsibleUser?.fullName ?? null,
     "Источник оплаты": e.defaultBankAccount?.name ?? null,
     "Тип получателя": e.recipientType,
-    Контакт: e.contacts,
+    "Контакт общее": e.contacts,
+    "Контакт email": e.contactEmail,
+    "Email для доступа": e.accessEmail,
     Реквизиты: e.requisites,
     "В чате ТГ": e.inTgChat ? "да" : "нет",
     Примечание: e.note,
     договор: e.contractFile,
     NDA: e.ndaFile,
     "Статус исполнителя": ru(STATUS_EN_RU, e.status),
-    "Доступ к смете": e.accessRevokedAt ? "закрыт" : "открыт",
     "Старая смета": e.oldEstimateUrl,
   }));
 }
 
-async function serializeOrders(): Promise<Row[]> {
-  const orders = await prisma.order.findMany({
+async function serializeOrders(db: typeof prisma): Promise<Row[]> {
+  const orders = await db.order.findMany({
     orderBy: { orderNumber: "asc" },
     include: {
       project: { select: { name: true, client: { select: { name: true } } } },
@@ -148,8 +170,8 @@ async function serializeOrders(): Promise<Row[]> {
   }));
 }
 
-async function serializeCharges(): Promise<Row[]> {
-  const charges = await prisma.charge.findMany({
+async function serializeCharges(db: typeof prisma): Promise<Row[]> {
+  const charges = await db.charge.findMany({
     orderBy: { chargeNumber: "asc" },
     include: {
       bankAccount: { select: { name: true } },
@@ -179,9 +201,9 @@ async function serializeCharges(): Promise<Row[]> {
   }));
 }
 
-async function serializeWorks(): Promise<Row[]> {
+async function serializeWorks(db: typeof prisma): Promise<Row[]> {
   const [works, otherExpenses] = await Promise.all([
-    prisma.work.findMany({
+    db.work.findMany({
       include: {
         executor: { select: { name: true } },
         project: { select: { name: true } },
@@ -190,7 +212,7 @@ async function serializeWorks(): Promise<Row[]> {
       },
       orderBy: { createdAt: "asc" },
     }),
-    prisma.otherExpense.findMany({
+    db.otherExpense.findMany({
       include: {
         executor: { select: { name: true } },
         project: { select: { name: true } },
@@ -202,6 +224,7 @@ async function serializeWorks(): Promise<Row[]> {
   ]);
 
   const workRows: Row[] = works.map((w) => ({
+    Номер: w.issuedWorkNumber,
     Исполнитель: w.executor.name,
     Проект: w.project.name,
     "Вид работ": w.workType.name,
@@ -218,6 +241,7 @@ async function serializeWorks(): Promise<Row[]> {
   }));
 
   const otherRows: Row[] = otherExpenses.map((o) => ({
+    Номер: o.issuedWorkNumber,
     Исполнитель: o.executor.name,
     Проект: o.project.name,
     "Вид работ": o.workType.name,
@@ -236,15 +260,26 @@ async function serializeWorks(): Promise<Row[]> {
   return [...workRows, ...otherRows];
 }
 
-async function serializePayments(): Promise<Row[]> {
-  const payments = await prisma.payment.findMany({
-    include: {
-      executor: { select: { name: true } },
-      bankAccount: { select: { name: true } },
-    },
-    orderBy: { createdAt: "asc" },
-  });
-  return payments.map((p) => ({
+async function serializePayments(db: typeof prisma): Promise<Row[]> {
+  const [payments, otherExpenses] = await Promise.all([
+    db.payment.findMany({
+      include: {
+        executor: { select: { name: true } },
+        bankAccount: { select: { name: true } },
+      },
+      orderBy: { createdAt: "asc" },
+    }),
+    db.otherExpense.findMany({
+      where: { paymentAmount: { not: null } },
+      include: {
+        executor: { select: { name: true } },
+        bankAccount: { select: { name: true } },
+      },
+      orderBy: { createdAt: "asc" },
+    }),
+  ]);
+  const paymentRows: Row[] = payments.map((p) => ({
+    Номер: p.payoutNumber,
     Исполнитель: p.executor.name,
     "Год выполнения": p.periodYear,
     "Месяц выполнения работ": monthLabel(p.periodMonth),
@@ -255,10 +290,23 @@ async function serializePayments(): Promise<Row[]> {
     "Источник перевода": p.bankAccount?.name ?? null,
     Комментарий: p.comment,
   }));
+  const otherRows: Row[] = otherExpenses.map((o) => ({
+    Номер: o.payoutNumber,
+    Исполнитель: o.executor.name,
+    "Год выполнения": o.executionYear,
+    "Месяц выполнения работ": monthLabel(o.executionMonth),
+    Выплата: o.paymentAmount,
+    Статус: ru(PAYMENT_STATUS_EN_RU, o.paymentStatus ?? "planned"),
+    "Дата оплаты план": o.plannedPayAt,
+    "Дата оплаты": o.paidAt,
+    "Источник перевода": o.bankAccount?.name ?? null,
+    Комментарий: o.comment,
+  }));
+  return [...paymentRows, ...otherRows];
 }
 
-async function serializeSpendingPlan(): Promise<Row[]> {
-  const lines = await prisma.spendingPlanLine.findMany({
+async function serializeSpendingPlan(db: typeof prisma): Promise<Row[]> {
+  const lines = await db.spendingPlanLine.findMany({
     include: {
       project: { select: { name: true, responsible: { select: { fullName: true } } } },
       executor: { select: { name: true } },
@@ -279,8 +327,9 @@ async function serializeSpendingPlan(): Promise<Row[]> {
 
 // ─── Точка входа ──────────────────────────────────────────────────────────────
 
-export async function buildExportWorkbook(): Promise<Buffer> {
+export async function buildExportWorkbook(source: DataSource = new LiveDataSource()): Promise<Buffer> {
   const templateBuffer = fs.readFileSync(TEMPLATE_PATH);
+  const db = dataSourcePrismaAdapter(source);
 
   const [
     bankAccounts,
@@ -294,16 +343,16 @@ export async function buildExportWorkbook(): Promise<Buffer> {
     payments,
     spendingPlan,
   ] = await Promise.all([
-    serializeBankAccounts(),
-    serializeWorkTypes(),
-    serializeClients(),
-    serializeProjects(),
-    serializeExecutors(),
-    serializeOrders(),
-    serializeCharges(),
-    serializeWorks(),
-    serializePayments(),
-    serializeSpendingPlan(),
+    serializeBankAccounts(db),
+    serializeWorkTypes(db),
+    serializeClients(db),
+    serializeProjects(db),
+    serializeExecutors(db),
+    serializeOrders(db),
+    serializeCharges(db),
+    serializeWorks(db),
+    serializePayments(db),
+    serializeSpendingPlan(db),
   ]);
 
   const patches: SheetPatch[] = [
@@ -334,5 +383,11 @@ export async function buildExportWorkbook(): Promise<Buffer> {
     "БД_План_расходов_полный",
   ];
 
-  return patchWorkbookTemplate(templateBuffer, patches, keepSheets);
+  return patchWorkbookTemplate(templateBuffer, patches, keepSheets, {
+    source: source.kind,
+    snapshotId: source.metadata?.id ?? null,
+    businessDate: source.metadata?.businessDate.toISOString().slice(0, 10) ?? null,
+    cutoffAt: source.metadata?.cutoffAt.toISOString() ?? null,
+    schemaVersion: source.metadata?.schemaVersion ?? null,
+  });
 }

@@ -42,6 +42,10 @@ import { RowSelectCheckbox } from "@/components/ui-custom/RowSelectCheckbox";
 import { SortableHead } from "@/components/ui-custom/SortableHead";
 import { useTableRowSelection } from "@/lib/useTableRowSelection";
 import { sortByNameRu } from "@/lib/sort";
+import {
+  usePersistedInterfaceState,
+  usePersistedScroll,
+} from "@/components/PersistedInterfaceState";
 
 const ACTIONS_COL_WIDTH = 96;
 /** table-fixed: фиксированные ширины, иначе текст залезает под sticky-действия */
@@ -558,6 +562,35 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
   const [bulkStatus, setBulkStatus] = useState("");
 
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  usePersistedInterfaceState(
+    "charges",
+    {
+      fBankAccount,
+      fOrder,
+      fStatus,
+      fClient,
+      fProject,
+      fWeek,
+      hidePaid,
+      groupBy,
+      collapsedGroups,
+      sort,
+    },
+    (stored) => {
+      if (stored.fBankAccount) setFBankAccount(stored.fBankAccount);
+      if (stored.fOrder) setFOrder(stored.fOrder);
+      if (stored.fStatus) setFStatus(stored.fStatus);
+      if (stored.fClient) setFClient(stored.fClient);
+      if (stored.fProject) setFProject(stored.fProject);
+      if (stored.fWeek) setFWeek(stored.fWeek);
+      if (stored.hidePaid !== undefined) setHidePaid(stored.hidePaid);
+      if (stored.groupBy !== undefined) setGroupBy(stored.groupBy);
+      if (stored.collapsedGroups instanceof Set) setCollapsedGroups(stored.collapsedGroups);
+      if ("sort" in stored) setSort(stored.sort ?? null);
+    }
+  );
+  usePersistedScroll(scrollRef, "charges-table");
 
   const fetchData = useCallback(async () => {
     const r = await fetch("/api/charges");

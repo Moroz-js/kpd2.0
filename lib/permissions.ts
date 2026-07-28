@@ -104,25 +104,32 @@ export function canEditWork(
 
 /**
  * Может ли user смотреть Личную смету исполнителя `executorId`.
- * Требует обращения в БД (для проверки ProjectExecutor связи у PM и accessRevokedAt у executor).
+ * Требует активного доступа: accessEmail, User.isActive и пустой accessRevokedAt.
  */
 export async function canViewExecutorEstimate(
   user: SessionLike,
   executorId: string
 ): Promise<boolean> {
-  if (isAdmin(user)) return true;
+  const exec = await prisma.executor.findUnique({
+    where: { id: executorId },
+    select: {
+      accessEmail: true,
+      accessRevokedAt: true,
+      status: true,
+      user: { select: { isActive: true } },
+    },
+  });
+  const hasActiveEstimate =
+    !!exec?.accessEmail?.trim() &&
+    exec.accessRevokedAt == null &&
+    exec.status === "active" &&
+    exec.user?.isActive === true;
+
+  if (isAdmin(user)) return hasActiveEstimate;
 
   // Личную смету видит только её владелец (любая роль с привязанным executorId).
   // PM и постоянный исполнитель НЕ видят чужие сметы (см. спеку RBAC).
-  if (user.executorId && user.executorId === executorId) {
-    const exec = await prisma.executor.findUnique({
-      where: { id: executorId },
-      select: { accessRevokedAt: true, status: true },
-    });
-    return !!exec && exec.accessRevokedAt == null && exec.status === "active";
-  }
-
-  return false;
+  return user.executorId === executorId && hasActiveEstimate;
 }
 
 // ────────────────────── Исполнители (раздел/настройки) ───────
@@ -176,7 +183,7 @@ export function canAccessOtherExpenses(user: SessionLike | null | undefined): bo
 /**
  * Редактирование строки прочих трат.
  * admin — всегда; остальные — создатель или ответственный, и только пока выплата
- * не «Отправлено»/«Оплачено».
+ * не «Оплачено».
  */
 export function canEditOtherExpense(
   user: SessionLike,
@@ -190,7 +197,7 @@ export function canEditOtherExpense(
   if (isAdmin(user)) return true;
   if (!canAccessOtherExpenses(user)) return false;
   if (row.workStatus === "paid") return false;
-  if (row.paymentStatus === "sent" || row.paymentStatus === "paid") return false;
+  if (row.paymentStatus === "paid") return false;
   // РП может редактировать в том числе при checked
   if (user.executorId && row.responsibleExecutorId && row.responsibleExecutorId === user.executorId) return true;
   // Создатель — только до проверки
@@ -214,13 +221,13 @@ export function canCheckOtherExpense(
   if (isAdmin(user)) return true;
   if (!canAccessOtherExpenses(user)) return false;
   if (row.workStatus === "checked" || row.workStatus === "paid") return false;
-  if (row.paymentStatus === "sent" || row.paymentStatus === "paid") return false;
+  if (row.paymentStatus === "paid") return false;
   return !!(user.executorId && row.responsibleExecutorId && row.responsibleExecutorId === user.executorId);
 }
 
 /**
  * Откат статуса «Проверено» → «Выставлено»/«На доработку» + удаление выплаты.
- * admin — всегда; ответственный по строке — если выплата ещё не отправлена/оплачена.
+ * admin — всегда; ответственный по строке — если выплата ещё не оплачена.
  */
 export function canRevertOtherExpenseCheck(
   user: SessionLike,
@@ -230,7 +237,7 @@ export function canRevertOtherExpenseCheck(
   }
 ): boolean {
   if (isAdmin(user)) return true;
-  if (row.paymentStatus === "sent" || row.paymentStatus === "paid") return false;
+  if (row.paymentStatus === "paid") return false;
   if (!canAccessOtherExpenses(user)) return false;
   return !!(user.executorId && row.responsibleExecutorId && row.responsibleExecutorId === user.executorId);
 }

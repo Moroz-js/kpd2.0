@@ -12,12 +12,16 @@
     "db:migrate": "node scripts/prisma-deploy.mjs",
     "db:reset": "node scripts/db-reset.mjs",
     "db:seed": "node scripts/set-prisma-provider.mjs && prisma generate && prisma db seed",
-    "db:studio": "node scripts/set-prisma-provider.mjs && prisma generate && prisma studio"
+    "db:studio": "node scripts/set-prisma-provider.mjs && prisma generate && prisma studio",
+    "migrate:other-expenses": "node scripts/migrate-other-expenses.mjs",
+    "snapshot:check": "node scripts/snapshot-worker.mjs --check",
+    "snapshot:run": "node scripts/snapshot-worker.mjs --manual"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1096.0",
     "@base-ui/react": "^1.4.1",
     "@hookform/resolvers": "^5.2.2",
     "@prisma/client": "5.22.0",

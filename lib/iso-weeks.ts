@@ -69,6 +69,30 @@ export function nearestPaymentDate(from: Date = new Date()): Date {
   return new Date(d.getFullYear(), d.getMonth() + 1, 5);
 }
 
+/** Календарный день YYYY-MM-DD в Europe/Moscow. */
+export function moscowDateKey(date: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Moscow",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+/** true, если дата — сегодня или в будущем по календарю Москвы. */
+export function isTodayOrFutureMoscow(date: Date): boolean {
+  return moscowDateKey(date) >= moscowDateKey(new Date());
+}
+
+/**
+ * Плановая дата при проверке: сохраняем существующую, если она сегодня/в будущем (МСК);
+ * иначе — nearestPaymentDate().
+ */
+export function resolvePlannedPayAtOnCheck(existing: Date | null | undefined): Date {
+  if (existing && isTodayOrFutureMoscow(existing)) return existing;
+  return nearestPaymentDate();
+}
+
 /** Форматирует номер недели: "Неделя 01", "Неделя 16". */
 export function weekLabel(week: number): string {
   return `Неделя ${String(week).padStart(2, "0")}`;

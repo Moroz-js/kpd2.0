@@ -25,6 +25,22 @@ export default auth((req) => {
   const canUseExecutorSection = isPermanentExec || isPm;
   const hasProfile = !!executorId;
 
+  if (pathname.startsWith("/api/")) {
+    const method = req.method.toUpperCase();
+    const source = req.nextUrl.searchParams.get("snapshot") ?? req.nextUrl.searchParams.get("source");
+    const historicalContext =
+      req.headers.get("x-kpd-read-only") === "1" ||
+      req.nextUrl.searchParams.get("compare") === "1" ||
+      (!!source && source !== "live");
+    if (!["GET", "HEAD", "OPTIONS"].includes(method) && historicalContext) {
+      return NextResponse.json(
+        { error: "Исторические данные и режим сравнения доступны только для чтения" },
+        { status: 409 }
+      );
+    }
+    return NextResponse.next();
+  }
+
   // Корень / login
   if (pathname === "/login" || pathname === "/") {
     if (role) {
@@ -71,5 +87,5 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };

@@ -182,6 +182,8 @@ async function seedResponsibleManagers(hash: string) {
             isResponsible: true,
             responsibleActive: m.responsibleActive,
             status: "active",
+            contactEmail: m.email,
+            accessEmail: m.email,
             accessRevokedAt: null,
             defaultBankAccountId: opsAcc?.id ?? null,
             inTgChat: m.inTgChat,
@@ -198,6 +200,8 @@ async function seedResponsibleManagers(hash: string) {
             isResponsible: true,
             responsibleActive: m.responsibleActive,
             status: "active",
+            contactEmail: m.email,
+            accessEmail: m.email,
             defaultBankAccountId: opsAcc?.id ?? null,
             inTgChat: m.inTgChat,
             specialty: "Руководитель проектов",
@@ -427,7 +431,13 @@ async function seedExecutors(hash: string) {
       const u = await prisma.user.upsert({
         where:  { email: e.email },
         update: {},
-        create: { email: e.email, password: hash, fullName: e.name, role: "executor", isActive: e.status !== "archived" },
+        create: {
+          email: e.email,
+          password: hash,
+          fullName: e.name,
+          role: "executor",
+          isActive: e.status !== "archived" && e.hasAccess !== false,
+        },
       });
       userId = u.id;
     }
@@ -440,7 +450,10 @@ async function seedExecutors(hash: string) {
       defaultBankAccountId: opsAcc?.id ?? null,
       inTgChat: e.inTgChat ?? false,
       status: e.status ?? "active",
-      accessRevokedAt: e.hasAccess === false ? new Date() : null,
+      contactEmail: e.email ?? null,
+      accessEmail:
+        e.email && e.hasAccess !== false && e.status !== "archived" ? e.email : null,
+      accessRevokedAt: e.hasAccess === false || e.status === "archived" ? new Date() : null,
     }});
 
     for (const wtName of e.workTypes ?? []) {
@@ -1247,6 +1260,103 @@ async function backfillResponsibleExecutors() {
   console.log(`[seed] backfill responsibleExecutor: works=${works}, otherExpenses=${other}`);
 }
 
+function seedEntityNumber(scope: "payout" | "issued-work" | "other-expense", year: number, serial: number) {
+  const prefix = scope === "payout" ? "В" : scope === "issued-work" ? "ВР" : "ПТ";
+  return `${prefix}${String(year % 100).padStart(2, "0")}.${String(serial).padStart(3, "0")}`;
+}
+
+type SeedNumberItem = {
+  model: "payment" | "work" | "otherExpense";
+  id: string;
+  year: number;
+  number: string | null;
+  serial: number | null;
+  paidAt: Date | null;
+  plannedPayAt: Date | null;
+  createdAt: Date;
+};
+
+function compareSeedNumberItems(a: SeedNumberItem, b: SeedNumberItem) {
+  const ad = a.paidAt ?? a.plannedPayAt;
+  const bd = b.paidAt ?? b.plannedPayAt;
+  if (ad && bd && ad.getTime() !== bd.getTime()) return ad.getTime() - bd.getTime();
+  if (ad && !bd) return -1;
+  if (!ad && bd) return 1;
+  return a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id);
+}
+
+/** Seed использует bulk-create, поэтому синхронизирует номера после заполнения данных. */
+async function backfillSeedEntityNumbers() {
+  const [payments, works, expenses] = await Promise.all([
+    prisma.payment.findMany(),
+    prisma.work.findMany(),
+    prisma.otherExpense.findMany(),
+  ]);
+  const scopes: Array<{
+    scope: "payout" | "issued-work" | "other-expense";
+    prefix: "payout" | "issuedWork" | "otherExpense";
+    items: SeedNumberItem[];
+  }> = [
+    {
+      scope: "payout",
+      prefix: "payout",
+      items: [
+        ...payments.map((row) => ({ model: "payment" as const, id: row.id, year: row.payoutNumberYear ?? row.periodYear, number: row.payoutNumber, serial: row.payoutNumberSerial, paidAt: row.paidAt, plannedPayAt: row.plannedPayAt, createdAt: row.createdAt })),
+        ...expenses.filter((row) => row.paymentAmount != null).map((row) => ({ model: "otherExpense" as const, id: row.id, year: row.payoutNumberYear ?? row.executionYear, number: row.payoutNumber, serial: row.payoutNumberSerial, paidAt: row.paidAt, plannedPayAt: row.plannedPayAt, createdAt: row.createdAt })),
+      ],
+    },
+    {
+      scope: "issued-work",
+      prefix: "issuedWork",
+      items: [
+        ...works.map((row) => ({ model: "work" as const, id: row.id, year: row.issuedWorkNumberYear ?? row.executionYear, number: row.issuedWorkNumber, serial: row.issuedWorkNumberSerial, paidAt: row.paidAt, plannedPayAt: row.plannedPayAt, createdAt: row.createdAt })),
+        ...expenses.map((row) => ({ model: "otherExpense" as const, id: row.id, year: row.issuedWorkNumberYear ?? row.executionYear, number: row.issuedWorkNumber, serial: row.issuedWorkNumberSerial, paidAt: row.paidAt, plannedPayAt: row.plannedPayAt, createdAt: row.createdAt })),
+      ],
+    },
+    {
+      scope: "other-expense",
+      prefix: "otherExpense",
+      items: expenses.map((row) => ({ model: "otherExpense" as const, id: row.id, year: row.otherExpenseNumberYear ?? row.executionYear, number: row.otherExpenseNumber, serial: row.otherExpenseNumberSerial, paidAt: row.paidAt, plannedPayAt: row.plannedPayAt, createdAt: row.createdAt })),
+    },
+  ];
+
+  for (const { scope, prefix, items } of scopes) {
+    const years = [...new Set(items.map((row) => row.year))];
+    for (const year of years) {
+      const yearRows = items.filter((row) => row.year === year);
+      const used = new Set(yearRows.flatMap((row) => row.serial == null ? [] : [row.serial]));
+      const rows = yearRows.filter((row) => !row.number).sort(compareSeedNumberItems);
+      await prisma.$transaction(async (tx) => {
+        let serial = 1;
+        for (const row of rows) {
+          while (used.has(serial)) serial += 1;
+          const data = {
+            [`${prefix}Number`]: seedEntityNumber(scope, year, serial),
+            [`${prefix}NumberYear`]: year,
+            [`${prefix}NumberSerial`]: serial,
+          };
+          if (row.model === "payment") await tx.payment.update({ where: { id: row.id }, data });
+          else if (row.model === "work") await tx.work.update({ where: { id: row.id }, data });
+          else await tx.otherExpense.update({ where: { id: row.id }, data });
+          used.add(serial);
+          serial += 1;
+        }
+        const maxSerial = used.size ? Math.max(...used) : 0;
+        const counter = await tx.numberCounter.findUnique({
+          where: { scope_year: { scope, year } },
+          select: { lastValue: true },
+        });
+        const lastValue = Math.max(maxSerial, counter?.lastValue ?? 0);
+        await tx.numberCounter.upsert({
+          where: { scope_year: { scope, year } },
+          create: { scope, year, lastValue },
+          update: { lastValue },
+        });
+      });
+    }
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  main
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1269,6 +1379,7 @@ async function main() {
   await seedSpendingPlanLines();
   await seedVacations();
   await backfillResponsibleExecutors();
+  await backfillSeedEntityNumbers();
 
   const [works, payments, expenses, charges, plan] = await Promise.all([
     prisma.work.count(),

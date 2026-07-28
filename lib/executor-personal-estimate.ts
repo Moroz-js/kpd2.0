@@ -1,30 +1,30 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 
-/** Личная смета: не сервис и привязан пользователь (логин). */
-export function hasPersonalSmeta(executor: { type: string; userId: string | null }): boolean {
-  return executor.type !== "service" && executor.userId != null;
+/** Личная смета существует в интерфейсе только при заполненном email доступа. */
+export function hasPersonalSmeta(executor: { accessEmail: string | null }): boolean {
+  return Boolean(executor.accessEmail?.trim());
 }
 
 /** Прочие траты: без личной сметы или личная смета с отозванным доступом. */
 export function canAssignOtherExpense(executor: {
   status: string;
-  type: string;
-  userId: string | null;
+  accessEmail: string | null;
   accessRevokedAt: Date | null;
+  user: { isActive: boolean } | null;
 }): boolean {
   if (executor.status !== "active") return false;
   if (!hasPersonalSmeta(executor)) return true;
-  return executor.accessRevokedAt != null;
+  return executor.accessRevokedAt != null || !executor.user?.isActive;
 }
 
 export const executorWhereForOtherExpense: Prisma.ExecutorWhereInput = {
   status: "active",
   NOT: {
     AND: [
-      { type: { not: "service" } },
-      { userId: { not: null } },
+      { accessEmail: { not: null } },
       { accessRevokedAt: null },
+      { user: { is: { isActive: true } } },
     ],
   },
 };
@@ -32,7 +32,12 @@ export const executorWhereForOtherExpense: Prisma.ExecutorWhereInput = {
 export async function assertExecutorEligibleForOtherExpense(executorId: string): Promise<void> {
   const executor = await prisma.executor.findUnique({
     where: { id: executorId },
-    select: { status: true, type: true, userId: true, accessRevokedAt: true },
+    select: {
+      status: true,
+      accessEmail: true,
+      accessRevokedAt: true,
+      user: { select: { isActive: true } },
+    },
   });
   if (!executor || !canAssignOtherExpense(executor)) {
     throw new Error(

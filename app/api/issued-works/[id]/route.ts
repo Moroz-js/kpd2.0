@@ -4,11 +4,12 @@ import { getSessionUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/permissions";
 import { updateIssuedWork, canReviewIssuedSource } from "@/lib/services/issuedWorks";
 import { WORK_STATUSES_SETTABLE } from "@/lib/statuses";
+import { zNullableDateString } from "@/lib/date-string";
 
 const patchSchema = z.object({
   projectId: z.string().optional(),
   workTypeId: z.string().optional(),
-  plannedPayAt: z.string().nullable().optional(),
+  plannedPayAt: zNullableDateString,
   executionMonth: z.number().int().min(1).max(12).optional(),
   executionYear: z.number().int().optional(),
   executorId: z.string().optional(),

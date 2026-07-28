@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { logActivity } from "@/lib/audit/log";
 import { nearestPaymentDate } from "@/lib/iso-weeks";
 import { resolveProjectManagerExecutorId } from "@/lib/services/projects";
+import { allocateEntityNumber, withNumberedTransaction } from "@/lib/services/entity-numbering";
 
 export type CreateWorkInput = {
   projectId: string;
@@ -65,24 +66,30 @@ export async function createWork(
       ? input.responsibleExecutorId
       : await resolveProjectManagerExecutorId(input.projectId);
 
-  const created = await prisma.work.create({
-    data: {
-      executorId,
-      projectId: input.projectId,
-      workTypeId: input.workTypeId,
-      executionYear: input.executionYear,
-      executionMonth: input.executionMonth,
-      techTask: input.techTask,
-      report: input.report ?? null,
-      link: input.link ?? null,
-      volume: input.volume ?? null,
-      rate: input.rate ?? null,
-      amount: input.amount,
-      plannedPayAt: input.plannedPayAt ? new Date(input.plannedPayAt) : nearestPaymentDate(),
-      responsibleExecutorId: responsibleExecutorId ?? null,
-      workStatus: "submitted",
-      comment: input.comment ?? null,
-    },
+  const created = await withNumberedTransaction(async (tx) => {
+    const number = await allocateEntityNumber(tx, "issued-work", input.executionYear);
+    return tx.work.create({
+      data: {
+        issuedWorkNumber: number.number,
+        issuedWorkNumberYear: number.year,
+        issuedWorkNumberSerial: number.serial,
+        executorId,
+        projectId: input.projectId,
+        workTypeId: input.workTypeId,
+        executionYear: input.executionYear,
+        executionMonth: input.executionMonth,
+        techTask: input.techTask,
+        report: input.report ?? null,
+        link: input.link ?? null,
+        volume: input.volume ?? null,
+        rate: input.rate ?? null,
+        amount: input.amount,
+        plannedPayAt: input.plannedPayAt ? new Date(input.plannedPayAt) : nearestPaymentDate(),
+        responsibleExecutorId: responsibleExecutorId ?? null,
+        workStatus: "submitted",
+        comment: input.comment ?? null,
+      },
+    });
   });
 
   await logActivity({
@@ -218,27 +225,33 @@ export async function duplicateWorks(
 
   for (const id of ids) {
     const src = byId.get(id)!;
-    const copy = await prisma.work.create({
-      data: {
-        executorId,
-        projectId: src.projectId,
-        workTypeId: src.workTypeId,
-        executionYear: src.executionYear,
-        executionMonth: src.executionMonth,
-        techTask: src.techTask,
-        report: src.report,
-        link: src.link,
-        volume: src.volume,
-        rate: src.rate,
-        amount: src.amount,
-        responsibleExecutorId: src.responsibleExecutorId,
-        comment: src.comment,
-        plannedPayAt: src.plannedPayAt,
-        workStatus: "submitted",
-        paymentId: null,
-        paidAt: null,
-        checkedAt: null,
-      },
+    const copy = await withNumberedTransaction(async (tx) => {
+      const number = await allocateEntityNumber(tx, "issued-work", src.executionYear);
+      return tx.work.create({
+        data: {
+          issuedWorkNumber: number.number,
+          issuedWorkNumberYear: number.year,
+          issuedWorkNumberSerial: number.serial,
+          executorId,
+          projectId: src.projectId,
+          workTypeId: src.workTypeId,
+          executionYear: src.executionYear,
+          executionMonth: src.executionMonth,
+          techTask: src.techTask,
+          report: src.report,
+          link: src.link,
+          volume: src.volume,
+          rate: src.rate,
+          amount: src.amount,
+          responsibleExecutorId: src.responsibleExecutorId,
+          comment: src.comment,
+          plannedPayAt: src.plannedPayAt,
+          workStatus: "submitted",
+          paymentId: null,
+          paidAt: null,
+          checkedAt: null,
+        },
+      });
     });
 
     await logActivity({

@@ -7,7 +7,7 @@ import { z } from "zod";
 
 const patchSchema = z.object({
   amount: z.number().positive().optional(),
-  paymentStatus: z.enum(["planned", "sent", "paid"]).optional(),
+  paymentStatus: z.enum(["planned", "paid"]).optional(),
   bankAccountId: z.string().nullable().optional(),
   plannedPayAt: z.string().nullable().optional(),
   paidAt: z.string().nullable().optional(),

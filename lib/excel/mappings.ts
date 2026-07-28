@@ -40,7 +40,6 @@ export const CHARGE_STATUS_RU_EN: Record<string, string> = {
 
 export const PAYMENT_STATUS_RU_EN: Record<string, string> = {
   Запланировано: "planned",
-  Отправлено: "sent",
   Оплачено: "paid",
 };
 

@@ -10,7 +10,8 @@ import { VacationsTab } from "./VacationsTab";
 import { TasksTab } from "./TasksTab";
 import { SettingsTab } from "./SettingsTab";
 import { EXECUTOR_TYPES } from "@/lib/statuses";
-import { hasEstimateTabs, normalizeExecutorType } from "@/lib/executor-type";
+import { normalizeExecutorType } from "@/lib/executor-type";
+import { hasPersonalSmeta } from "@/lib/executor-personal-estimate";
 
 type WorkType = { id: string; name: string };
 type Project = { id: string; name: string; status: string };
@@ -23,6 +24,8 @@ type ExecutorDetail = {
   status: string;
   accessRevokedAt: string | null;
   contacts: string | null;
+  contactEmail: string | null;
+  accessEmail: string | null;
   requisites: string | null;
   recipientType: string | null;
   defaultBankAccountId: string | null;
@@ -137,11 +140,11 @@ export function ExecutorEstimateClient({
     router.refresh();
   }, [executorId, loadExecutor, router]);
 
-  const hasPersonalSmeta =
+  const hasPersonalEstimate =
     !settingsOnlyView &&
     executor != null &&
-    hasEstimateTabs(executor.type, executor.user?.id ?? null);
-  const settingsOnly = !hasPersonalSmeta;
+    hasPersonalSmeta(executor);
+  const settingsOnly = !hasPersonalEstimate;
 
   const isPermanentType = executor != null && normalizeExecutorType(executor.type) === "permanent";
   // Внешний владелец не видит вкладку отпусков и "работы на проверку"
@@ -197,12 +200,12 @@ export function ExecutorEstimateClient({
             <h1 className="text-xl font-semibold text-neutral-900">{executor.name}</h1>
             <p className="text-sm text-neutral-500">
               {EXECUTOR_TYPES[normalizeExecutorType(executor.type)] ?? executor.type}
-              {executor.user?.email ? ` · ${executor.user.email}` : ""}
+              {executor.accessEmail ? ` · ${executor.accessEmail}` : ""}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {hasPersonalSmeta && openTaskCount > 0 && (
+          {hasPersonalEstimate && openTaskCount > 0 && (
             <button
               onClick={() => setActiveTab("tasks")}
               className="inline-flex items-center gap-1.5 rounded-full bg-orange-100 border border-orange-200 px-3 py-1 text-xs font-medium text-orange-800 hover:bg-orange-200 transition-colors"
@@ -246,7 +249,7 @@ export function ExecutorEstimateClient({
 
       {/* Tab content */}
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        {hasPersonalSmeta && activeTab === "works" && (
+        {hasPersonalEstimate && activeTab === "works" && (
           <WorksTab
             executorId={executorId}
             isAdmin={isAdmin}
@@ -254,10 +257,10 @@ export function ExecutorEstimateClient({
             bankAccounts={bankAccounts}
           />
         )}
-        {hasPersonalSmeta && activeTab === "vacations" && (
+        {hasPersonalEstimate && activeTab === "vacations" && (
           <VacationsTab executorId={executorId} isAdmin={isAdmin} isOwner={isOwner} />
         )}
-        {hasPersonalSmeta && activeTab === "tasks" && (
+        {hasPersonalEstimate && activeTab === "tasks" && (
           <TasksTab
             executorId={executorId}
             isAdmin={isAdmin}

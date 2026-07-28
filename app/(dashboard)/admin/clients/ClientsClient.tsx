@@ -21,6 +21,10 @@ import { Label } from "@/components/ui/label";
 import { DepartmentCombobox } from "@/components/ui-custom/DepartmentCombobox";
 import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner, compactTable, compactHead, compactCell, compactCellClip } from "@/lib/table-styles";
+import {
+  usePersistedInterfaceState,
+  usePersistedScroll,
+} from "@/components/PersistedInterfaceState";
 
 type Row = {
   id: string;
@@ -63,6 +67,18 @@ export function ClientsClient() {
   const [editing, setEditing] = React.useState<Row | "new" | null>(null);
   const [archiveTarget, setArchiveTarget] = React.useState<Row | null>(null);
   const [unarchiveTarget, setUnarchiveTarget] = React.useState<Row | null>(null);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  usePersistedInterfaceState(
+    "clients",
+    { companyFilter, statusFilter, sort },
+    (stored) => {
+      if (stored.companyFilter) setCompanyFilter(stored.companyFilter);
+      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
+      if (stored.sort) setSort(stored.sort);
+    }
+  );
+  usePersistedScroll(scrollRef, "clients-table");
 
   const departmentUsage = React.useMemo(() => {
     const counts: Record<string, number> = {};
@@ -158,7 +174,7 @@ export function ClientsClient() {
         </div>
       )}
 
-      <Table className={compactTable} containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto">
+      <Table className={compactTable} containerRef={scrollRef} containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto">
           <TableHeader>
             <TableRow>
               <SortableHead field="name" sortBy={sort.field} sortDir={sort.dir} onSort={handleSort} className={cn(compactHead, "w-[240px] max-w-[240px]")}>

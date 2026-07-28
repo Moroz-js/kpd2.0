@@ -10,6 +10,7 @@
 import { prisma } from "@/lib/db";
 import { logActivity } from "@/lib/audit/log";
 import { nearestPaymentDate } from "@/lib/iso-weeks";
+import { allocateEntityNumber, withNumberedTransaction } from "@/lib/services/entity-numbering";
 
 // Возвращает defaultBankAccountId исполнителя → глобальный дефолт → null
 async function resolveDefaultBank(executorId: string): Promise<string | null> {
@@ -60,9 +61,13 @@ export async function createPaymentFromWorks(
   const bankAccountId = await resolveDefaultBank(executorId);
   const plannedPayAt = nearestPaymentDate();
 
-  const payment = await prisma.$transaction(async (tx) => {
+  const payment = await withNumberedTransaction(async (tx) => {
+    const number = await allocateEntityNumber(tx, "payout", plannedPayAt.getFullYear());
     const p = await tx.payment.create({
       data: {
+        payoutNumber: number.number,
+        payoutNumberYear: number.year,
+        payoutNumberSerial: number.serial,
         executorId,
         periodYear: plannedPayAt.getFullYear(),
         periodMonth: plannedPayAt.getMonth() + 1,
@@ -103,7 +108,7 @@ export async function setPaymentWorkLinks(
 
   const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
   if (payment.executorId !== executorId) throw new Error("Выплата не найдена");
-  if (payment.paymentStatus === "sent" || payment.paymentStatus === "paid") {
+  if (payment.paymentStatus === "paid") {
     throw new Error("Чтобы изменить список привязанных работ, смените статус выплаты на «запланирована» (если она ещё не оплачена)");
   }
 
@@ -173,20 +178,26 @@ export async function createManualPayment(
       ? input.bankAccountId
       : await resolveDefaultBank(input.executorId);
 
-  const payment = await prisma.payment.create({
-    data: {
-      executorId: input.executorId,
-      periodYear: input.periodYear,
-      periodMonth: input.periodMonth,
-      amount: input.amount,
-      paymentStatus: input.paymentStatus ?? "planned",
-      bankAccountId,
-      plannedPayAt: input.plannedPayAt
-        ? new Date(input.plannedPayAt)
-        : nearestPaymentDate(),
-      paidAt: input.paidAt ? new Date(input.paidAt) : null,
-      comment: input.comment ?? null,
-    },
+  const payment = await withNumberedTransaction(async (tx) => {
+    const number = await allocateEntityNumber(tx, "payout", input.periodYear);
+    return tx.payment.create({
+      data: {
+        payoutNumber: number.number,
+        payoutNumberYear: number.year,
+        payoutNumberSerial: number.serial,
+        executorId: input.executorId,
+        periodYear: input.periodYear,
+        periodMonth: input.periodMonth,
+        amount: input.amount,
+        paymentStatus: input.paymentStatus ?? "planned",
+        bankAccountId,
+        plannedPayAt: input.plannedPayAt
+          ? new Date(input.plannedPayAt)
+          : nearestPaymentDate(),
+        paidAt: input.paidAt ? new Date(input.paidAt) : null,
+        comment: input.comment ?? null,
+      },
+    });
   });
 
   await logActivity({
@@ -237,21 +248,17 @@ export async function updatePayment(
   if (toStatus && toStatus !== fromStatus) {
     if (toStatus === "paid") {
       await markPaymentPaid(paymentId, patch.paidAt ? new Date(patch.paidAt) : new Date(), userId);
-    } else if (toStatus === "sent") {
-      await prisma.$transaction(async (tx) => {
-        await tx.payment.update({ where: { id: paymentId }, data: { paymentStatus: "sent" } });
-        await tx.work.updateMany({ where: { paymentId }, data: { workStatus: "paid" } });
-      });
     } else if (toStatus === "planned") {
-      // sent/paid → planned: работы из «оплачено» возвращаются в «проверена»
+      // paid → planned: работы из «оплачено» возвращаются в «проверена»
+      const wasPaidLike = fromStatus === "paid";
       await prisma.$transaction(async (tx) => {
         await tx.payment.update({
           where: { id: paymentId },
-          data: { paymentStatus: "planned", ...(fromStatus === "paid" && { paidAt: null }) },
+          data: { paymentStatus: "planned", ...(wasPaidLike && { paidAt: null }) },
         });
         await tx.work.updateMany({
           where: { paymentId, workStatus: "paid" },
-          data: { workStatus: "checked", ...(fromStatus === "paid" && { paidAt: null }) },
+          data: { workStatus: "checked", ...(wasPaidLike && { paidAt: null }) },
         });
       });
     }

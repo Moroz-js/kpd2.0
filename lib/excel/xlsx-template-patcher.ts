@@ -41,6 +41,7 @@ export async function patchWorkbookTemplate(
   templateBuffer: Buffer,
   patches: SheetPatch[],
   keepSheets?: string[],
+  documentMetadata?: Record<string, unknown>,
 ): Promise<Buffer> {
   const zip = await JSZip.loadAsync(templateBuffer);
   const sharedStrings = await readSharedStrings(zip);
@@ -73,6 +74,18 @@ export async function patchWorkbookTemplate(
 
   await removeCalcChain(zip);
   await forceFullRecalculation(zip);
+  if (documentMetadata) {
+    const corePath = "docProps/core.xml";
+    const file = zip.file(corePath);
+    if (file) {
+      const core = await file.async("string");
+      const description = escapeXml(JSON.stringify(documentMetadata));
+      const next = /<dc:description>[\s\S]*?<\/dc:description>/.test(core)
+        ? core.replace(/<dc:description>[\s\S]*?<\/dc:description>/, `<dc:description>${description}</dc:description>`)
+        : core.replace("</cp:coreProperties>", `<dc:description>${description}</dc:description></cp:coreProperties>`);
+      zip.file(corePath, next);
+    }
+  }
 
   const output = await zip.generateAsync({
     type: "nodebuffer",

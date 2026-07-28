@@ -53,3 +53,6 @@ next-env.d.ts
 /prisma/*.db-shm
 /prisma/*.db-wal
 /prisma/dev.db*
+
+# local snapshot storage (SNAPSHOT_STORAGE_MODE=local)
+/.snapshots/

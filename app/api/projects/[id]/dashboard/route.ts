@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { getISOWeek, getISOWeekYear, getISOWeeksInYear, isoWeekStart } from "@/lib/iso-weeks";
+import { hasPersonalSmeta } from "@/lib/executor-personal-estimate";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -67,7 +68,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     prisma.spendingPlanLine.findMany({
       where: { projectId: id, year },
       include: {
-        executor: { select: { id: true, name: true, userId: true, type: true } },
+        executor: { select: { id: true, name: true, accessEmail: true } },
         workType: { select: { id: true, name: true } },
       },
     }),
@@ -216,8 +217,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         id: key,
         executorId: pl.executorId,
         executorName: pl.executor.name,
-        executorHasPersonalSmeta:
-          pl.executor.type !== "service" && pl.executor.userId != null,
+        executorHasPersonalSmeta: hasPersonalSmeta(pl.executor),
         workTypeId: pl.workTypeId,
         workTypeName: pl.workType.name,
         sourceType: pl.sourceType,

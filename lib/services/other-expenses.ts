@@ -1,11 +1,12 @@
 import { prisma } from "@/lib/db";
 import { logActivity } from "@/lib/audit/log";
-import { nearestPaymentDate } from "@/lib/iso-weeks";
+import { nearestPaymentDate, resolvePlannedPayAtOnCheck } from "@/lib/iso-weeks";
 import { assertExecutorEligibleForOtherExpense } from "@/lib/executor-personal-estimate";
 import {
   hasOtherExpensePayment,
   workStatusFromPaymentStatus,
 } from "@/lib/other-expense-payment";
+import { allocateEntityNumber, withNumberedTransaction } from "@/lib/services/entity-numbering";
 
 // ─── Типы ─────────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,31 @@ export type UpdateOtherExpenseInput = Partial<Omit<CreateOtherExpenseInput, "res
   workStatus?: string;
   paymentStatus?: string | null;
 };
+
+const AMOUNTS_UNEQUAL = "Сумма работы и сумма выплаты не равны";
+const AMOUNTS_POSITIVE = "Сумма работы и сумма выплаты должны быть положительными";
+
+function parseDate(value: string, fieldLabel: string): Date {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`${fieldLabel}: некорректная дата`);
+  }
+  return date;
+}
+
+function assertAmountsConsistent(
+  amount: number,
+  paymentAmount: number | null,
+  paymentStatus: string | null
+) {
+  if (!hasOtherExpensePayment(paymentStatus) && paymentAmount == null) return;
+  if (paymentAmount == null || !(amount > 0) || !(paymentAmount > 0)) {
+    throw new Error(AMOUNTS_POSITIVE);
+  }
+  if (amount !== paymentAmount) {
+    throw new Error(AMOUNTS_UNEQUAL);
+  }
+}
 
 // ─── List ─────────────────────────────────────────────────────────────────────
 
@@ -110,15 +136,13 @@ function applyPaymentCascade(
   patch: UpdateOtherExpenseInput
 ) {
   if (patch.plannedPayAt !== undefined) {
-    state.plannedPayAt = patch.plannedPayAt ? new Date(patch.plannedPayAt) : null;
+    state.plannedPayAt = patch.plannedPayAt
+      ? parseDate(patch.plannedPayAt, "Дата оплаты план")
+      : null;
   }
 
   if (patch.paymentAmount !== undefined) {
     state.paymentAmount = patch.paymentAmount;
-  }
-
-  if (patch.amount !== undefined && state.paymentAmount != null) {
-    state.paymentAmount = patch.amount;
   }
 
   if (patch.paymentStatus !== undefined) {
@@ -132,8 +156,12 @@ function applyPaymentCascade(
     } else {
       state.workStatus = workStatusFromPaymentStatus(patch.paymentStatus);
       if (patch.paymentStatus === "planned") {
-        // Откат на «Запланировано» — убираем дату оплаты (из «Отправлено» или «Оплачено»)
+        // Откат на «Запланировано» — убираем дату оплаты
         state.paidAt = null;
+        // Создание/пересоздание выплаты: paymentAmount = amount
+        if (state.paymentAmount == null) {
+          state.paymentAmount = patch.amount ?? existing.amount;
+        }
       }
       if (patch.paymentStatus === "paid" && !state.paidAt) {
         state.paidAt = existing.paidAt ?? new Date();
@@ -142,15 +170,13 @@ function applyPaymentCascade(
   }
 
   if (patch.paidAt !== undefined) {
-    const nextPaidAt = patch.paidAt ? new Date(patch.paidAt) : null;
+    const nextPaidAt = patch.paidAt ? parseDate(patch.paidAt, "Дата оплаты") : null;
     state.paidAt = nextPaidAt;
 
     if (!hasOtherExpensePayment(state.paymentStatus)) return;
 
     if (nextPaidAt) {
-      if (state.paymentStatus !== "paid") {
-        state.paymentStatus = "sent";
-      }
+      state.paymentStatus = "paid";
       state.workStatus = "paid";
     } else if (existing.paidAt) {
       state.paymentStatus = "planned";
@@ -173,29 +199,65 @@ export async function createOtherExpense(
   userId: string
 ) {
   await assertExecutorEligibleForOtherExpense(input.executorId);
-  const paidAt = input.paidAt ? new Date(input.paidAt) : null;
-  const expense = await prisma.otherExpense.create({
-    data: {
-      projectId: input.projectId,
-      executorId: input.executorId,
-      workTypeId: input.workTypeId,
-      responsibleExecutorId: input.responsibleExecutorId,
-      bankAccountId: input.bankAccountId ?? null,
-      executionYear: input.executionYear,
-      executionMonth: input.executionMonth,
-      description: input.description,
-      amount: input.amount,
-      paymentAmount: paidAt ? (input.paymentAmount ?? input.amount) : null,
-      preferredPayMethod: input.preferredPayMethod ?? null,
-      plannedPayAt: input.plannedPayAt ? new Date(input.plannedPayAt) : null,
-      paidAt,
-      checkedAt: paidAt ? new Date() : null,
-      comment: input.comment ?? null,
-      workStatus: paidAt ? "paid" : "submitted",
-      paymentStatus: paidAt ? "paid" : null,
-      createdById: userId,
-    },
-    include: otherExpenseInclude,
+  const paidAt = input.paidAt ? parseDate(input.paidAt, "Дата оплаты") : null;
+  const amount = input.amount;
+  if (!(amount > 0)) throw new Error(AMOUNTS_POSITIVE);
+
+  if (input.paymentAmount != null) {
+    assertAmountsConsistent(amount, input.paymentAmount, "planned");
+  }
+  const paymentAmount = paidAt
+    ? (input.paymentAmount ?? amount)
+    : null;
+  if (paidAt) {
+    assertAmountsConsistent(amount, paymentAmount, "paid");
+  }
+
+  const plannedPayAt = input.plannedPayAt
+    ? parseDate(input.plannedPayAt, "Дата оплаты план")
+    : nearestPaymentDate();
+
+  const expense = await withNumberedTransaction(async (tx) => {
+    const expenseNumber = await allocateEntityNumber(tx, "other-expense", input.executionYear);
+    const issuedNumber = await allocateEntityNumber(tx, "issued-work", input.executionYear);
+    const payoutNumber = paidAt
+      ? await allocateEntityNumber(tx, "payout", input.executionYear)
+      : null;
+
+    return tx.otherExpense.create({
+      data: {
+        otherExpenseNumber: expenseNumber.number,
+        otherExpenseNumberYear: expenseNumber.year,
+        otherExpenseNumberSerial: expenseNumber.serial,
+        issuedWorkNumber: issuedNumber.number,
+        issuedWorkNumberYear: issuedNumber.year,
+        issuedWorkNumberSerial: issuedNumber.serial,
+        ...(payoutNumber && {
+          payoutNumber: payoutNumber.number,
+          payoutNumberYear: payoutNumber.year,
+          payoutNumberSerial: payoutNumber.serial,
+        }),
+        projectId: input.projectId,
+        executorId: input.executorId,
+        workTypeId: input.workTypeId,
+        responsibleExecutorId: input.responsibleExecutorId,
+        bankAccountId: input.bankAccountId ?? null,
+        executionYear: input.executionYear,
+        executionMonth: input.executionMonth,
+        description: input.description,
+        amount,
+        paymentAmount,
+        preferredPayMethod: input.preferredPayMethod ?? null,
+        plannedPayAt,
+        paidAt,
+        checkedAt: paidAt ? new Date() : null,
+        comment: input.comment ?? null,
+        workStatus: paidAt ? "paid" : "submitted",
+        paymentStatus: paidAt ? "paid" : null,
+        createdById: userId,
+      },
+      include: otherExpenseInclude,
+    });
   });
 
   await logActivity({
@@ -234,28 +296,51 @@ export async function updateOtherExpense(
 
   applyPaymentCascade(existing, state, patch);
 
-  const updated = await prisma.otherExpense.update({
-    where: { id },
-    include: otherExpenseInclude,
-    data: {
-      ...(patch.projectId !== undefined && { projectId: patch.projectId }),
-      ...(patch.executorId !== undefined && { executorId: patch.executorId }),
-      ...(patch.workTypeId !== undefined && { workTypeId: patch.workTypeId }),
-      ...(patch.responsibleExecutorId !== undefined && { responsibleExecutorId: patch.responsibleExecutorId }),
-      ...(patch.bankAccountId !== undefined && { bankAccountId: patch.bankAccountId }),
-      ...(patch.executionYear !== undefined && { executionYear: patch.executionYear }),
-      ...(patch.executionMonth !== undefined && { executionMonth: patch.executionMonth }),
-      ...(patch.description !== undefined && { description: patch.description }),
-      ...(patch.amount !== undefined && { amount: patch.amount }),
-      ...(patch.preferredPayMethod !== undefined && { preferredPayMethod: patch.preferredPayMethod }),
-      ...(patch.comment !== undefined && { comment: patch.comment }),
-      workStatus: state.workStatus,
-      paymentStatus: state.paymentStatus,
-      paymentAmount: state.paymentAmount,
-      plannedPayAt: state.plannedPayAt,
-      paidAt: state.paidAt,
-      checkedAt: state.checkedAt,
-    },
+  const amount = patch.amount !== undefined ? patch.amount : existing.amount;
+  if (patch.amount !== undefined && !(amount > 0)) {
+    throw new Error(AMOUNTS_POSITIVE);
+  }
+  assertAmountsConsistent(amount, state.paymentAmount, state.paymentStatus);
+
+  const updated = await withNumberedTransaction(async (tx) => {
+    const hasPayment = hasOtherExpensePayment(state.paymentStatus) && state.paymentAmount != null;
+    const payoutNumber = hasPayment && !existing.payoutNumber
+      ? await allocateEntityNumber(tx, "payout", patch.executionYear ?? existing.executionYear)
+      : null;
+
+    return tx.otherExpense.update({
+      where: { id },
+      include: otherExpenseInclude,
+      data: {
+        ...(patch.projectId !== undefined && { projectId: patch.projectId }),
+        ...(patch.executorId !== undefined && { executorId: patch.executorId }),
+        ...(patch.workTypeId !== undefined && { workTypeId: patch.workTypeId }),
+        ...(patch.responsibleExecutorId !== undefined && { responsibleExecutorId: patch.responsibleExecutorId }),
+        ...(patch.bankAccountId !== undefined && { bankAccountId: patch.bankAccountId }),
+        ...(patch.executionYear !== undefined && { executionYear: patch.executionYear }),
+        ...(patch.executionMonth !== undefined && { executionMonth: patch.executionMonth }),
+        ...(patch.description !== undefined && { description: patch.description }),
+        ...(patch.amount !== undefined && { amount: patch.amount }),
+        ...(patch.preferredPayMethod !== undefined && { preferredPayMethod: patch.preferredPayMethod }),
+        ...(patch.comment !== undefined && { comment: patch.comment }),
+        ...(payoutNumber && {
+          payoutNumber: payoutNumber.number,
+          payoutNumberYear: payoutNumber.year,
+          payoutNumberSerial: payoutNumber.serial,
+        }),
+        ...(!hasPayment && {
+          payoutNumber: null,
+          payoutNumberYear: null,
+          payoutNumberSerial: null,
+        }),
+        workStatus: state.workStatus,
+        paymentStatus: state.paymentStatus,
+        paymentAmount: state.paymentAmount,
+        plannedPayAt: state.plannedPayAt,
+        paidAt: state.paidAt,
+        checkedAt: state.checkedAt,
+      },
+    });
   });
 
   await logActivity({
@@ -281,18 +366,28 @@ export async function checkOtherExpense(id: string, userId: string) {
     throw new Error("Выплата уже создана");
   }
 
-  const plannedPayAt = nearestPaymentDate();
+  const plannedPayAt = resolvePlannedPayAtOnCheck(existing.plannedPayAt);
 
-  const updated = await prisma.otherExpense.update({
-    where: { id },
-    include: otherExpenseInclude,
-    data: {
-      workStatus: "checked",
-      checkedAt: new Date(),
-      paymentStatus: "planned",
-      paymentAmount: existing.amount,
-      plannedPayAt,
-    },
+  const updated = await withNumberedTransaction(async (tx) => {
+    const number = existing.payoutNumber
+      ? null
+      : await allocateEntityNumber(tx, "payout", existing.executionYear);
+    return tx.otherExpense.update({
+      where: { id },
+      include: otherExpenseInclude,
+      data: {
+        ...(number && {
+          payoutNumber: number.number,
+          payoutNumberYear: number.year,
+          payoutNumberSerial: number.serial,
+        }),
+        workStatus: "checked",
+        checkedAt: new Date(),
+        paymentStatus: "planned",
+        paymentAmount: existing.amount,
+        plannedPayAt,
+      },
+    });
   });
 
   await logActivity({
@@ -322,8 +417,8 @@ export async function revertOtherExpenseCheck(
   if (existing.workStatus !== "checked") {
     throw new Error("Откат возможен только для работы со статусом «Проверено»");
   }
-  if (existing.paymentStatus === "sent" || existing.paymentStatus === "paid") {
-    throw new Error("Нельзя откатить: выплата уже отправлена или оплачена");
+  if (existing.paymentStatus === "paid") {
+    throw new Error("Нельзя откатить: выплата уже оплачена");
   }
 
   const updated = await prisma.otherExpense.update({
@@ -334,6 +429,9 @@ export async function revertOtherExpenseCheck(
       checkedAt: null,
       paymentStatus: null,
       paymentAmount: null,
+      payoutNumber: null,
+      payoutNumberYear: null,
+      payoutNumberSerial: null,
       paidAt: null,
     },
   });
@@ -363,6 +461,9 @@ export async function clearOtherExpensePayment(id: string, userId: string) {
     include: otherExpenseInclude,
     data: {
       paymentAmount: null,
+      payoutNumber: null,
+      payoutNumberYear: null,
+      payoutNumberSerial: null,
       plannedPayAt: null,
       paidAt: null,
       bankAccountId: null,

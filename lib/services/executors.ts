@@ -2,8 +2,7 @@
  * ExecutorService (TDNB-18).
  *
  * Типы: permanent | external | service | bank
- *  - permanent → User (login) + Executor
- *  - external / service / bank → Executor без логина (legacy external-person с userId сохраняется)
+ * Учётная запись не зависит от типа исполнителя и создаётся при выдаче доступа.
  */
 
 import { prisma } from "@/lib/db";
@@ -35,14 +34,14 @@ export type ExecutorListRow = {
   recipientTypes: string[]; // I (из recipientType JSON / legacy)
   requisites: string | null; // J
   contacts: string | null; // K
+  contactEmail: string | null;
+  accessEmail: string | null;
   userId: string | null;
-  email: string | null;
   inTgChat: boolean; // L
   specialty: string | null; // M
   note: string | null; // N
   contractFile: string | null; // O
   ndaFile: string | null; // P
-  hasAccess: boolean; // S
   status: string; // T
   lastPaidAt: Date | null; // U
   legalForm: string | null;
@@ -69,7 +68,6 @@ export async function listExecutors(): Promise<ExecutorListRow[]> {
     prisma.executor.findMany({
       orderBy: [{ name: "asc" }],
       include: {
-        user: { select: { id: true, email: true } },
         responsibleUser: { select: { id: true, fullName: true } },
         defaultBankAccount: { select: { id: true, name: true } },
         executorWorkTypes: { include: { workType: { select: { id: true, name: true } } } },
@@ -141,14 +139,14 @@ export async function listExecutors(): Promise<ExecutorListRow[]> {
       recipientTypes: parseRecipientTypes(e.recipientType),
       requisites: e.requisites,
       contacts: e.contacts,
-      userId: e.user?.id ?? null,
-      email: e.user?.email ?? null,
+      contactEmail: e.contactEmail,
+      accessEmail: e.accessEmail,
+      userId: e.userId,
       inTgChat: e.inTgChat,
       specialty: e.specialty,
       note: e.note,
       contractFile: e.contractFile,
       ndaFile: e.ndaFile,
-      hasAccess: e.accessRevokedAt == null && e.userId != null,
       status: e.status,
       lastPaidAt,
       legalForm: e.legalForm,
@@ -162,7 +160,8 @@ export type CreateExecutorInput =
       type: "permanent";
       firstName: string;
       lastName: string;
-      email: string;
+      contactEmail?: string | null;
+      accessEmail?: string | null;
       password?: string;
       companyStatus?: string | null;
       responsibleUserId?: string | null;
@@ -174,6 +173,9 @@ export type CreateExecutorInput =
   | {
       type: "external" | "service" | "bank";
       name: string;
+      contactEmail?: string | null;
+      accessEmail?: string | null;
+      password?: string;
       responsibleUserId?: string | null;
       recipientTypes?: string[];
       recipientType?: string | null;
@@ -202,15 +204,19 @@ export function executorDisplayName(input: CreateExecutorInput): string {
 
 export async function createExecutor(input: CreateExecutorInput, userId: string) {
   const name = executorDisplayName(input);
+  const accessEmail = input.accessEmail?.trim().toLowerCase() || null;
+  const contactEmail = input.contactEmail?.trim().toLowerCase() || null;
 
   const created = await prisma.$transaction(async (tx) => {
     let userIdToLink: string | null = null;
 
-    if (input.type === "permanent") {
+    if (accessEmail) {
+      const existing = await tx.user.findUnique({ where: { email: accessEmail } });
+      if (existing) throw new Error("Пользователь с таким email уже существует");
       const passwordHash = await hash(input.password ?? "Welcome2026!", 10);
       const user = await tx.user.create({
         data: {
-          email: input.email.trim().toLowerCase(),
+          email: accessEmail,
           password: passwordHash,
           fullName: name,
           role: "executor",
@@ -225,6 +231,9 @@ export async function createExecutor(input: CreateExecutorInput, userId: string)
         name,
         type: input.type,
         userId: userIdToLink,
+        contactEmail,
+        accessEmail,
+        accessRevokedAt: accessEmail ? null : new Date(),
         companyStatus: input.type === "permanent" ? input.companyStatus ?? null : null,
         recipientType: recipientTypeForCreate(input),
         specialty: input.type === "permanent" ? input.specialty ?? null : null,
@@ -243,7 +252,7 @@ export async function createExecutor(input: CreateExecutorInput, userId: string)
     entityLabel: created.name,
   });
 
-  if (input.type === "permanent") {
+  if (accessEmail) {
     await seedOnboardingTasks(created.id, userId);
   }
 
@@ -254,11 +263,11 @@ export type UpdateExecutorInput = {
   type?: ExecutorType;
   status?: "active" | "archived";
   name?: string;
-  email?: string;
   password?: string;
   companyStatus?: string | null;
   specialty?: string | null;
   contacts?: string | null;
+  contactEmail?: string | null;
   requisites?: string | null;
   note?: string | null;
   inTgChat?: boolean;
@@ -300,23 +309,20 @@ export async function updateExecutor(id: string, patch: UpdateExecutorInput, use
     await assertCanUnsetResponsible(before.userId);
   }
 
-  const needsAccount = nextType === "permanent" && !before.userId;
-  if (needsAccount) {
-    const email = patch.email?.trim().toLowerCase();
-    if (!email) {
-      throw new Error("Укажите email для создания учётной записи");
-    }
-    const password = patch.password ?? "Welcome2026!";
-    if (password.length < 6) {
-      throw new Error("Пароль не короче 6 символов");
-    }
-  } else if (before.userId && patch.password) {
+  if (before.userId && patch.password) {
     if (patch.password.length < 6) {
       throw new Error("Пароль не короче 6 символов");
     }
   }
 
   const updated = await prisma.$transaction(async (tx) => {
+    if (patch.status === "archived" && before.userId) {
+      await tx.user.update({
+        where: { id: before.userId },
+        data: { isActive: false },
+      });
+    }
+
     if (patch.workTypeIds) {
       await tx.executorWorkType.deleteMany({ where: { executorId: id } });
       if (patch.workTypeIds.length > 0) {
@@ -334,48 +340,25 @@ export async function updateExecutor(id: string, patch: UpdateExecutorInput, use
     const clearResponsible =
       patch.type !== undefined && !canBeResponsible(nextType) && before.isResponsible;
 
-    let linkedUserId: string | undefined;
-    if (needsAccount) {
-      const email = patch.email!.trim().toLowerCase();
-      const existing = await tx.user.findUnique({ where: { email } });
-      if (existing) {
-        throw new Error("Пользователь с таким email уже существует");
-      }
-      const displayName = resolvedName ?? before.name;
-      const user = await tx.user.create({
-        data: {
-          email,
-          password: await hash(patch.password ?? "Welcome2026!", 10),
-          fullName: displayName,
-          role: "executor",
-          isActive: true,
-        },
-      });
-      linkedUserId = user.id;
-    }
-
     const exec = await tx.executor.update({
       where: { id },
       data: {
-        ...(linkedUserId && { userId: linkedUserId, accessRevokedAt: null }),
         ...(patch.status !== undefined && { status: patch.status }),
         // При архивировании — отзываем доступ к системе
-        ...(patch.status === "archived" && before.userId && { accessRevokedAt: new Date() }),
+        ...(patch.status === "archived" && {
+          accessRevokedAt: new Date(),
+          accessEmail: null,
+        }),
         ...(patch.type !== undefined && { type: nextType }),
-        // При смене типа с permanent/external на service/bank — отзываем доступ:
-        // service и bank не имеют личной сметы, логин им не нужен.
-        // external — может иметь личную смету (userId != null), доступ сохраняем.
-        ...(patch.type !== undefined &&
-          (nextType === "service" || nextType === "bank") &&
-          before.type !== "service" && before.type !== "bank" &&
-          before.userId &&
-          !linkedUserId && { accessRevokedAt: new Date() }),
         ...(resolvedName !== undefined && { name: resolvedName }),
         ...(patch.type !== undefined &&
           nextType !== "permanent" && { companyStatus: null }),
         ...(patch.companyStatus !== undefined && { companyStatus: patch.companyStatus }),
         ...(patch.specialty !== undefined && { specialty: patch.specialty }),
         ...(patch.contacts !== undefined && { contacts: patch.contacts }),
+        ...(patch.contactEmail !== undefined && {
+          contactEmail: patch.contactEmail?.trim().toLowerCase() || null,
+        }),
         ...(patch.requisites !== undefined && { requisites: patch.requisites }),
         ...(patch.note !== undefined && { note: patch.note }),
         ...(patch.inTgChat !== undefined && { inTgChat: patch.inTgChat }),
@@ -404,7 +387,7 @@ export async function updateExecutor(id: string, patch: UpdateExecutorInput, use
       },
     });
 
-    const userIdToSync = linkedUserId ?? before.userId;
+    const userIdToSync = before.userId;
     if (resolvedName !== undefined && userIdToSync) {
       await tx.user.update({
         where: { id: userIdToSync },
@@ -429,6 +412,7 @@ export async function updateExecutor(id: string, patch: UpdateExecutorInput, use
       companyStatus: before.companyStatus,
       specialty: before.specialty,
       contacts: before.contacts,
+      contactEmail: before.contactEmail,
       requisites: before.requisites,
       note: before.note,
       inTgChat: before.inTgChat,
@@ -444,6 +428,7 @@ export async function updateExecutor(id: string, patch: UpdateExecutorInput, use
       companyStatus: updated.companyStatus,
       specialty: updated.specialty,
       contacts: updated.contacts,
+      contactEmail: updated.contactEmail,
       requisites: updated.requisites,
       note: updated.note,
       inTgChat: updated.inTgChat,
@@ -463,10 +448,6 @@ export async function updateExecutor(id: string, patch: UpdateExecutorInput, use
       entityLabel: updated.name,
       changes,
     });
-  }
-
-  if (needsAccount) {
-    await seedOnboardingTasks(id, userId);
   }
 
   return updated;
@@ -492,9 +473,14 @@ export async function archiveExecutorPrecheck(id: string): Promise<ArchiveExecut
 export async function archiveExecutor(id: string, userId: string) {
   const exec = await prisma.executor.findUnique({ where: { id } });
   if (!exec) throw new Error("Executor not found");
-  const updated = await prisma.executor.update({
-    where: { id },
-    data: { status: "archived", accessRevokedAt: new Date() },
+  const updated = await prisma.$transaction(async (tx) => {
+    if (exec.userId) {
+      await tx.user.update({ where: { id: exec.userId }, data: { isActive: false } });
+    }
+    return tx.executor.update({
+      where: { id },
+      data: { status: "archived", accessRevokedAt: new Date(), accessEmail: null },
+    });
   });
   await logActivity({
     userId,
@@ -523,19 +509,67 @@ export async function unarchiveExecutor(id: string, userId: string) {
   return updated;
 }
 
-/**
- * S=true: даёт доступ к смете.
- * - Снимает accessRevokedAt
- * - Если onboardingSeeded=false → сеет онбординг-задачи (см. TDNB-15) — реализация в TDNB-15.
- */
-export async function grantExecutorAccess(id: string, userId: string) {
-  const exec = await prisma.executor.findUnique({ where: { id } });
-  if (!exec) throw new Error("Executor not found");
-  if (!exec.userId) throw new Error("Cannot grant access — у исполнителя нет учётной записи");
+export const ACCESS_EMAIL_CONTACT_WARNING =
+  'Поле "Контакт email" не перезаписывается автоматически. При необходимости исправьте его вручную.';
 
-  const updated = await prisma.executor.update({
+export async function grantExecutorAccess(
+  id: string,
+  accessEmailInput: string,
+  password: string | undefined,
+  userId: string
+) {
+  const exec = await prisma.executor.findUnique({
     where: { id },
-    data: { accessRevokedAt: null },
+    include: { user: { select: { id: true } } },
+  });
+  if (!exec) throw new Error("Executor not found");
+  if (exec.status !== "active") throw new Error("Нельзя выдать доступ архивному исполнителю");
+
+  const accessEmail = accessEmailInput.trim().toLowerCase();
+  if (!accessEmail) throw new Error("Укажите Email для доступа");
+  if (!exec.userId && (!password || password.length < 6)) {
+    throw new Error("Пароль не короче 6 символов");
+  }
+
+  const emailOwner = await prisma.user.findUnique({ where: { email: accessEmail } });
+  if (emailOwner && emailOwner.id !== exec.userId) {
+    throw new Error("Пользователь с таким email уже существует");
+  }
+
+  let createdUser = false;
+  const updated = await prisma.$transaction(async (tx) => {
+    let linkedUserId = exec.userId;
+    if (linkedUserId) {
+      await tx.user.update({
+        where: { id: linkedUserId },
+        data: {
+          email: accessEmail,
+          isActive: true,
+          ...(password && { password: await hash(password, 10) }),
+        },
+      });
+    } else {
+      const user = await tx.user.create({
+        data: {
+          email: accessEmail,
+          password: await hash(password!, 10),
+          fullName: exec.name,
+          role: "executor",
+          isActive: true,
+        },
+      });
+      linkedUserId = user.id;
+      createdUser = true;
+    }
+
+    return tx.executor.update({
+      where: { id },
+      data: {
+        userId: linkedUserId,
+        accessEmail,
+        accessRevokedAt: null,
+      },
+    });
   });
 
   await logActivity({
@@ -546,32 +580,32 @@ export async function grantExecutorAccess(id: string, userId: string) {
     entityLabel: updated.name,
   });
 
-  return updated;
+  if (createdUser) await seedOnboardingTasks(id, userId);
+
+  const warning =
+    exec.contactEmail?.trim().toLowerCase() !== accessEmail
+      ? ACCESS_EMAIL_CONTACT_WARNING
+      : null;
+  return { executor: updated, warning };
 }
 
 export async function revokeExecutorAccess(id: string, userId: string) {
   const exec = await prisma.executor.findUnique({
     where: { id },
-    include: { user: { select: { id: true, email: true } } },
+    include: { user: { select: { id: true } } },
   });
   if (!exec) throw new Error("Executor not found");
 
-  // Полностью отвязываем учётку: email очищается в интерфейсе,
-  // а сам User деактивируется и его email освобождается (unique),
-  // чтобы позже можно было выдать доступ с новым (или тем же) email.
   const updated = await prisma.$transaction(async (tx) => {
     if (exec.user) {
       await tx.user.update({
         where: { id: exec.user.id },
-        data: {
-          isActive: false,
-          email: `revoked+${Date.now()}+${exec.user.email}`,
-        },
+        data: { isActive: false },
       });
     }
     return tx.executor.update({
       where: { id },
-      data: { accessRevokedAt: new Date(), userId: null },
+      data: { accessRevokedAt: new Date(), accessEmail: null },
     });
   });
 

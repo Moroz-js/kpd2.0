@@ -1,0 +1,25 @@
+[Unit]
+Description=KPD immutable daily snapshot
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+ConditionPathExists=/opt/kpd/app/scripts/snapshot-worker.mjs
+
+[Service]
+Type=oneshot
+User=kpd-app
+Group=kpd-app
+WorkingDirectory=/opt/kpd/app
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/kpd/app/.env.local
+ExecStart=/usr/bin/node /opt/kpd/app/scripts/snapshot-worker.mjs
+TimeoutStartSec=20min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/kpd/snapshots
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -17,6 +17,10 @@ import { TASK_STATUSES } from "@/lib/statuses";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner } from "@/lib/table-styles";
+import {
+  usePersistedInterfaceState,
+  usePersistedScroll,
+} from "@/components/PersistedInterfaceState";
 
 type Row = {
   id: string;
@@ -46,6 +50,18 @@ export function TasksClient() {
     dir: "desc",
   });
   const [deleteTarget, setDeleteTarget] = React.useState<Row | null>(null);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  usePersistedInterfaceState(
+    "tasks",
+    { fExecutor, fStatus, sort },
+    (stored) => {
+      if (stored.fExecutor) setFExecutor(stored.fExecutor);
+      if (stored.fStatus) setFStatus(stored.fStatus);
+      if (stored.sort) setSort(stored.sort);
+    }
+  );
+  usePersistedScroll(scrollRef, "tasks-table");
 
   const allRows = data ?? [];
 
@@ -113,6 +129,7 @@ export function TasksClient() {
 
       <Table
         className="min-w-[900px]"
+        containerRef={scrollRef}
         containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto"
       >
           <TableHeader>

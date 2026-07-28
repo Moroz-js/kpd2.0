@@ -587,6 +587,10 @@ function extractExecutors(wb, userMap, bankMap, workTypeMap) {
       projectExecutors.push({ executorName: name, projectName: p });
 
     const accessField = str(r["Доступ к смете"]);
+    const legacyEmail = str(r["email"]) || str(r["Email"]) || null;
+    const contactEmail = str(r["Контакт email"]) || legacyEmail;
+    const accessEmail =
+      str(r["Email для доступа"]) || (accessField === "закрыт" ? null : legacyEmail);
 
     executors.push({
       name,
@@ -597,13 +601,15 @@ function extractExecutors(wb, userMap, bankMap, workTypeMap) {
       contractFile: str(r["договор"]),
       ndaFile: str(r["NDA"]),
       inTgChat: str(r["В чате ТГ"])?.toLowerCase() === "да",
-      contacts: str(r["Контакт"]),
+      contacts: str(r["Контакт общее"]) || str(r["Контакт"]),
+      contactEmail,
+      accessEmail,
       requisites: str(r["Реквизиты"]),
       note: str(r["Примечание"]),
       status: mapV(str(r["Статус исполнителя"]), STATUS_RU, "active"),
       accessRevokedAt: accessField === "закрыт" ? new Date("2024-01-01") : null,
       oldEstimateUrl: str(r["Старая смета"]),
-      _email: str(r["email"]) || str(r["Email"]) || null,
+      _email: accessEmail,
       _bankName: bankName,
       _responsibleName: respName,
       _workTypeNames: workTypeNames,
@@ -1862,6 +1868,8 @@ async function runMigration(prisma, all) {
         ndaFile: e.ndaFile,
         inTgChat: e.inTgChat ?? false,
         contacts: e.contacts,
+        contactEmail: e.contactEmail,
+        accessEmail: e.accessEmail,
         requisites: e.requisites,
         note: e.note,
         status: e.status,

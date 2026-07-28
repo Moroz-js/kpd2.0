@@ -37,11 +37,13 @@ type ResponsibleOption = { id: string; fullName: string; isActive: boolean };
 export function ExecutorWizard({
   bankAccounts: bankAccountsProp,
   responsibles: responsiblesProp,
+  canGrantAccess = false,
   onClose,
   onCreated,
 }: {
   bankAccounts: BankOption[];
   responsibles: ResponsibleOption[];
+  canGrantAccess?: boolean;
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -52,7 +54,8 @@ export function ExecutorWizard({
 
   const [firstName, setFirstName] = React.useState("");
   const [lastName, setLastName] = React.useState("");
-  const [email, setEmail] = React.useState("");
+  const [contactEmail, setContactEmail] = React.useState("");
+  const [accessEmail, setAccessEmail] = React.useState("");
   const [companyStatuses, setCompanyStatuses] = React.useState<string[]>([]);
   const [password, setPassword] = React.useState(() => generatePassword());
   const [name, setName] = React.useState("");
@@ -79,17 +82,19 @@ export function ExecutorWizard({
 
     if (type === "permanent") {
       if (!firstName.trim() || !lastName.trim()) return toast.error("Введите Имя и Фамилию");
-      if (!email.trim()) return toast.error("Введите email");
-      if (password.length < 6) return toast.error("Пароль не короче 6 символов");
       payload.firstName = firstName.trim();
       payload.lastName = lastName.trim();
-      payload.email = email.trim();
-      payload.password = password;
       const cs = serializeCompanyStatus(companyStatuses);
       if (cs) payload.companyStatus = cs;
     } else {
       if (!name.trim()) return toast.error("Введите название");
       payload.name = name.trim();
+    }
+    if (contactEmail.trim()) payload.contactEmail = contactEmail.trim().toLowerCase();
+    if (canGrantAccess && accessEmail.trim()) {
+      if (password.length < 6) return toast.error("Пароль не короче 6 символов");
+      payload.accessEmail = accessEmail.trim().toLowerCase();
+      payload.password = password;
     }
 
     if (responsibleUserId) payload.responsibleUserId = responsibleUserId;
@@ -125,12 +130,12 @@ export function ExecutorWizard({
           <div className="grid grid-cols-2 gap-2">
             <TypeCard
               title="Постоянный"
-              hint="Штатный сотрудник, есть логин"
+              hint="Штатный сотрудник"
               onClick={() => chooseType("permanent")}
             />
             <TypeCard
               title="Внешний"
-              hint="Подрядчик без логина"
+              hint="Подрядчик"
               onClick={() => chooseType("external")}
             />
             <TypeCard
@@ -172,37 +177,6 @@ export function ExecutorWizard({
                   </div>
                 </div>
                 <div className="space-y-1.5 min-w-0">
-                  <Label htmlFor="email">Email (логин)</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="space-y-1.5 min-w-0">
-                  <Label htmlFor="password">Пароль</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="font-mono"
-                      required
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={() => setPassword(generatePassword())}
-                      title="Сгенерировать"
-                    >
-                      <RefreshCw className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-                <div className="space-y-1.5 min-w-0">
                   <Label>Статус в компании</Label>
                   <CompanyStatusPicker value={companyStatuses} onChange={setCompanyStatuses} />
                 </div>
@@ -228,6 +202,60 @@ export function ExecutorWizard({
                   <p className="text-xs text-neutral-500">
                     Сохранится как: <span className="font-medium">{name.trim().toUpperCase()}</span>
                   </p>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-1.5 min-w-0">
+              <Label htmlFor="contactEmail">Контакт email</Label>
+              <Input
+                id="contactEmail"
+                type="email"
+                value={contactEmail}
+                onChange={(e) => setContactEmail(e.target.value)}
+              />
+            </div>
+
+            {canGrantAccess && (
+              <div className="rounded-lg border p-3 space-y-3">
+                <div className="space-y-1.5 min-w-0">
+                  <Label htmlFor="accessEmail">Email для доступа</Label>
+                  <Input
+                    id="accessEmail"
+                    type="email"
+                    value={accessEmail}
+                    onChange={(e) => setAccessEmail(e.target.value)}
+                  />
+                </div>
+                {accessEmail.trim() && (
+                  <>
+                    <div className="space-y-1.5 min-w-0">
+                      <Label htmlFor="password">Пароль</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="password"
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          className="font-mono"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => setPassword(generatePassword())}
+                          title="Сгенерировать"
+                        >
+                          <RefreshCw className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                    {accessEmail.trim().toLowerCase() !== contactEmail.trim().toLowerCase() && (
+                      <p className="text-xs text-amber-700">
+                        Поле &quot;Контакт email&quot; не перезаписывается автоматически. При
+                        необходимости исправьте его вручную.
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
             )}

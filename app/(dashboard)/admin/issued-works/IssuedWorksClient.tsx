@@ -36,6 +36,10 @@ import { useTableRowSelection } from "@/lib/useTableRowSelection";
 import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner, compactTable, compactHead, compactPeriodHead, compactCell, compactCellClip } from "@/lib/table-styles";
 import { IssuedWorkEditDialog, type SmetaType } from "./IssuedWorkEditDialog";
+import {
+  usePersistedInterfaceState,
+  usePersistedScroll,
+} from "@/components/PersistedInterfaceState";
 
 const periodYearMonthClass = "w-20 max-w-20 px-1";
 const weekPayClass = "w-20 max-w-20 px-1";
@@ -43,6 +47,9 @@ const weekPayClass = "w-20 max-w-20 px-1";
 type Row = {
   sourceType: "personal" | "other-expense";
   sourceId: string;
+  number: string | null;
+  numberYear: number | null;
+  numberSerial: number | null;
   executionYear: number;
   executionMonth: number;
   weekPlanFact: number | null;
@@ -50,6 +57,7 @@ type Row = {
   executorId: string;
   executorName: string;
   executorType: string;
+  executorAccessEmail: string | null;
   projectId: string;
   projectName: string;
   projectType: string;
@@ -77,6 +85,7 @@ const fetcher = <T,>(url: string): Promise<T> =>
   });
 
 type SortField =
+  | "number"
   | "weekPlanFact"
   | "projectName"
   | "executorName"
@@ -94,7 +103,7 @@ const SMETA_LABEL: Record<SmetaType, string> = {
 
 function smetaTypeCell(row: Row) {
   if (row.sourceType === "personal") {
-    return (
+    return row.executorAccessEmail ? (
       <Link
         href={`/admin/executors/${row.executorId}`}
         target="_blank"
@@ -104,6 +113,8 @@ function smetaTypeCell(row: Row) {
       >
         {SMETA_LABEL.personal}
       </Link>
+    ) : (
+      SMETA_LABEL.personal
     );
   }
   return SMETA_LABEL["other-expense"];
@@ -159,6 +170,9 @@ const IssuedWorkRow = React.memo(function IssuedWorkRow({
           rowId={id}
           onSelect={onSelect}
         />
+      </TableCell>
+      <TableCell className={cn(compactCell, "w-24 whitespace-nowrap tabular-nums")}>
+        {r.number ?? "—"}
       </TableCell>
       <TableCell className={cn(compactCell, "tabular-nums text-left", periodYearMonthClass)}>
         {r.executionYear}
@@ -246,8 +260,48 @@ export function IssuedWorksClient() {
 
   const scrollRef = React.useRef<HTMLDivElement>(null);
 
+  usePersistedInterfaceState(
+    "issued-works",
+    {
+      yearPlanFactFilter,
+      executionYearFilter,
+      executionMonthFilter,
+      weekFilter,
+      executorFilter,
+      projectFilter,
+      workTypeFilter,
+      statusFilter,
+      smetaFilter,
+      groupBy,
+      collapsedGroups,
+      sort,
+    },
+    (stored) => {
+      if (stored.yearPlanFactFilter) setYearPlanFactFilter(stored.yearPlanFactFilter);
+      if (stored.executionYearFilter) setExecutionYearFilter(stored.executionYearFilter);
+      if (stored.executionMonthFilter) setExecutionMonthFilter(stored.executionMonthFilter);
+      if (stored.weekFilter) setWeekFilter(stored.weekFilter);
+      if (stored.executorFilter) setExecutorFilter(stored.executorFilter);
+      if (stored.projectFilter) setProjectFilter(stored.projectFilter);
+      if (stored.workTypeFilter) setWorkTypeFilter(stored.workTypeFilter);
+      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
+      if (stored.smetaFilter) setSmetaFilter(stored.smetaFilter);
+      if (stored.groupBy !== undefined) setGroupBy(stored.groupBy);
+      if (stored.collapsedGroups instanceof Set) setCollapsedGroups(stored.collapsedGroups);
+      if (stored.sort) setSort(stored.sort);
+    }
+  );
+  usePersistedScroll(scrollRef, "issued-works-table");
+
   function compareRows(a: Row, b: Row): number {
     for (const s of sort) {
+      if (s.field === "number") {
+        const cmp =
+          (a.numberYear ?? Number.MAX_SAFE_INTEGER) - (b.numberYear ?? Number.MAX_SAFE_INTEGER) ||
+          (a.numberSerial ?? Number.MAX_SAFE_INTEGER) - (b.numberSerial ?? Number.MAX_SAFE_INTEGER);
+        if (cmp !== 0) return s.dir === "asc" ? cmp : -cmp;
+        continue;
+      }
       const av = a[s.field];
       const bv = b[s.field];
       const cmp =
@@ -446,7 +500,7 @@ export function IssuedWorksClient() {
               sum={item.sum}
               collapsed={item.collapsed}
               onToggle={() => toggleGroup(item.key)}
-              colSpan={15}
+              colSpan={16}
             />
           );
         }
@@ -619,7 +673,7 @@ export function IssuedWorksClient() {
       )}
 
       <Table
-        className={cn(compactTable, "min-w-[1680px]")}
+        className={cn(compactTable, "min-w-[1776px]")}
         containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto"
         containerRef={scrollRef}
       >
@@ -628,6 +682,15 @@ export function IssuedWorksClient() {
               <TableHead className="w-8">
                 <Checkbox checked={selectedIds.size === rows.length && rows.length > 0} onCheckedChange={() => toggleAll(orderedRowIds)} />
               </TableHead>
+              <SortableHead
+                field="number"
+                sortBy={activeSortField()}
+                sortDir={activeSortDir()}
+                onSort={handleSort}
+                className={cn(compactHead, "w-24 text-[10px]")}
+              >
+                Номер
+              </SortableHead>
               <SortableHead
                 field="executionYear"
                 sortBy={activeSortField()}
@@ -723,11 +786,11 @@ export function IssuedWorksClient() {
           <VirtualizedTableBody
             scrollRef={scrollRef}
             rowCount={flatItems ? flatItems.length : rows.length}
-            colSpan={15}
+            colSpan={16}
             isLoading={isLoading}
             loading={
               <TableRow>
-                <TableCell colSpan={15} className="text-center text-neutral-500 py-8">
+                <TableCell colSpan={16} className="text-center text-neutral-500 py-8">
                   Загрузка...
                 </TableCell>
               </TableRow>
@@ -735,7 +798,7 @@ export function IssuedWorksClient() {
             isEmpty={rows.length === 0}
             empty={
               <TableRow>
-                <TableCell colSpan={15} className="text-center text-neutral-500 py-12">
+                <TableCell colSpan={16} className="text-center text-neutral-500 py-12">
                   Пока нет ни одной работы. Они появятся после создания строк в Личных сметах
                   и Прочих тратах (Phase 3).
                 </TableCell>

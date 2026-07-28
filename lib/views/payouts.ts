@@ -13,6 +13,9 @@ export type PayoutSource = "personal" | "other-expense";
 export type PayoutRow = {
   sourceType: PayoutSource;
   sourceId: string;
+  number: string | null;
+  numberYear: number | null;
+  numberSerial: number | null;
 
   periodYear: number;
   periodMonth: number;
@@ -21,14 +24,20 @@ export type PayoutRow = {
 
   executorId: string;
   executorName: string;
+  executorAccessEmail: string | null;
 
   amount: number;
+  /** Сумма работы для other-expense (`OtherExpense.amount`). */
+  workAmount: number | null;
+  /** Сумма выплаты для other-expense (`OtherExpense.paymentAmount`). */
+  paymentAmount: number | null;
   paymentStatus: string | null;
   plannedPayAt: Date | null;
   paidAt: Date | null;
   bankAccountId: string | null;
   bankAccountName: string | null;
   comment: string | null;
+  hasLinkedWorks: boolean;
   updatedAt: Date;
 };
 
@@ -53,14 +62,15 @@ export async function listPayouts(filter: PayoutsFilter = {}): Promise<PayoutRow
   const [payments, otherExpenses] = await Promise.all([
     prisma.payment.findMany({
       include: {
-        executor: { select: { id: true, name: true } },
+        executor: { select: { id: true, name: true, accessEmail: true } },
         bankAccount: { select: { id: true, name: true } },
+        _count: { select: { works: true } },
       },
     }),
     prisma.otherExpense.findMany({
       where: { paymentAmount: { not: null } },
       include: {
-        executor: { select: { id: true, name: true } },
+        executor: { select: { id: true, name: true, accessEmail: true } },
         bankAccount: { select: { id: true, name: true } },
       },
     }),
@@ -71,19 +81,26 @@ export async function listPayouts(filter: PayoutsFilter = {}): Promise<PayoutRow
     return {
       sourceType: "personal",
       sourceId: p.id,
+      number: p.payoutNumber,
+      numberYear: p.payoutNumberYear,
+      numberSerial: p.payoutNumberSerial,
       periodYear: p.periodYear,
       periodMonth: p.periodMonth,
       weekPlanFact: pf.week,
       yearPlanFact: pf.year,
       executorId: p.executorId,
       executorName: p.executor.name,
+      executorAccessEmail: p.executor.accessEmail,
       amount: p.amount,
+      workAmount: null,
+      paymentAmount: null,
       paymentStatus: p.paymentStatus,
       plannedPayAt: p.plannedPayAt,
       paidAt: p.paidAt,
       bankAccountId: p.bankAccountId,
       bankAccountName: p.bankAccount?.name ?? null,
       comment: p.comment,
+      hasLinkedWorks: p._count.works > 0,
       updatedAt: p.updatedAt,
     };
   });
@@ -93,19 +110,26 @@ export async function listPayouts(filter: PayoutsFilter = {}): Promise<PayoutRow
     return {
       sourceType: "other-expense",
       sourceId: o.id,
+      number: o.payoutNumber,
+      numberYear: o.payoutNumberYear,
+      numberSerial: o.payoutNumberSerial,
       periodYear: o.executionYear,
       periodMonth: o.executionMonth,
       weekPlanFact: pf.week,
       yearPlanFact: pf.year,
       executorId: o.executorId,
       executorName: o.executor.name,
+      executorAccessEmail: o.executor.accessEmail,
       amount: o.paymentAmount ?? 0,
+      workAmount: o.amount,
+      paymentAmount: o.paymentAmount,
       paymentStatus: o.paymentStatus,
       plannedPayAt: o.plannedPayAt,
       paidAt: o.paidAt,
       bankAccountId: o.bankAccountId,
       bankAccountName: o.bankAccount?.name ?? null,
       comment: o.comment,
+      hasLinkedWorks: false,
       updatedAt: o.updatedAt,
     };
   });

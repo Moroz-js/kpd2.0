@@ -7,6 +7,7 @@ import {
 } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { updateOtherExpense, deleteOtherExpense } from "@/lib/services/other-expenses";
+import { zNullableDateString } from "@/lib/date-string";
 import { z } from "zod";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -21,12 +22,12 @@ const patchSchema = z.object({
   executionMonth: z.number().int().min(1).max(12).optional(),
   description: z.string().min(1).optional(),
   amount: z.number().positive().optional(),
-  paymentAmount: z.number().nullable().optional(),
+  paymentAmount: z.number().positive().nullable().optional(),
   preferredPayMethod: z.string().nullable().optional(),
-  plannedPayAt: z.string().nullable().optional(),
-  paidAt: z.string().nullable().optional(),
+  plannedPayAt: zNullableDateString,
+  paidAt: zNullableDateString,
   workStatus: z.enum(["submitted", "checked", "paid", "rework"]).optional(),
-  paymentStatus: z.enum(["planned", "sent", "paid"]).nullable().optional(),
+  paymentStatus: z.enum(["planned", "paid"]).nullable().optional(),
   comment: z.string().nullable().optional(),
 });
 
@@ -74,7 +75,8 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   } catch (e) {
     console.error("[other-expenses] PATCH failed:", e);
     const msg = e instanceof Error ? e.message : "Не удалось сохранить";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const status = msg.startsWith("Сумма работы и сумма выплаты") ? 422 : 500;
+    return NextResponse.json({ error: msg }, { status });
   }
 }
 

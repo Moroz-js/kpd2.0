@@ -3,15 +3,16 @@ import { z } from "zod";
 import { getSessionUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
-import { updateOtherExpense } from "@/lib/services/other-expenses";
+import { zNullableDateString } from "@/lib/date-string";
+import { checkOtherExpense, updateOtherExpense } from "@/lib/services/other-expenses";
 
 const bulkSchema = z.object({
   ids: z.array(z.string()).min(1),
   patch: z.object({
     workStatus: z.enum(["submitted", "checked", "paid", "rework"]).optional(),
-    paymentStatus: z.enum(["planned", "sent", "paid"]).optional(),
-    plannedPayAt: z.string().nullable().optional(),
-    paidAt: z.string().nullable().optional(),
+    paymentStatus: z.enum(["planned", "paid"]).optional(),
+    plannedPayAt: zNullableDateString,
+    paidAt: zNullableDateString,
     bankAccountId: z.string().nullable().optional(),
   }),
 });
@@ -41,7 +42,16 @@ export async function POST(req: NextRequest) {
   for (const id of ids) {
     if (!validIds.has(id)) continue;
     try {
-      await updateOtherExpense(id, patch, user.id);
+      if (patch.workStatus === "checked") {
+        const rest = { ...patch };
+        delete rest.workStatus;
+        if (Object.keys(rest).length > 0) {
+          await updateOtherExpense(id, rest, user.id);
+        }
+        await checkOtherExpense(id, user.id);
+      } else {
+        await updateOtherExpense(id, patch, user.id);
+      }
       updated++;
     } catch { /* skip */ }
   }

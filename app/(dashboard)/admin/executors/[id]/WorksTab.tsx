@@ -102,7 +102,6 @@ const WORK_STATUS_LABELS: Record<string, string> = {
 
 const PAYMENT_STATUS_LABELS: Record<string, string> = {
   planned: "Выплата запланирована",
-  sent: "Выплата отправлена",
   paid: "Выплата оплачена",
 };
 
@@ -152,7 +151,7 @@ function worksCountLabel(n: number): string {
 }
 
 const PAID_STATUSES_WORK = new Set(["paid"]);
-const PAID_STATUSES_PAYMENT = new Set(["paid", "sent"]);
+const PAID_STATUSES_PAYMENT = new Set(["paid"]);
 
 export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccountsProp }: Props) {
   const bankAccounts = React.useMemo(() => sortByNameRu(bankAccountsProp), [bankAccountsProp]);
@@ -1543,7 +1542,7 @@ function EditPaymentDialog({
   onSaved: () => void;
 }) {
   const hasWorks = linkedWorks.length > 0;
-  const locked = payment.paymentStatus === "sent" || payment.paymentStatus === "paid";
+  const locked = payment.paymentStatus === "paid";
   const [amount, setAmount] = useState(String(payment.amount));
   const [paymentStatus, setPaymentStatus] = useState(payment.paymentStatus);
   const [bankAccountId, setBankAccountId] = useState(payment.bankAccountId ?? "");
@@ -1607,7 +1606,6 @@ function EditPaymentDialog({
                 <SelectContent>
                   <SelectItem value="planned">Выплата запланирована</SelectItem>
                   <SelectItem value="paid">Выплата оплачена</SelectItem>
-                  <SelectItem value="sent">Выплата отправлена</SelectItem>
                 </SelectContent>
               </Select>
             </div>

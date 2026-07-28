@@ -30,6 +30,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         if (!user) return null;
         if (!user.isActive) return null;
+        if (user.executor && !user.executor.accessEmail?.trim()) return null;
         if (user.executor?.accessRevokedAt) return null;
         if (user.executor?.status === "archived") return null;
 
@@ -143,6 +144,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
         select: {
           id: true,
           type: true,
+          accessEmail: true,
           accessRevokedAt: true,
           status: true,
           isResponsible: true,
@@ -153,6 +155,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   });
 
   if (!dbUser?.isActive) return null;
+  if (dbUser.executor && !dbUser.executor.accessEmail?.trim()) return null;
   if (dbUser.executor?.accessRevokedAt) return null;
   if (dbUser.executor?.status === "archived") return null;
 

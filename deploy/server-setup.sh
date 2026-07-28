@@ -29,6 +29,9 @@ DB_NAME="kpd"
 DB_USER="kpd"
 APP_PORT="3000"
 SERVICE_NAME="kpd-frontend"
+SNAPSHOT_USER="kpd-app"
+SNAPSHOT_SERVICE="kpd-snapshot.service"
+SNAPSHOT_TIMER="kpd-snapshot.timer"
 DEPLOY_KEY="/root/.ssh/kpd_deploy_ed25519"
 
 log()  { echo -e "\033[1;32m[setup]\033[0m $*"; }
@@ -230,6 +233,16 @@ else
   done
 fi
 
+ensure_env "SNAPSHOT_STORAGE_MODE" "${SNAPSHOT_STORAGE_MODE:-local}"
+ensure_env "SNAPSHOT_LOCAL_DIR" "${SNAPSHOT_LOCAL_DIR:-/opt/kpd/snapshots}"
+for key in SNAPSHOT_S3_BUCKET SNAPSHOT_S3_REGION SNAPSHOT_S3_ENDPOINT SNAPSHOT_S3_FORCE_PATH_STYLE SNAPSHOT_ALERT_WEBHOOK_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+  value="${!key:-}"
+  [ -n "$value" ] && ensure_env "$key" "$value"
+done
+if [ "${SNAPSHOT_STORAGE_MODE:-local}" != "s3" ]; then
+  warn "Snapshot storage использует локальный каталог. Для production S3 задай SNAPSHOT_STORAGE_MODE=s3 и SNAPSHOT_S3_*."
+fi
+
 log "npm ci..."
 cd "$APP_DIR"
 npm ci --no-audit --no-fund
@@ -266,6 +279,25 @@ systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
 systemctl restart "$SERVICE_NAME"
 log "Сервис $SERVICE_NAME запущен (127.0.0.1:$APP_PORT)"
+
+log "Настраиваю ежедневный snapshot worker..."
+if ! id "$SNAPSHOT_USER" >/dev/null 2>&1; then
+  useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin "$SNAPSHOT_USER"
+fi
+install -d -o "$SNAPSHOT_USER" -g "$SNAPSHOT_USER" -m 0750 /opt/kpd/snapshots
+chgrp "$SNAPSHOT_USER" "$ENV_FILE"
+chmod 0640 "$ENV_FILE"
+install -m 0644 "$APP_DIR/deploy/systemd/$SNAPSHOT_SERVICE" "/etc/systemd/system/$SNAPSHOT_SERVICE"
+install -m 0644 "$APP_DIR/deploy/systemd/$SNAPSHOT_TIMER" "/etc/systemd/system/$SNAPSHOT_TIMER"
+systemctl daemon-reload
+runuser -u "$SNAPSHOT_USER" -- /bin/bash -c \
+  'set -a; source "$1"; set +a; exec /usr/bin/node "$2/scripts/snapshot-worker.mjs" --check' \
+  snapshot-check "$ENV_FILE" "$APP_DIR"
+systemctl enable --now "$SNAPSHOT_TIMER"
+systemctl is-enabled --quiet "$SNAPSHOT_TIMER"
+systemctl is-active --quiet "$SNAPSHOT_TIMER"
+systemctl list-timers --all "$SNAPSHOT_TIMER" --no-legend | grep -q "$SNAPSHOT_TIMER"
+log "Snapshot timer включён: 00:01 Europe/Moscow, Persistent=true"
 
 # ── 7. Traefik ──────────────────────────────────────────────────────────────
 # Включает file-provider у traefik в docker-compose (n8n): +2 аргумента, +1 volume.

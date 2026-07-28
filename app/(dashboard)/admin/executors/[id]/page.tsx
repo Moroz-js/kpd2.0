@@ -15,7 +15,7 @@ export default async function Page({
   const user = await getSessionUser();
   if (!user) redirect("/login");
 
-  const allowed = await canViewExecutorEstimate(user, id);
+  const allowed = isAdmin(user) || (await canViewExecutorEstimate(user, id));
   if (!allowed) redirect("/");
 
   const backHref = fromProject

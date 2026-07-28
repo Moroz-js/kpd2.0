@@ -2,6 +2,12 @@ import { getSessionUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { prisma } from "@/lib/db";
+import {
+  PersistedDashboardMain,
+  PersistedInterfaceStateProvider,
+} from "@/components/PersistedInterfaceState";
+import { ComparisonProvider } from "@/components/ComparisonProvider";
+import { Suspense } from "react";
 
 export default async function DashboardLayout({
   children,
@@ -26,20 +32,24 @@ export default async function DashboardLayout({
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-neutral-50">
-      <Sidebar
-        role={role}
-        fullName={fullName}
-        userId={userId}
-        isSuperAdmin={isSuperAdmin ?? false}
-        hasProjects={hasProjects}
-        isPm={isPm}
-        isPermanentExecutor={isPermanentExecutor}
-        hasProfile={hasProfile}
-      />
-      <main className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden bg-neutral-50">
-        <div className="p-6">{children}</div>
-      </main>
-    </div>
+    <PersistedInterfaceStateProvider userId={userId}>
+      <div className="flex h-screen overflow-hidden bg-neutral-50">
+        <Suspense fallback={null}>
+          <Sidebar
+            role={role}
+            fullName={fullName}
+            userId={userId}
+            isSuperAdmin={isSuperAdmin ?? false}
+            hasProjects={hasProjects}
+            isPm={isPm}
+            isPermanentExecutor={isPermanentExecutor}
+            hasProfile={hasProfile}
+          />
+        </Suspense>
+        <ComparisonProvider>
+          <PersistedDashboardMain>{children}</PersistedDashboardMain>
+        </ComparisonProvider>
+      </div>
+    </PersistedInterfaceStateProvider>
   );
 }

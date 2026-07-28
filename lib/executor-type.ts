@@ -13,10 +13,6 @@ export function canBeResponsible(type: string): boolean {
   return normalizeExecutorType(type) === "permanent";
 }
 
-export function hasEstimateTabs(type: string, userId: string | null): boolean {
-  return normalizeExecutorType(type) !== "service" && userId != null;
-}
-
 export function formatNameForExecutorType(type: ExecutorType, raw: string): string {
   const t = raw.trim();
   if (type === "service") return t.toUpperCase();

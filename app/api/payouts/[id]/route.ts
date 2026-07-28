@@ -3,12 +3,14 @@ import { z } from "zod";
 import { getSessionUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/permissions";
 import { deletePayout, updatePayout } from "@/lib/services/payouts";
+import { zNullableDateString } from "@/lib/date-string";
 
 const patchSchema = z.object({
-  amount: z.number().optional(),
-  paymentStatus: z.enum(["planned", "sent", "paid"]).optional(),
-  paidAt: z.string().nullable().optional(),
-  plannedPayAt: z.string().nullable().optional(),
+  amount: z.number().positive().optional(),
+  paymentAmount: z.number().positive().optional(),
+  paymentStatus: z.enum(["planned", "paid"]).optional(),
+  paidAt: zNullableDateString,
+  plannedPayAt: zNullableDateString,
   bankAccountId: z.string().nullable().optional(),
   comment: z.string().nullable().optional(),
   executorId: z.string().optional(),
@@ -81,7 +83,12 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     return NextResponse.json(updated);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Error";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const status =
+      msg.startsWith("Сумма выплаты привязана к работам") ||
+      msg.startsWith("Сумма работы и сумма выплаты")
+        ? 400
+        : 500;
+    return NextResponse.json({ error: msg }, { status });
   }
 }
 

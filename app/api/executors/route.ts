@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionUser } from "@/lib/auth";
-import { canManageExecutors, canViewExecutorsList } from "@/lib/permissions";
-import { createExecutor, listExecutors } from "@/lib/services/executors";
+import { canManageExecutors, canViewExecutorsList, isAdmin } from "@/lib/permissions";
+import {
+  createExecutor,
+  listExecutors,
+  type CreateExecutorInput,
+} from "@/lib/services/executors";
 
 export async function GET() {
   const me = await getSessionUser();
@@ -15,7 +19,8 @@ const permanentSchema = z.object({
   type: z.literal("permanent"),
   firstName: z.string().min(1),
   lastName: z.string().min(1),
-  email: z.string().email("Некорректный email"),
+  contactEmail: z.string().email("Некорректный контактный email").nullable().optional(),
+  accessEmail: z.string().email("Некорректный email для доступа").nullable().optional(),
   password: z.string().optional(),
   companyStatus: z.string().nullable().optional(),
   responsibleUserId: z.string().nullable().optional(),
@@ -28,6 +33,9 @@ const permanentSchema = z.object({
 const namedSchema = z.object({
   type: z.enum(["external", "service", "bank"]),
   name: z.string().min(1),
+  contactEmail: z.string().email("Некорректный контактный email").nullable().optional(),
+  accessEmail: z.string().email("Некорректный email для доступа").nullable().optional(),
+  password: z.string().optional(),
   responsibleUserId: z.string().nullable().optional(),
   recipientTypes: z.array(z.string()).optional(),
   recipientType: z.string().nullable().optional(),
@@ -50,7 +58,13 @@ export async function POST(req: Request) {
     );
   }
   try {
-    const created = await createExecutor(parsed.data, me.id);
+    if (parsed.data.accessEmail && (!parsed.data.password || parsed.data.password.length < 6)) {
+      return NextResponse.json({ error: "Пароль не короче 6 символов" }, { status: 400 });
+    }
+    const data: CreateExecutorInput = isAdmin(me)
+      ? parsed.data
+      : { ...parsed.data, accessEmail: null, password: undefined };
+    const created = await createExecutor(data, me.id);
     return NextResponse.json(created, { status: 201 });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Error";

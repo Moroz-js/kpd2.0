@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useRef } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -11,11 +11,16 @@ import { toast } from "sonner";
 import { getISOWeek, getISOWeekYear, firstVisibleCashflowWeek } from "@/lib/iso-weeks";
 import { CashflowChart } from "./CashflowChart";
 import { CashflowCommentCell } from "@/components/ui-custom/CashflowCommentCell";
+import { useComparison } from "@/components/ComparisonProvider";
 import {
   cashflowCommentMapKey,
   cashflowHighlightCellClass,
   type CashflowCellMeta,
 } from "@/lib/cashflow-comments";
+import {
+  usePersistedInterfaceState,
+  usePersistedScroll,
+} from "@/components/PersistedInterfaceState";
 
 const fetcher = (url: string) => fetch(url).then(r => r.json());
 
@@ -169,10 +174,6 @@ const AGGREGATE_DEFS: AggregateDef[] = [
   { key: "nonProjectExpenses", label: "Непроектные расходы", bold: true },
 ];
 
-function parseMoneyInput(raw: string): number {
-  return parseFloat(raw.replace(/\s/g, "").replace(/\u00A0/g, "").replace(",", ".")) || 0;
-}
-
 function formatMoneyInput(n: number): string {
   if (!n && n !== 0) return "";
   return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(n);
@@ -192,11 +193,6 @@ function OpeningBalanceInput({
   const [numericValue, setNumericValue] = useState(initial || 0);
   const [display, setDisplay] = useState(formatMoneyInput(initial || 0));
   const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    setNumericValue(initial || 0);
-    setDisplay(formatMoneyInput(initial || 0));
-  }, [initial]);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const raw = e.target.value;
@@ -246,6 +242,7 @@ type DiscrepancyModalState = {
 } | null;
 
 export function CashflowClient() {
+  const comparison = useComparison();
   const now = new Date();
   const currentISOWeek = getISOWeek(now);
   const currentISOYear = getISOWeekYear(now);
@@ -255,14 +252,18 @@ export function CashflowClient() {
   const [discrepancyModal, setDiscrepancyModal] = useState<DiscrepancyModalState>(null);
   const YEARS = [currentISOYear - 2, currentISOYear - 1, currentISOYear, currentISOYear + 1];
 
-  const { data, mutate } = useSWR<CashflowResponse>(`/api/cashflow?year=${year}`, fetcher, {
+  const { data, mutate } = useSWR<CashflowResponse>(
+    `/api/cashflow?year=${year}&source=${encodeURIComponent(comparison.activeSource)}`,
+    fetcher,
+    {
     onSuccess: d => {
       if (!("error" in d)) setOpeningBalance(d.openingBalance);
     },
-  });
+    }
+  );
 
   const { data: cellMeta, mutate: mutateCellMeta } = useSWR<Record<string, CashflowCellMeta>>(
-    `/api/cashflow/comments?year=${year}`,
+    comparison.readOnly ? null : `/api/cashflow/comments?year=${year}`,
     fetcher
   );
 
@@ -271,6 +272,10 @@ export function CashflowClient() {
     week: number,
     payload: { text: string; highlight: string | null }
   ) {
+    if (comparison.readOnly) {
+      toast.error("Исторические данные доступны только для чтения");
+      return;
+    }
     const res = await fetch("/api/cashflow/comments", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -288,8 +293,22 @@ export function CashflowClient() {
   }
 
   const [showOldWeeks, setShowOldWeeks] = useState(false);
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  usePersistedInterfaceState(
+    "cashflow",
+    { year, activeTab, showOldWeeks },
+    (stored) => {
+      if (stored.year !== undefined) setYear(stored.year);
+      if (stored.activeTab !== undefined) setActiveTab(stored.activeTab);
+      if (stored.showOldWeeks !== undefined) setShowOldWeeks(stored.showOldWeeks);
+    }
+  );
+  usePersistedScroll(tableScrollRef, `cashflow-table:${activeTab}`);
 
-  const weeks = (data && !("error" in data)) ? data.weeks : [];
+  const weeks = React.useMemo(
+    () => (data && !("error" in data) ? data.weeks : []),
+    [data]
+  );
   const collapsedWeeks =
     !showOldWeeks && year === currentISOYear && weeks.length > 0;
   const visibleWeeks = React.useMemo(() => {
@@ -326,7 +345,7 @@ export function CashflowClient() {
     );
   }
 
-  const { summary, projects, weeksInYear, aggregates, balanceInAccounts, discrepancy, discrepancyDPFact } = data;
+  const { summary, aggregates, balanceInAccounts, discrepancy, discrepancyDPFact } = data;
   const externalProjects = [...(data.externalProjects ?? data.projects ?? [])].sort((a, b) => a.name.localeCompare(b.name, "ru"));
   const internalProjects = [...(data.internalProjects ?? [])].sort((a, b) => a.name.localeCompare(b.name, "ru"));
 
@@ -429,7 +448,12 @@ export function CashflowClient() {
   return (
     <div className="flex flex-col h-[calc(100vh-3rem)] min-h-0 gap-3">
       <div className="shrink-0 flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Кэшфлоу проектов</h1>
+        <div>
+          <h1 className="text-xl font-semibold">Кэшфлоу проектов</h1>
+          {comparison.activeSource !== "live" && (
+            <p className="text-xs text-neutral-500">Исторический снимок · только чтение</p>
+          )}
+        </div>
         <Select value={String(year)} onValueChange={v => v && setYear(parseInt(v))}>
           <SelectTrigger className="w-24 h-8 text-sm"><SelectValue /></SelectTrigger>
           <SelectContent>{YEARS.map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}</SelectContent>
@@ -483,7 +507,7 @@ export function CashflowClient() {
             </button>
           </div>
         )}
-        <div className="flex-1 min-h-0 overflow-auto">
+        <div ref={tableScrollRef} className="flex-1 min-h-0 overflow-auto">
           <table className="min-w-max border-collapse text-sm">
             <thead>
               <tr className="bg-neutral-50 border-b border-neutral-100">
@@ -566,12 +590,17 @@ export function CashflowClient() {
                               compact
                               onSave={(payload) => saveCellMeta(`summary:${def.key}`, week, payload)}
                             >
-                              <OpeningBalanceInput
-                                year={year}
-                                initial={openingBalance ?? 0}
-                                onSaved={v => { setOpeningBalance(v); mutate(); }}
-                                compact
-                              />
+                              {comparison.readOnly ? (
+                                <span className="italic">{fmt(openingBalance ?? 0)}</span>
+                              ) : (
+                                <OpeningBalanceInput
+                                  key={year}
+                                  year={year}
+                                  initial={openingBalance ?? 0}
+                                  onSaved={v => { setOpeningBalance(v); mutate(); }}
+                                  compact
+                                />
+                              )}
                             </CashflowCommentCell>
                           </td>
                         );

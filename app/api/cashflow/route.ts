@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/permissions";
-import { prisma } from "@/lib/db";
 import { getISOWeek, getISOWeeksInYear, isoWeekStart } from "@/lib/iso-weeks";
+import {
+  dataSourcePrismaAdapter,
+  resolveDataSource,
+  SnapshotSourceError,
+} from "@/lib/snapshots/data-source";
 
 /**
  * Определяет неделю/год для кэшфлоу по календарному году.
@@ -41,6 +45,16 @@ export async function GET(req: NextRequest) {
 
   const yearParam = req.nextUrl.searchParams.get("year");
   const year = yearParam ? parseInt(yearParam) : new Date().getFullYear();
+  let source;
+  try {
+    source = await resolveDataSource(req.nextUrl.searchParams.get("source"));
+  } catch (error) {
+    if (error instanceof SnapshotSourceError) {
+      return NextResponse.json({ error: error.message }, { status: 404 });
+    }
+    throw error;
+  }
+  const db = dataSourcePrismaAdapter(source);
   const weeksInYear = getISOWeeksInYear(year);
   const weeks = Array.from({ length: weeksInYear }, (_, i) => i + 1);
 
@@ -55,13 +69,13 @@ export async function GET(req: NextRequest) {
   }
 
   const [charges, works, otherExpenses, planLines, openingBalance, activeProjects, reconciliations] = await Promise.all([
-    prisma.charge.findMany({ include: { order: { select: { projectId: true } } } }),
-    prisma.work.findMany({ select: { projectId: true, amount: true, workStatus: true, plannedPayAt: true, paidAt: true } }),
-    prisma.otherExpense.findMany({ select: { projectId: true, amount: true, workStatus: true, plannedPayAt: true, paidAt: true } }),
-    prisma.spendingPlanLine.findMany({ where: { year }, select: { projectId: true, week: true, amount: true } }),
-    prisma.cashflowOpeningBalance.findUnique({ where: { year } }),
-    prisma.project.findMany({ where: { status: "active" }, select: { id: true, name: true, type: true } }),
-    prisma.bankAccountReconciliation.findMany({
+    db.charge.findMany({ include: { order: { select: { projectId: true } } } }),
+    db.work.findMany({ select: { projectId: true, amount: true, workStatus: true, plannedPayAt: true, paidAt: true } }),
+    db.otherExpense.findMany({ select: { projectId: true, amount: true, workStatus: true, plannedPayAt: true, paidAt: true } }),
+    db.spendingPlanLine.findMany({ where: { year }, select: { projectId: true, week: true, amount: true } }),
+    db.cashflowOpeningBalance.findUnique({ where: { year } }),
+    db.project.findMany({ where: { status: "active" }, select: { id: true, name: true, type: true } }),
+    db.bankAccountReconciliation.findMany({
       where: { isoWeekYear: year },
       include: { results: { select: { amount: true } } },
     }),

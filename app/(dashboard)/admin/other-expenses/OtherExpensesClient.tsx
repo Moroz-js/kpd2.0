@@ -28,18 +28,22 @@ import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
 import { SortableHead } from "@/components/ui-custom/SortableHead";
 import { WORK_STATUSES, PAYMENT_STATUSES } from "@/lib/statuses";
 import { formatMoney, formatMoneyRub, formatDateShort, MONTHS } from "@/lib/format";
-import { getISOWeek, getISOWeekYear, weekLabel, nearestPaymentDate, toLocalDateString } from "@/lib/iso-weeks";
+import { getISOWeek, getISOWeekYear, weekLabel, nearestPaymentDate, toLocalDateString, resolvePlannedPayAtOnCheck } from "@/lib/iso-weeks";
 import { cn } from "@/lib/utils";
 import { RowSelectCheckbox } from "@/components/ui-custom/RowSelectCheckbox";
 import { useTableRowSelection } from "@/lib/useTableRowSelection";
 import { ExpandableListCell } from "@/components/ui-custom/ExpandableListCell";
 import { stickyActionsHead, stickyActionsCell, compactHead, compactPeriodHead } from "@/lib/table-styles";
 import { sortByNameRu } from "@/lib/sort";
+import {
+  usePersistedInterfaceState,
+  usePersistedScroll,
+} from "@/components/PersistedInterfaceState";
 
-/** Ширины колонок (18) — table-fixed, иначе правые колонки сжимаются и наезжают друг на друга */
+/** Ширины колонок (19) — table-fixed, иначе правые колонки сжимаются и наезжают друг на друга */
 const ACTIONS_COL_WIDTH = 128;
 const COL_WIDTHS = [
-  40, 84, 112, 72, 192, 148, 208, 116, 124, 104, 100, 92, 124, 140, 92, 120, 140, ACTIONS_COL_WIDTH,
+  40, 96, 84, 112, 72, 192, 148, 208, 116, 124, 104, 100, 92, 124, 140, 92, 120, 140, ACTIONS_COL_WIDTH,
 ] as const;
 const TABLE_MIN_WIDTH = COL_WIDTHS.reduce((s, w) => s + w, 0);
 const cellClip = "overflow-hidden max-w-0";
@@ -61,6 +65,9 @@ type ProjectRef = Ref & { responsibleExecutorId?: string | null };
 
 type OtherExpense = {
   id: string;
+  otherExpenseNumber: string | null;
+  otherExpenseNumberYear: number | null;
+  otherExpenseNumberSerial: number | null;
   projectId: string; project: Ref;
   executorId: string; executor: Ref;
   workTypeId: string; workType: Ref & { segment: string };
@@ -130,6 +137,7 @@ function payWeekFilterLabel(plannedPayAt: string | null, paidAt: string | null):
 }
 
 type SortField =
+  | "number"
   | "executionMonth"
   | "payWeek"
   | "project"
@@ -170,6 +178,14 @@ function cmpNullableText(a: string | null | undefined, b: string | null | undefi
 
 function compareOtherExpenses(a: OtherExpense, b: OtherExpense, field: SortField, dir: SortDir): number {
   switch (field) {
+    case "number": {
+      const cmp =
+        (a.otherExpenseNumberYear ?? Number.MAX_SAFE_INTEGER) -
+          (b.otherExpenseNumberYear ?? Number.MAX_SAFE_INTEGER) ||
+        (a.otherExpenseNumberSerial ?? Number.MAX_SAFE_INTEGER) -
+          (b.otherExpenseNumberSerial ?? Number.MAX_SAFE_INTEGER);
+      return dir === "asc" ? cmp : -cmp;
+    }
     case "executionMonth":
       return dir === "asc" ? a.executionMonth - b.executionMonth : b.executionMonth - a.executionMonth;
     case "payWeek": {
@@ -268,6 +284,7 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
           onSelect={onSelect}
         />
       </TableCell>
+      <TableCell className="whitespace-nowrap tabular-nums">{row.otherExpenseNumber ?? "—"}</TableCell>
       <TableCell>{row.executionYear}</TableCell>
       <TableCell className="whitespace-nowrap">{MONTHS.find(m => m.value === String(row.executionMonth))?.label ?? row.executionMonth}</TableCell>
       <TableCell>{payWeek(row.plannedPayAt, row.paidAt)}</TableCell>
@@ -387,7 +404,7 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
               <RotateCcw className="h-3.5 w-3.5 text-amber-500" />
             </Button>
           )}
-          {isAdmin && (row.paymentStatus === "planned" || row.paymentStatus === "sent") && (
+          {isAdmin && row.paymentStatus === "planned" && (
             <Button size="sm" variant="ghost" className="h-6 w-6 p-0" title="Оплатить" onClick={() => onPay(row)}>
               <CircleDollarSign className="h-3.5 w-3.5 text-green-600" />
             </Button>
@@ -423,6 +440,8 @@ export function OtherExpensesClient({ isAdmin, userId, executorId, projects: pro
   const [reworkTarget, setReworkTarget] = useState<OtherExpense | null>(null);
   const [payTarget, setPayTarget] = useState<OtherExpense | null>(null);
   const [payDate, setPayDate] = useState("");
+  const [payWorkAmount, setPayWorkAmount] = useState("");
+  const [payPaymentAmount, setPayPaymentAmount] = useState("");
 
   // Bulk
   const [bulkWorkStatus, setBulkWorkStatus] = useState("");
@@ -447,6 +466,35 @@ export function OtherExpensesClient({ isAdmin, userId, executorId, projects: pro
   const [fPayStatus, setFPayStatus] = useState<string[]>([]);
   const [sort, setSort] = useState<{ field: SortField; dir: SortDir } | null>(null);
 
+  usePersistedInterfaceState(
+    "other-expenses",
+    {
+      fYear,
+      fMonth,
+      fPayWeek,
+      fProject,
+      fExecutor,
+      fWorkType,
+      fResponsible,
+      fWorkStatus,
+      fPayStatus,
+      sort,
+    },
+    (stored) => {
+      if (stored.fYear) setFYear(stored.fYear);
+      if (stored.fMonth) setFMonth(stored.fMonth);
+      if (stored.fPayWeek) setFPayWeek(stored.fPayWeek);
+      if (stored.fProject) setFProject(stored.fProject);
+      if (stored.fExecutor) setFExecutor(stored.fExecutor);
+      if (stored.fWorkType) setFWorkType(stored.fWorkType);
+      if (stored.fResponsible) setFResponsible(stored.fResponsible);
+      if (stored.fWorkStatus) setFWorkStatus(stored.fWorkStatus);
+      if (stored.fPayStatus) setFPayStatus(stored.fPayStatus);
+      if ("sort" in stored) setSort(stored.sort ?? null);
+    }
+  );
+  usePersistedScroll(scrollRef, "other-expenses-table");
+
   const fetchData = useCallback(async () => {
     const r = await fetch("/api/other-expenses");
     if (!r.ok) throw new Error();
@@ -466,7 +514,7 @@ export function OtherExpensesClient({ isAdmin, userId, executorId, projects: pro
   function canEdit(row: OtherExpense) {
     if (isAdmin) return true;
     if (row.workStatus === "paid") return false;
-    if (row.paymentStatus === "sent" || row.paymentStatus === "paid") return false;
+    if (row.paymentStatus === "paid") return false;
     // РП может редактировать в том числе при checked
     if (!!executorId && row.responsibleExecutorId === executorId) return true;
     // Создатель — только до проверки
@@ -556,7 +604,9 @@ export function OtherExpensesClient({ isAdmin, userId, executorId, projects: pro
 
   async function handleCheck(row: OtherExpense) {
     setCheckTarget(null);
-    const plannedIso = nearestPaymentDate().toISOString();
+    const plannedIso = resolvePlannedPayAtOnCheck(
+      row.plannedPayAt ? new Date(row.plannedPayAt) : null
+    ).toISOString();
     setRows((prev) =>
       prev.map((r) =>
         r.id === row.id
@@ -603,11 +653,39 @@ export function OtherExpensesClient({ isAdmin, userId, executorId, projects: pro
   }
 
   async function handlePay(row: OtherExpense, date: string) {
+    const workAmt = parseFloat(payWorkAmount);
+    const payAmt = parseFloat(payPaymentAmount);
+    if (!(workAmt > 0) || !(payAmt > 0)) {
+      toast.error("Сумма работы и сумма выплаты должны быть положительными");
+      return;
+    }
+    if (workAmt !== payAmt) {
+      toast.error("Сумма работы и сумма выплаты не равны");
+      return;
+    }
     setPayTarget(null);
     const isoDate = new Date(date).toISOString();
-    setRows((prev) => prev.map((r) => r.id === row.id ? { ...r, paymentStatus: "paid", paidAt: isoDate, workStatus: "paid" } : r));
+    setRows((prev) =>
+      prev.map((r) =>
+        r.id === row.id
+          ? {
+              ...r,
+              amount: workAmt,
+              paymentAmount: payAmt,
+              paymentStatus: "paid",
+              paidAt: isoDate,
+              workStatus: "paid",
+            }
+          : r
+      )
+    );
     try {
-      await patchRow(row.id, { paymentStatus: "paid", paidAt: isoDate });
+      await patchRow(row.id, {
+        amount: workAmt,
+        paymentAmount: payAmt,
+        paymentStatus: "paid",
+        paidAt: isoDate,
+      });
       toast.success("Выплата оплачена");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка");
@@ -717,6 +795,9 @@ export function OtherExpensesClient({ isAdmin, userId, executorId, projects: pro
   const onReworkCb = useCallback((row: OtherExpense) => setReworkTarget(row), []);
   const onPayCb = useCallback((row: OtherExpense) => {
     setPayDate(toLocalDateString(new Date()));
+    const amt = String(row.amount);
+    setPayWorkAmount(amt);
+    setPayPaymentAmount(amt);
     setPayTarget(row);
   }, []);
   const onEditCb = useCallback((row: OtherExpense) => setEditTarget(row), []);
@@ -916,6 +997,9 @@ export function OtherExpensesClient({ isAdmin, userId, executorId, projects: pro
               <TableHead className="w-8">
                 <Checkbox checked={selectedIds.size === filtered.length && filtered.length > 0} onCheckedChange={() => toggleAll(orderedRowIds)} />
               </TableHead>
+              <SortableHead field="number" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={cn(compactHead, "text-[10px]")}>
+                Номер
+              </SortableHead>
               <TableHead className={compactPeriodHead}>Год выполнения</TableHead>
               <SortableHead field="executionMonth" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactPeriodHead}>
                 Месяц выполнения
@@ -943,7 +1027,7 @@ export function OtherExpensesClient({ isAdmin, userId, executorId, projects: pro
                 Дата оплаты план
               </SortableHead>
               <SortableHead field="amount" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={cn(compactHead, "text-right")}>
-                Сумма
+                Сумма работы
               </SortableHead>
               <SortableHead field="workStatus" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
                 Статус работы
@@ -951,7 +1035,7 @@ export function OtherExpensesClient({ isAdmin, userId, executorId, projects: pro
               <SortableHead field="paymentStatus" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
                 Статус выплаты
               </SortableHead>
-              <TableHead className={cn(compactHead, "text-right")}>Выплата</TableHead>
+              <TableHead className={cn(compactHead, "text-right")}>Сумма выплаты</TableHead>
               <SortableHead field="paidAt" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
                 <span className="inline-flex items-center gap-1">
                   Дата оплаты факт
@@ -967,17 +1051,17 @@ export function OtherExpensesClient({ isAdmin, userId, executorId, projects: pro
           <VirtualizedTableBody
             scrollRef={scrollRef}
             rowCount={filtered.length}
-            colSpan={18}
+            colSpan={19}
             isLoading={loading}
             loading={
               <TableRow>
-                <TableCell colSpan={18} className="text-center text-neutral-500 py-8">Загрузка...</TableCell>
+                <TableCell colSpan={19} className="text-center text-neutral-500 py-8">Загрузка...</TableCell>
               </TableRow>
             }
             isEmpty={filtered.length === 0}
             empty={
               <TableRow>
-                <TableCell colSpan={18} className="text-center text-neutral-500 py-8">Нет данных</TableCell>
+                <TableCell colSpan={19} className="text-center text-neutral-500 py-8">Нет данных</TableCell>
               </TableRow>
             }
             renderRow={renderRow}
@@ -1059,6 +1143,33 @@ export function OtherExpensesClient({ isAdmin, userId, executorId, projects: pro
             <p className="text-sm text-neutral-600">
               {payTarget?.description}
             </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Сумма работы</Label>
+                <Input
+                  type="number"
+                  className="h-9"
+                  value={payWorkAmount}
+                  onChange={(e) => setPayWorkAmount(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Сумма выплаты</Label>
+                <Input
+                  type="number"
+                  className="h-9"
+                  value={payPaymentAmount}
+                  onChange={(e) => setPayPaymentAmount(e.target.value)}
+                />
+              </div>
+            </div>
+            {payWorkAmount !== "" &&
+              payPaymentAmount !== "" &&
+              parseFloat(payWorkAmount) !== parseFloat(payPaymentAmount) && (
+                <p className="text-xs text-amber-600">
+                  Сумма работы и сумма выплаты не равны
+                </p>
+              )}
             <div className="space-y-1.5">
               <Label>Дата оплаты</Label>
               <DateInput
@@ -1072,7 +1183,14 @@ export function OtherExpensesClient({ isAdmin, userId, executorId, projects: pro
             <Button variant="outline" onClick={() => setPayTarget(null)}>Отмена</Button>
             <Button
               onClick={() => payTarget && payDate && handlePay(payTarget, payDate)}
-              disabled={!payDate}
+              disabled={
+                !payDate ||
+                !payWorkAmount ||
+                !payPaymentAmount ||
+                !(parseFloat(payWorkAmount) > 0) ||
+                !(parseFloat(payPaymentAmount) > 0) ||
+                parseFloat(payWorkAmount) !== parseFloat(payPaymentAmount)
+              }
             >
               Оплатить
             </Button>
@@ -1126,12 +1244,26 @@ function OtherExpenseFormDialog({
   const [month, setMonth] = useState(String(initial?.executionMonth ?? now.getMonth() + 1));
   const [description, setDescription] = useState(initial?.description ?? "");
   const [amount, setAmount] = useState(initial?.amount != null ? String(initial.amount) : "");
+  const [paymentAmount, setPaymentAmount] = useState(
+    initial?.paymentAmount != null
+      ? String(initial.paymentAmount)
+      : initial?.amount != null
+        ? String(initial.amount)
+        : ""
+  );
+  const [paymentAmountTouched, setPaymentAmountTouched] = useState(
+    !!(initial?.paymentAmount != null && initial.paymentAmount !== initial.amount)
+  );
   const [preferredPayMethod, setPreferredPayMethod] = useState(initial?.preferredPayMethod ?? "");
-  const [plannedPayAt, setPlannedPayAt] = useState(initial?.plannedPayAt ? toLocalDateString(new Date(initial.plannedPayAt)) : "");
+  const [plannedPayAt, setPlannedPayAt] = useState(
+    initial?.plannedPayAt
+      ? toLocalDateString(new Date(initial.plannedPayAt))
+      : toLocalDateString(nearestPaymentDate())
+  );
   const [workStatus, setWorkStatus] = useState(initial?.workStatus ?? "submitted");
   // Откат «Проверено» → «Выставлено»/«На доработку» + удаление выплаты
   const [revertStatus, setRevertStatus] = useState<string | null>(null);
-  // Смена статуса выплаты (только admin: sent/paid → planned)
+  // Смена статуса выплаты (только admin: paid → planned)
   const [editPaymentStatus, setEditPaymentStatus] = useState<string>(initial?.paymentStatus ?? "");
   const [comment, setComment] = useState(initial?.comment ?? "");
   const [saving, setSaving] = useState(false);
@@ -1139,10 +1271,24 @@ function OtherExpenseFormDialog({
   const years = [now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1];
   const isEdit = !!initial;
   const paymentCreated = !!initial?.paymentStatus;
-  // Откат разрешён только если выплата ещё «Запланирована» (не отправлена/оплачена)
+  const plannedPayEditable =
+    !isEdit || initial!.workStatus === "submitted" || initial!.workStatus === "checked";
+  const amountsMismatch =
+    amount !== "" && paymentAmount !== "" && parseFloat(amount) !== parseFloat(paymentAmount);
+  // Откат разрешён только если выплата ещё «Запланирована» (не оплачена)
   const canRevert = canRework && isEdit && initial?.workStatus === "checked" && initial?.paymentStatus === "planned";
   const responsibleLocked =
     isEdit && (initial!.workStatus === "checked" || initial!.workStatus === "paid");
+
+  function handleAmountChange(value: string) {
+    setAmount(value);
+    if (!paymentAmountTouched) setPaymentAmount(value);
+  }
+
+  function handlePaymentAmountChange(value: string) {
+    setPaymentAmountTouched(true);
+    setPaymentAmount(value);
+  }
 
   const responsibleOptions = React.useMemo(() => {
     const list = [...permanentExecutors];
@@ -1157,8 +1303,18 @@ function OtherExpenseFormDialog({
   }, [permanentExecutors, initial]);
 
   async function handleSave() {
-    if (!projectId || !executorId || !workTypeId || !responsibleExecutorId || !description || !amount) {
+    if (!projectId || !executorId || !workTypeId || !responsibleExecutorId || !description || !amount || !paymentAmount) {
       toast.error("Заполните обязательные поля");
+      return;
+    }
+    const amountNum = parseFloat(amount);
+    const paymentAmountNum = parseFloat(paymentAmount);
+    if (!(amountNum > 0) || !(paymentAmountNum > 0)) {
+      toast.error("Сумма работы и сумма выплаты должны быть положительными");
+      return;
+    }
+    if (amountsMismatch) {
+      toast.error("Сумма работы и сумма выплаты не равны");
       return;
     }
     setSaving(true);
@@ -1173,9 +1329,10 @@ function OtherExpenseFormDialog({
         executionYear: parseInt(year),
         executionMonth: parseInt(month),
         description,
-        amount: parseFloat(amount),
+        amount: amountNum,
         preferredPayMethod: preferredPayMethod || null,
         comment: comment || null,
+        plannedPayAt: plannedPayAt || null,
       };
 
       if (!responsibleLocked) {
@@ -1184,6 +1341,10 @@ function OtherExpenseFormDialog({
 
       if (isEdit) {
         body.bankAccountId = bankAccountId || null;
+      }
+
+      if ((!isEdit || paymentCreated) && !revertStatus) {
+        body.paymentAmount = paymentAmountNum;
       }
 
       if (revertStatus) {
@@ -1196,8 +1357,6 @@ function OtherExpenseFormDialog({
         // Редактирование без выплаты: можно менять submitted/rework
         body.workStatus = workStatus || "submitted";
       } else {
-        // Редактирование с выплатой: только дата плана
-        body.plannedPayAt = plannedPayAt || null;
         // Admin может изменить статус выплаты
         if (isAdmin && editPaymentStatus !== (initial?.paymentStatus ?? "")) {
           body.paymentStatus = editPaymentStatus || null;
@@ -1336,15 +1495,37 @@ function OtherExpenseFormDialog({
             </Select>
           </div>
           <div className="space-y-1.5 min-w-0">
-            <Label>Сумма к выплате *</Label>
-            <Input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+            <Label>Сумма работы *</Label>
+            <Input
+              type="number"
+              value={amount}
+              onChange={(e) => handleAmountChange(e.target.value)}
+              placeholder="0"
+            />
           </div>
-          {paymentCreated && (
-            <div className="space-y-1.5 min-w-0">
-              <Label>Дата оплаты — план</Label>
-              <DateInput className="h-9" value={plannedPayAt} onChange={(e) => setPlannedPayAt(e.target.value)} />
-            </div>
+          <div className="space-y-1.5 min-w-0">
+            <Label>Сумма выплаты *</Label>
+            <Input
+              type="number"
+              value={paymentAmount}
+              onChange={(e) => handlePaymentAmountChange(e.target.value)}
+              placeholder="0"
+            />
+          </div>
+          {amountsMismatch && (
+            <p className="col-span-2 text-xs text-amber-600">
+              Сумма работы и сумма выплаты не равны
+            </p>
           )}
+          <div className="space-y-1.5 min-w-0">
+            <Label>Дата оплаты — план</Label>
+            <DateInput
+              className="h-9"
+              value={plannedPayAt}
+              onChange={(e) => setPlannedPayAt(e.target.value)}
+              disabled={!plannedPayEditable}
+            />
+          </div>
           <div className="space-y-1.5 min-w-0">
             <Label>Статус работы</Label>
             {canRevert ? (
@@ -1367,7 +1548,7 @@ function OtherExpenseFormDialog({
                 )}
               </div>
             ) : !isEdit || paymentCreated ? (
-              // Создание или выплата отправлена/оплачена — только read-only
+              // Создание или выплата оплачена — только read-only
               <Input
                 value={WORK_STATUSES[(revertStatus ?? workStatus) as keyof typeof WORK_STATUSES]?.label ?? workStatus}
                 disabled
@@ -1400,7 +1581,6 @@ function OtherExpenseFormDialog({
                   <SelectContent>
                     <SelectItem value="planned">{PAYMENT_STATUSES.planned.label}</SelectItem>
                     <SelectItem value="paid">{PAYMENT_STATUSES.paid.label}</SelectItem>
-                    <SelectItem value="sent">{PAYMENT_STATUSES.sent.label}</SelectItem>
                   </SelectContent>
                 </Select>
               )}
@@ -1425,7 +1605,19 @@ function OtherExpenseFormDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Отмена</Button>
-          <Button onClick={handleSave} disabled={saving}>{saving ? "Сохранение..." : isEdit ? "Сохранить" : "Создать"}</Button>
+          <Button
+            onClick={handleSave}
+            disabled={
+              saving ||
+              !amount ||
+              !paymentAmount ||
+              !(parseFloat(amount) > 0) ||
+              !(parseFloat(paymentAmount) > 0) ||
+              amountsMismatch
+            }
+          >
+            {saving ? "Сохранение..." : isEdit ? "Сохранить" : "Создать"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

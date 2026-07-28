@@ -14,6 +14,9 @@ export type IssuedWorkSource = "personal" | "other-expense";
 export type IssuedWorkRow = {
   sourceType: IssuedWorkSource;
   sourceId: string; // id Work.id или OtherExpense.id
+  number: string | null;
+  numberYear: number | null;
+  numberSerial: number | null;
 
   executionYear: number;
   executionMonth: number;
@@ -23,6 +26,7 @@ export type IssuedWorkRow = {
   executorId: string;
   executorName: string;
   executorType: string;
+  executorAccessEmail: string | null;
   projectId: string;
   projectName: string;
   projectType: string;
@@ -72,7 +76,7 @@ export async function listIssuedWorks(filter: IssuedWorksFilter = {}): Promise<I
   const [works, otherExpenses] = await Promise.all([
     prisma.work.findMany({
       include: {
-        executor: { select: { id: true, name: true, type: true } },
+        executor: { select: { id: true, name: true, type: true, accessEmail: true } },
         project: { select: { id: true, name: true, type: true } },
         workType: { select: { id: true, name: true, segment: true } },
         responsibleExecutor: { select: { id: true, name: true } },
@@ -80,7 +84,7 @@ export async function listIssuedWorks(filter: IssuedWorksFilter = {}): Promise<I
     }),
     prisma.otherExpense.findMany({
       include: {
-        executor: { select: { id: true, name: true, type: true } },
+        executor: { select: { id: true, name: true, type: true, accessEmail: true } },
         project: { select: { id: true, name: true, type: true } },
         workType: { select: { id: true, name: true, segment: true } },
         responsibleExecutor: { select: { id: true, name: true } },
@@ -93,6 +97,9 @@ export async function listIssuedWorks(filter: IssuedWorksFilter = {}): Promise<I
     return {
       sourceType: "personal",
       sourceId: w.id,
+      number: w.issuedWorkNumber,
+      numberYear: w.issuedWorkNumberYear,
+      numberSerial: w.issuedWorkNumberSerial,
       executionYear: w.executionYear,
       executionMonth: w.executionMonth,
       weekPlanFact: pf.week,
@@ -100,6 +107,7 @@ export async function listIssuedWorks(filter: IssuedWorksFilter = {}): Promise<I
       executorId: w.executorId,
       executorName: w.executor.name,
       executorType: w.executor.type,
+      executorAccessEmail: w.executor.accessEmail,
       projectId: w.projectId,
       projectName: w.project.name,
       projectType: w.project.type,
@@ -125,6 +133,9 @@ export async function listIssuedWorks(filter: IssuedWorksFilter = {}): Promise<I
     return {
       sourceType: "other-expense",
       sourceId: o.id,
+      number: o.issuedWorkNumber,
+      numberYear: o.issuedWorkNumberYear,
+      numberSerial: o.issuedWorkNumberSerial,
       executionYear: o.executionYear,
       executionMonth: o.executionMonth,
       weekPlanFact: pf.week,
@@ -132,6 +143,7 @@ export async function listIssuedWorks(filter: IssuedWorksFilter = {}): Promise<I
       executorId: o.executorId,
       executorName: o.executor.name,
       executorType: o.executor.type,
+      executorAccessEmail: o.executor.accessEmail,
       projectId: o.projectId,
       projectName: o.project.name,
       projectType: o.project.type,

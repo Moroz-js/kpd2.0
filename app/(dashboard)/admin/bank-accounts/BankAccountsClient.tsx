@@ -21,6 +21,10 @@ import { Label } from "@/components/ui/label";
 import { CurrencyCombobox } from "@/components/ui-custom/CurrencyCombobox";
 import { DEFAULT_CURRENCIES, mergeCurrencyOptions } from "@/lib/currencies";
 import { BankAccountVerificationTab } from "./BankAccountVerificationTab";
+import {
+  usePersistedInterfaceState,
+  usePersistedScroll,
+} from "@/components/PersistedInterfaceState";
 
 type Row = {
   id: string;
@@ -69,6 +73,18 @@ export function BankAccountsClient() {
   const [editing, setEditing] = React.useState<Row | "new" | null>(null);
   const [archiveTarget, setArchiveTarget] = React.useState<Row | null>(null);
   const [unarchiveTarget, setUnarchiveTarget] = React.useState<Row | null>(null);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  usePersistedInterfaceState(
+    "bank-accounts",
+    { activeTab, statusFilter, sort },
+    (stored) => {
+      if (stored.activeTab !== undefined) setActiveTab(stored.activeTab);
+      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
+      if (stored.sort) setSort(stored.sort);
+    }
+  );
+  usePersistedScroll(scrollRef, `bank-accounts-table:${activeTab}`);
 
   const rows = React.useMemo(() => {
     let list = data ?? [];
@@ -159,7 +175,7 @@ export function BankAccountsClient() {
         </div>
       </div>
 
-      <Table containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto">
+      <Table containerRef={scrollRef} containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto">
           <TableHeader>
             <TableRow>
               <SortableHead field="name" sortBy={sort.field} sortDir={sort.dir} onSort={handleSort}>

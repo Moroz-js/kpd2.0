@@ -93,16 +93,24 @@ export function GroupHeaderRow({
         sticky нельзя вешать на colspan-ячейку на всю ширину таблицы:
         она равна области скролла, и left:0 не удерживает контент.
         Прилипает узкий внутренний блок (w-max).
+
+        z-index ниже, чем у TableHead (z-10, sticky top-0): обе кнопки — position:sticky
+        в одном контексте наложения, поэтому без этого заголовок группы при вертикальном
+        скролле оказывался бы поверх шапки таблицы в момент, когда строка группы проходит
+        под прилипшей шапкой. Значение ниже z-10 гарантирует, что шапка таблицы всегда
+        перекрывает заголовок группы, а не наоборот.
       */}
       <TableCell colSpan={colSpan} className="bg-neutral-100 p-0">
         <button
           type="button"
           onClick={onToggle}
           aria-expanded={!collapsed}
-          className="sticky left-0 z-20 flex w-max max-w-[min(42rem,calc(100vw-14rem))] items-center gap-2 bg-neutral-100 py-1.5 pl-2 pr-4 text-left text-xs text-neutral-800 select-none"
+          className="sticky left-0 z-[5] flex w-max max-w-[min(42rem,calc(100vw-14rem))] items-center gap-2 border-r border-neutral-200 bg-neutral-100 py-1.5 pl-2 pr-4 text-left text-xs text-neutral-800 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)] select-none"
         >
           <SectionChevron expanded={!collapsed} />
-          <span className="truncate">{label}</span>
+          <span className="truncate" title={label}>
+            {label}
+          </span>
           <span className="tabular-nums text-neutral-500 shrink-0">{count}</span>
           <span className="tabular-nums text-neutral-700 shrink-0">
             {formatMoney(sum)}

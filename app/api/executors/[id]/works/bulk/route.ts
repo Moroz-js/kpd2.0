@@ -19,7 +19,7 @@ export async function POST(
   const { id: executorId } = await params;
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!canViewExecutorEstimate(user, executorId))
+  if (!(await canViewExecutorEstimate(user, executorId)))
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json().catch(() => null);

@@ -1,0 +1,12 @@
+[Unit]
+Description=Create KPD snapshot daily at 00:01 Moscow time
+
+[Timer]
+OnCalendar=*-*-* 00:01:00 Europe/Moscow
+Persistent=true
+AccuracySec=30s
+RandomizedDelaySec=0
+Unit=kpd-snapshot.service
+
+[Install]
+WantedBy=timers.target

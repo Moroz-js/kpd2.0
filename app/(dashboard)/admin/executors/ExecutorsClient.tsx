@@ -38,6 +38,10 @@ import { stickyActionsHead, stickyActionsCell, stickyActionsInner, compactTable,
 import { ExecutorWizard } from "./ExecutorWizard";
 import { hasPersonalSmeta } from "@/lib/executor-personal-estimate";
 import { EXECUTOR_COMPANY_STATUSES } from "@/lib/statuses";
+import {
+  usePersistedInterfaceState,
+  usePersistedScroll,
+} from "@/components/PersistedInterfaceState";
 type Row = {
   id: string;
   name: string;
@@ -53,14 +57,14 @@ type Row = {
   recipientTypes: string[];
   requisites: string | null;
   contacts: string | null;
+  contactEmail: string | null;
+  accessEmail: string | null;
   userId: string | null;
-  email: string | null;
   inTgChat: boolean;
   specialty: string | null;
   note: string | null;
   contractFile: string | null;
   ndaFile: string | null;
-  hasAccess: boolean;
   status: string;
   lastPaidAt: string | null;
   legalForm: string | null;
@@ -102,7 +106,6 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
   const [bankFilter, setBankFilter] = React.useState<string[]>([]);
   const [recipientFilter, setRecipientFilter] = React.useState<string[]>([]);
   const [companyStatusFilter, setCompanyStatusFilter] = React.useState<string[]>([]);
-  const [accessFilter, setAccessFilter] = React.useState<string[]>([]);
   const [statusFilter, setStatusFilter] = React.useState<string[]>(["active"]);
   const [nameSearch, setNameSearch] = React.useState("");
   const [sort, setSort] = React.useState<{ field: SortField; dir: SortDir }>({
@@ -117,6 +120,36 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
     pendingPayments: number;
   } | null>(null);
   const [unarchiveTarget, setUnarchiveTarget] = React.useState<Row | null>(null);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  usePersistedInterfaceState(
+    `executors:${mode}`,
+    {
+      typeFilter,
+      workTypeFilter,
+      projectFilter,
+      responsibleFilter,
+      bankFilter,
+      recipientFilter,
+      companyStatusFilter,
+      statusFilter,
+      nameSearch,
+      sort,
+    },
+    (stored) => {
+      if (stored.typeFilter) setTypeFilter(stored.typeFilter);
+      if (stored.workTypeFilter) setWorkTypeFilter(stored.workTypeFilter);
+      if (stored.projectFilter) setProjectFilter(stored.projectFilter);
+      if (stored.responsibleFilter) setResponsibleFilter(stored.responsibleFilter);
+      if (stored.bankFilter) setBankFilter(stored.bankFilter);
+      if (stored.recipientFilter) setRecipientFilter(stored.recipientFilter);
+      if (stored.companyStatusFilter) setCompanyStatusFilter(stored.companyStatusFilter);
+      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
+      if (stored.nameSearch !== undefined) setNameSearch(stored.nameSearch);
+      if (stored.sort) setSort(stored.sort);
+    }
+  );
+  usePersistedScroll(scrollRef, `executors-table:${mode}`);
 
   const projectOptions = React.useMemo(() => {
     const list = data ?? [];
@@ -182,10 +215,6 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
       });
     }
 
-    if (accessFilter.length) {
-      list = list.filter((r) => accessFilter.includes(r.hasAccess ? "true" : "false"));
-    }
-
     if (statusFilter.length) list = list.filter((r) => statusFilter.includes(r.status));
 
     list = [...list].sort((a, b) => {
@@ -210,7 +239,6 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
     bankFilter,
     recipientFilter,
     companyStatusFilter,
-    accessFilter,
     statusFilter,
     sort,
   ]);
@@ -358,15 +386,6 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
           onChange={setRecipientFilter}
         />
         <MultiSelectFilter
-          label="Доступ к смете"
-          options={[
-            { value: "true", label: "Есть доступ" },
-            { value: "false", label: "Нет доступа" },
-          ]}
-          value={accessFilter}
-          onChange={setAccessFilter}
-        />
-        <MultiSelectFilter
           label="Статус"
           options={Object.entries(ENTITY_STATUSES).map(([value, { label }]) => ({ value, label }))}
           value={statusFilter}
@@ -376,6 +395,7 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
 
       <Table
         className={cn(compactTable, "min-w-[1520px]")}
+        containerRef={scrollRef}
         containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto"
       >
           <TableHeader>
@@ -406,7 +426,6 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
               <TableHead className={cn(compactHead, "w-32 max-w-32")}>Источник оплаты</TableHead>
               <TableHead className={cn(compactHead, "w-36 max-w-36")}>Тип получателя</TableHead>
               <TableHead className={cn(compactHead, "w-20")}>В чате ТГ</TableHead>
-              <TableHead className={cn(compactHead, "w-24")}>Доступ</TableHead>
               <TableHead className={cn(compactHead, "w-24")}>Статус</TableHead>
               <SortableHead
                 field="lastPaidAt"
@@ -423,13 +442,13 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={14} className="text-center text-neutral-500 py-8">
+                <TableCell colSpan={13} className="text-center text-neutral-500 py-8">
                   Загрузка...
                 </TableCell>
               </TableRow>
             ) : rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={14} className="text-center text-neutral-500 py-8">
+                <TableCell colSpan={13} className="text-center text-neutral-500 py-8">
                   Нет исполнителей
                 </TableCell>
               </TableRow>
@@ -468,7 +487,9 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
                         <span className="truncate">{displayExecutorName(r.name, r.type)}</span>
                       )}
                     </div>
-                    {r.email && <div className="text-xs text-neutral-500 truncate">{r.email}</div>}
+                    {r.accessEmail && (
+                      <div className="text-xs text-neutral-500 truncate">{r.accessEmail}</div>
+                    )}
                   </TableCell>
                   <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>
                     {r.companyStatus
@@ -497,25 +518,6 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
                       <Check className="h-4 w-4 text-green-600 inline" />
                     ) : (
                       <X className="h-4 w-4 text-neutral-300 inline" />
-                    )}
-                  </TableCell>
-                  <TableCell className={compactCell}>
-                    {r.email && r.type !== "service" ? (
-                      <span
-                        className={`inline-flex items-center gap-0.5 rounded-full px-2 py-0 text-xs font-medium border cursor-default ${
-                          r.hasAccess
-                            ? "bg-green-50 border-green-300 text-green-800"
-                            : "bg-neutral-100 border-neutral-300 text-neutral-600"
-                        }`}
-                      >
-                        {r.hasAccess ? (
-                          <><Check className="h-3 w-3" /> Дан</>
-                        ) : (
-                          <><X className="h-3 w-3" /> Нет</>
-                        )}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-neutral-400">—</span>
                     )}
                   </TableCell>
                   <TableCell className={compactCell}>
@@ -568,6 +570,7 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
         <ExecutorWizard
           bankAccounts={bankAccounts ?? []}
           responsibles={responsibles ?? []}
+          canGrantAccess={!isManage}
           onClose={() => setWizardOpen(false)}
           onCreated={() => {
             setWizardOpen(false);

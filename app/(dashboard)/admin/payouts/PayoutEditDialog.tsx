@@ -53,8 +53,15 @@ export function PayoutEditDialog({
   onSaved: () => void;
 }) {
   const isPersonal = row.sourceType === "personal";
+  const isOther = row.sourceType === "other-expense";
+  const amountLocked = isPersonal && row.hasLinkedWorks === true;
 
-  const [amount, setAmount] = React.useState(String(row.amount));
+  const [amount, setAmount] = React.useState(
+    String(isOther ? (row.paymentAmount ?? row.amount) : row.amount)
+  );
+  const [workAmount, setWorkAmount] = React.useState(
+    String(row.workAmount ?? row.amount)
+  );
   const [paymentStatus, setPaymentStatus] = React.useState(row.paymentStatus);
   const [plannedPayAt, setPlannedPayAt] = React.useState(toDateInputValue(row.plannedPayAt));
   const [paidAt, setPaidAt] = React.useState(toDateInputValue(row.paidAt));
@@ -64,6 +71,18 @@ export function PayoutEditDialog({
   const [periodMonth, setPeriodMonth] = React.useState(String(row.periodMonth));
   const [periodYear, setPeriodYear] = React.useState(String(row.periodYear));
   const [submitting, setSubmitting] = React.useState(false);
+
+  const otherAmountsMismatch =
+    isOther &&
+    workAmount !== "" &&
+    amount !== "" &&
+    parseFloat(workAmount) !== parseFloat(amount);
+  const otherAmountsValid =
+    !isOther ||
+    (workAmount !== "" &&
+      amount !== "" &&
+      parseFloat(workAmount) > 0 &&
+      parseFloat(amount) > 0);
 
   const activeBanks = sortByNameRu(
     banks.filter((b) => b.status === "active" || b.id === row.bankAccountId)
@@ -75,18 +94,32 @@ export function PayoutEditDialog({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
 
+    if (!otherAmountsValid) {
+      toast.error("Сумма работы и сумма выплаты должны быть положительными");
+      return;
+    }
+    if (otherAmountsMismatch) {
+      toast.error("Сумма работы и сумма выплаты не равны");
+      return;
+    }
+
     const payload: Record<string, unknown> = {
-      amount: Number(amount),
       paymentStatus,
       paidAt: paidAt ? new Date(paidAt).toISOString() : null,
       plannedPayAt: plannedPayAt ? new Date(plannedPayAt).toISOString() : null,
       bankAccountId: bankAccountId || null,
       comment: comment || null,
     };
-    if (!isPersonal) {
+    if (isOther) {
+      payload.amount = Number(workAmount);
+      payload.paymentAmount = Number(amount);
       payload.executorId = executorId;
       payload.executionMonth = Number(periodMonth);
       payload.executionYear = Number(periodYear);
+    } else {
+      if (!amountLocked) {
+        payload.amount = Number(amount);
+      }
     }
 
     setSubmitting(true);
@@ -181,7 +214,39 @@ export function PayoutEditDialog({
             </>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
+          {isOther ? (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2 min-w-0">
+                  <Label htmlFor="workAmount">Сумма работы</Label>
+                  <Input
+                    id="workAmount"
+                    type="number"
+                    step="0.01"
+                    value={workAmount}
+                    onChange={(e) => setWorkAmount(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="space-y-2 min-w-0">
+                  <Label htmlFor="amount">Сумма выплаты</Label>
+                  <Input
+                    id="amount"
+                    type="number"
+                    step="0.01"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+              {otherAmountsMismatch && (
+                <p className="text-xs text-amber-600">
+                  Сумма работы и сумма выплаты не равны
+                </p>
+              )}
+            </div>
+          ) : (
             <div className="space-y-2 min-w-0">
               <Label htmlFor="amount">Сумма выплаты</Label>
               <Input
@@ -190,26 +255,33 @@ export function PayoutEditDialog({
                 step="0.01"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
+                disabled={amountLocked}
                 required
               />
+              {amountLocked && (
+                <p className="text-xs text-amber-700">
+                  Сумма выплаты привязана к работам. Изменение суммы доступно только через Личную смету исполнителя
+                </p>
+              )}
             </div>
-            <div className="space-y-2 min-w-0">
-              <Label htmlFor="paymentStatus">Статус выплаты</Label>
-              <Select value={paymentStatus} onValueChange={(v) => setPaymentStatus(v ?? "")}>
-                <SelectTrigger id="paymentStatus">
-                  <SelectValue>
-                    {PAYMENT_STATUSES[paymentStatus as keyof typeof PAYMENT_STATUSES]?.label ?? paymentStatus}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(PAYMENT_STATUSES).map(([value, { label }]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          )}
+
+          <div className="space-y-2 min-w-0">
+            <Label htmlFor="paymentStatus">Статус выплаты</Label>
+            <Select value={paymentStatus} onValueChange={(v) => setPaymentStatus(v ?? "")}>
+              <SelectTrigger id="paymentStatus">
+                <SelectValue>
+                  {PAYMENT_STATUSES[paymentStatus as keyof typeof PAYMENT_STATUSES]?.label ?? paymentStatus}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(PAYMENT_STATUSES).map(([value, { label }]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -231,7 +303,7 @@ export function PayoutEditDialog({
             </div>
           </div>
 
-                <div className="space-y-2 min-w-0">
+          <div className="space-y-2 min-w-0">
             <Label htmlFor="bankAccountId">Источник оплаты</Label>
             <Select
               value={bankAccountId || "__none__"}
@@ -256,7 +328,7 @@ export function PayoutEditDialog({
             </Select>
           </div>
 
-                <div className="space-y-2 min-w-0">
+          <div className="space-y-2 min-w-0">
             <Label htmlFor="comment">Комментарий</Label>
             <Textarea
               id="comment"
@@ -270,7 +342,10 @@ export function PayoutEditDialog({
             <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
               Отмена
             </Button>
-            <Button type="submit" disabled={submitting}>
+            <Button
+              type="submit"
+              disabled={submitting || !otherAmountsValid || otherAmountsMismatch}
+            >
               {submitting ? "Сохранение..." : "Сохранить"}
             </Button>
           </DialogFooter>

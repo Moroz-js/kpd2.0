@@ -7,7 +7,7 @@ import { updatePayout } from "@/lib/services/payouts";
 const bulkSchema = z.object({
   ids: z.array(z.string()).min(1),
   patch: z.object({
-    paymentStatus: z.enum(["planned", "sent", "paid"]).optional(),
+    paymentStatus: z.enum(["planned", "paid"]).optional(),
     plannedPayAt: z.string().nullable().optional(),
     paidAt: z.string().nullable().optional(),
     bankAccountId: z.string().nullable().optional(),

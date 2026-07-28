@@ -9,7 +9,7 @@ const createSchema = z.object({
   periodYear: z.number().int().min(2020).max(2100),
   periodMonth: z.number().int().min(1).max(12),
   amount: z.number().positive(),
-  paymentStatus: z.enum(["planned", "sent", "paid"]).optional(),
+  paymentStatus: z.enum(["planned", "paid"]).optional(),
   bankAccountId: z.string().nullable().optional(),
   plannedPayAt: z.string().nullable().optional(),
   paidAt: z.string().nullable().optional(),
