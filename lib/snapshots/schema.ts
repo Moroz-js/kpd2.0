@@ -92,6 +92,19 @@ export const SECTION_MODELS: Record<string, SnapshotModel[]> = {
     "Project",
     "BankAccount",
   ],
+  /** Сравнение внутри карточки личной сметы (`/admin/executors/[id]`). */
+  "executor-estimate": ["Work", "Payment", "OtherExpense", "Task", "VacationEntry"],
+  /** Сравнение внутри дашборда проекта (`/admin/projects/[id]`). */
+  "project-dashboard": [
+    "SpendingPlanLine",
+    "Work",
+    "Charge",
+    "Order",
+    "OtherExpense",
+    "ProjectExecutor",
+    "ProjectWorkType",
+    "Project",
+  ],
   responsibles: ["User", "Executor", "Project"],
   clients: ["Client", "Project", "Order", "Charge"],
   "work-types": ["WorkType", "ExecutorWorkType", "ProjectWorkType"],

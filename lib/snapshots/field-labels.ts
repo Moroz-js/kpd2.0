@@ -128,7 +128,19 @@ export const PREFERRED_FIELD_ORDER = [
 ];
 
 /** Поля, которые всегда скрываются из таблицы сравнения. */
-export const HIDDEN_FIELDS = new Set(["id", "password", "updatedAt"]);
+export const HIDDEN_FIELDS = new Set([
+  "id",
+  "password",
+  "updatedAt",
+  "createdById",
+  "userId",
+  "issuedWorkNumberYear",
+  "issuedWorkNumberSerial",
+  "payoutNumberYear",
+  "payoutNumberSerial",
+  "otherExpenseNumberYear",
+  "otherExpenseNumberSerial",
+]);
 
 /** Поля дат (форматируются как дд.мм.гггг). */
 export const DATE_FIELDS = new Set([

@@ -57,7 +57,11 @@ type DiffRow = {
   changes: Array<{ field: string; before: unknown; after: unknown }>;
 };
 
-type RefMaps = Partial<Record<"executor" | "project" | "workType" | "bankAccount" | "client" | "user", Map<string, string>>>;
+type RefMaps = Partial<
+  Record<"executor" | "project" | "workType" | "bankAccount" | "client" | "user", Map<string, string>>
+> & {
+  personalSmetaIds?: Set<string>;
+};
 
 const STATUS_DICTS_BY_MODEL: Record<string, Record<string, { label: string }>> = {
   Work: WORK_STATUSES,
@@ -74,6 +78,12 @@ const STATUS_DICTS_BY_MODEL: Record<string, Record<string, { label: string }>> =
 };
 
 const COMPARE_ROW_LIMIT = 200;
+
+/** Технические FK, которые дублируют человекочитаемые колонки. */
+const COMPARE_DEEMPHASIZED_FIELDS = new Set([
+  "responsibleUserId",
+  "defaultBankAccountId",
+]);
 
 function mergeRefMap(
   target: Map<string, string>,
@@ -102,21 +112,25 @@ function mapsFromDiff(diff: Record<string, DiffRow[]>): RefMaps {
   const bankAccount = new Map<string, string>();
   const client = new Map<string, string>();
   const user = new Map<string, string>();
+  const personalSmetaIds = new Set<string>();
   mergeRefMap(executor, pick("Executor") as never);
   mergeRefMap(project, pick("Project") as never);
   mergeRefMap(workType, pick("WorkType") as never);
   mergeRefMap(bankAccount, pick("BankAccount") as never);
   mergeRefMap(client, pick("Client") as never);
   mergeRefMap(user, pick("User") as never);
-  return { executor, project, workType, bankAccount, client, user };
+  for (const row of pick("Executor")) {
+    const id = row.id != null ? String(row.id) : "";
+    const email = typeof row.accessEmail === "string" ? row.accessEmail.trim() : "";
+    if (id && email) personalSmetaIds.add(id);
+  }
+  return { executor, project, workType, bankAccount, client, user, personalSmetaIds };
 }
 
 function useReferenceMaps(diff: Record<string, DiffRow[]> | null) {
   const [liveMaps, setLiveMaps] = React.useState<RefMaps>({});
   React.useEffect(() => {
     let cancelled = false;
-    const build = (rows: Array<{ id: string; name?: string; fullName?: string }>) =>
-      new Map(rows.map((row) => [row.id, row.name ?? row.fullName ?? row.id]));
     Promise.all([
       fetch("/api/executors").then((r) => (r.ok ? r.json() : [])),
       fetch("/api/projects/options").then((r) => (r.ok ? r.json() : [])),
@@ -127,13 +141,58 @@ function useReferenceMaps(diff: Record<string, DiffRow[]> | null) {
     ])
       .then(([executors, projects, workTypes, bankAccounts, clients, users]) => {
         if (cancelled) return;
+        const executorList = Array.isArray(executors) ? executors : [];
+        const projectList = Array.isArray(projects) ? projects : [];
+        const workTypeList = Array.isArray(workTypes) ? workTypes : [];
+        const bankList = Array.isArray(bankAccounts) ? bankAccounts : [];
+        const clientList = Array.isArray(clients) ? clients : [];
+        const userList = Array.isArray(users) ? users : [];
+
+        const executor = new Map<string, string>();
+        const user = new Map<string, string>();
+        const personalSmetaIds = new Set<string>();
+        for (const row of executorList) {
+          if (!row?.id) continue;
+          const id = String(row.id);
+          const label = String(row.name ?? row.fullName ?? "").trim();
+          if (label) executor.set(id, label);
+          if (typeof row.accessEmail === "string" && row.accessEmail.trim()) {
+            personalSmetaIds.add(id);
+          }
+          if (row.responsibleUserId && row.responsibleName) {
+            user.set(String(row.responsibleUserId), String(row.responsibleName));
+          }
+        }
+        for (const row of userList) {
+          if (!row?.id) continue;
+          const label = String(row.fullName ?? row.name ?? "").trim();
+          if (label) user.set(String(row.id), label);
+        }
+
         setLiveMaps({
-          executor: build(Array.isArray(executors) ? executors : []),
-          project: build(Array.isArray(projects) ? projects : []),
-          workType: build(Array.isArray(workTypes) ? workTypes : []),
-          bankAccount: build(Array.isArray(bankAccounts) ? bankAccounts : []),
-          client: build(Array.isArray(clients) ? clients : []),
-          user: build(Array.isArray(users) ? users : []),
+          executor,
+          project: new Map(
+            projectList
+              .filter((row: { id?: string; name?: string }) => row?.id && row?.name)
+              .map((row: { id: string; name: string }) => [row.id, row.name])
+          ),
+          workType: new Map(
+            workTypeList
+              .filter((row: { id?: string; name?: string }) => row?.id && row?.name)
+              .map((row: { id: string; name: string }) => [row.id, row.name])
+          ),
+          bankAccount: new Map(
+            bankList
+              .filter((row: { id?: string; name?: string }) => row?.id && row?.name)
+              .map((row: { id: string; name: string }) => [row.id, row.name])
+          ),
+          client: new Map(
+            clientList
+              .filter((row: { id?: string; name?: string }) => row?.id && row?.name)
+              .map((row: { id: string; name: string }) => [row.id, row.name])
+          ),
+          user,
+          personalSmetaIds,
         });
       })
       .catch(() => undefined);
@@ -145,11 +204,16 @@ function useReferenceMaps(diff: Record<string, DiffRow[]> | null) {
   return React.useMemo(() => {
     const fromDiff = diff ? mapsFromDiff(diff) : {};
     const merge = (key: keyof RefMaps) => {
+      if (key === "personalSmetaIds") return undefined;
       const map = new Map<string, string>();
-      fromDiff[key]?.forEach((value, id) => map.set(id, value));
-      liveMaps[key]?.forEach((value, id) => map.set(id, value));
+      (fromDiff[key] as Map<string, string> | undefined)?.forEach((value, id) => map.set(id, value));
+      (liveMaps[key] as Map<string, string> | undefined)?.forEach((value, id) => map.set(id, value));
       return map;
     };
+    const personalSmetaIds = new Set<string>([
+      ...(fromDiff.personalSmetaIds ?? []),
+      ...(liveMaps.personalSmetaIds ?? []),
+    ]);
     return {
       executor: merge("executor"),
       project: merge("project"),
@@ -157,6 +221,7 @@ function useReferenceMaps(diff: Record<string, DiffRow[]> | null) {
       bankAccount: merge("bankAccount"),
       client: merge("client"),
       user: merge("user"),
+      personalSmetaIds,
     } satisfies RefMaps;
   }, [diff, liveMaps]);
 }
@@ -192,10 +257,18 @@ function displayFieldValue(model: string, field: string, value: unknown, refMaps
   return text.length > 80 ? `${text.slice(0, 77)}…` : text;
 }
 
-function relationHref(field: string, value: unknown): string | null {
+function relationHref(
+  field: string,
+  value: unknown,
+  personalSmetaIds?: Set<string>
+): string | null {
   if (value == null || value === "") return null;
   const id = String(value);
-  if (field === "executorId" || field === "responsibleExecutorId") return `/admin/executors/${id}`;
+  if (field === "executorId" || field === "responsibleExecutorId") {
+    // В личную смету только если она реально есть
+    if (personalSmetaIds && !personalSmetaIds.has(id)) return null;
+    return `/admin/executors/${id}`;
+  }
   if (field === "projectId") return `/admin/projects/${id}`;
   return null;
 }
@@ -218,7 +291,9 @@ function collectFields(rows: DiffRow[]): string[] {
   for (const row of rows) {
     for (const value of [row.before, row.after]) {
       Object.keys(value ?? {}).forEach((field) => {
-        if (!HIDDEN_FIELDS.has(field)) fieldSet.add(field);
+        if (HIDDEN_FIELDS.has(field)) return;
+        if (COMPARE_DEEMPHASIZED_FIELDS.has(field)) return;
+        fieldSet.add(field);
       });
     }
   }
@@ -228,7 +303,16 @@ function collectFields(rows: DiffRow[]): string[] {
       const bi = PREFERRED_FIELD_ORDER.indexOf(b);
       return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi) || a.localeCompare(b);
     })
-    .slice(0, 10);
+    .slice(0, 12);
+}
+
+function rowMatchesFilter(row: DiffRow, filter: { field: string; id: string } | null): boolean {
+  if (!filter) return true;
+  if (row.key === filter.id || row.before?.id === filter.id || row.after?.id === filter.id) {
+    return true;
+  }
+  if (filter.field === "id") return false;
+  return row.before?.[filter.field] === filter.id || row.after?.[filter.field] === filter.id;
 }
 
 function ComparisonSideCells({
@@ -248,13 +332,12 @@ function ComparisonSideCells({
   const changed = new Set(row.changes.map((change) => change.field));
   const marker =
     row.status === "added" ? "+" : row.status === "removed" ? "−" : row.status === "modified" ? "●" : "";
-  const paneEdge = side === "A" ? "border-r border-neutral-200" : "";
 
   return (
     <>
       <td
         className={cn(
-          "px-2 py-1.5 text-center font-bold",
+          "whitespace-nowrap px-1.5 py-1 text-center font-semibold",
           row.status === "added" ? "text-green-600" : row.status === "removed" ? "text-red-600" : "text-amber-600",
           !value && "text-neutral-300",
           side === "A" && fields.length === 0 && "border-r-2 border-neutral-300"
@@ -265,16 +348,15 @@ function ComparisonSideCells({
       {fields.map((field, index) => {
         const raw = value?.[field];
         const label = value ? displayFieldValue(model, field, raw, refMaps) : "—";
-        const href = value ? relationHref(field, raw) : null;
+        const href = value ? relationHref(field, raw, refMaps.personalSmetaIds) : null;
         const isLast = index === fields.length - 1;
         return (
           <td
             key={`${side}-${field}`}
             className={cn(
-              "max-w-56 truncate px-2.5 py-1.5",
+              "whitespace-nowrap px-2 py-1",
               changed.has(field) && value && "font-medium text-amber-900 ring-1 ring-inset ring-amber-200",
-              side === "A" && isLast && "border-r-2 border-neutral-300",
-              side === "A" && !isLast && paneEdge
+              side === "A" && isLast && "border-r-2 border-neutral-300"
             )}
             title={
               changed.has(field)
@@ -283,7 +365,7 @@ function ComparisonSideCells({
             }
           >
             {href && label !== "—" ? (
-              <a href={href} className="text-blue-600 hover:underline" title="Открыть">
+              <a href={href} className="text-blue-600 hover:underline" title="Открыть личную смету / проект">
                 {label}
               </a>
             ) : (
@@ -304,6 +386,7 @@ function UnifiedSnapshotComparison({
   onlyChanges,
   labelA,
   labelB,
+  filter,
 }: {
   section: string;
   sourceA: string;
@@ -311,17 +394,20 @@ function UnifiedSnapshotComparison({
   onlyChanges: boolean;
   labelA: string;
   labelB: string;
+  filter?: { field: string; id: string } | null;
 }) {
   const [diff, setDiff] = React.useState<Record<string, DiffRow[]> | null>(null);
   const [model, setModel] = React.useState("");
   const [error, setError] = React.useState("");
   const [showAll, setShowAll] = React.useState(false);
   const refMaps = useReferenceMaps(diff);
+  const entityFilter = filter ?? null;
 
   React.useEffect(() => {
     setShowAll(false);
     setDiff(null);
     setError("");
+    setModel("");
     const controller = new AbortController();
     const query = new URLSearchParams({ sourceA, sourceB, section });
     fetch(`/api/snapshots/compare?${query}`, { signal: controller.signal })
@@ -330,14 +416,17 @@ function UnifiedSnapshotComparison({
         if (!ok) throw new Error((payload as { error?: string }).error ?? "Не удалось загрузить сравнение");
         const next = (payload as { diff: Record<string, DiffRow[]> }).diff;
         setDiff(next);
-        setModel(Object.keys(next)[0] ?? "");
+        const preferred = Object.keys(next).find((key) =>
+          (next[key] ?? []).some((row) => rowMatchesFilter(row, entityFilter))
+        );
+        setModel(preferred ?? Object.keys(next)[0] ?? "");
       })
       .catch((reason) => {
         if (controller.signal.aborted) return;
         setError(reason instanceof Error ? reason.message : "Не удалось загрузить сравнение");
       });
     return () => controller.abort();
-  }, [sourceA, sourceB, section]);
+  }, [sourceA, sourceB, section, entityFilter?.field, entityFilter?.id]);
 
   if (error) {
     return <div className="m-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>;
@@ -346,85 +435,114 @@ function UnifiedSnapshotComparison({
     return <div className="p-6 text-sm text-neutral-500">Загрузка сравнения…</div>;
   }
 
-  const allRows = (diff[model] ?? [])
+  const modelOptions = Object.keys(diff).filter((key) =>
+    (diff[key] ?? []).some((row) => rowMatchesFilter(row, entityFilter))
+  );
+  const activeModel = modelOptions.includes(model) ? model : (modelOptions[0] ?? "");
+
+  const allRows = (diff[activeModel] ?? [])
+    .filter((row) => rowMatchesFilter(row, entityFilter))
     .filter((row) => !onlyChanges || row.status !== "unchanged")
     .slice()
     .sort((a, b) => rowSortKey(a).localeCompare(rowSortKey(b), "ru"));
   const rows = showAll ? allRows : allRows.slice(0, COMPARE_ROW_LIMIT);
   const truncated = allRows.length > rows.length;
   const fields = collectFields(rows);
-  const sideColSpan = fields.length + 1;
+  const sideColSpan = Math.max(fields.length + 1, 1);
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-white">
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
-        <span className="text-xs font-medium text-neutral-700">{modelLabel(model)}</span>
-        <span className="text-xs text-neutral-400">
-          {truncated ? `${rows.length} из ${allRows.length}` : allRows.length} строк · одна работа = один уровень
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5">
+        {modelOptions.length > 1 ? (
+          <Select value={activeModel} onValueChange={(value) => value && setModel(value)}>
+            <SelectTrigger className="h-7 w-52 text-[11px]">
+              <SelectValue>{modelLabel(activeModel)}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {modelOptions.map((key) => (
+                <SelectItem key={key} value={key}>
+                  {modelLabel(key)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <span className="text-[11px] font-medium text-neutral-700">{modelLabel(activeModel)}</span>
+        )}
+        <span className="text-[11px] text-neutral-400">
+          {truncated ? `${rows.length} из ${allRows.length}` : allRows.length} строк
         </span>
         {truncated && (
-          <button type="button" className="text-xs text-blue-600 hover:underline" onClick={() => setShowAll(true)}>
+          <button type="button" className="text-[11px] text-blue-600 hover:underline" onClick={() => setShowAll(true)}>
             Показать все
           </button>
         )}
       </div>
       <div className="min-h-0 min-w-0 flex-1 overflow-auto">
-        <table className="min-w-max border-collapse text-xs">
+        <table className="min-w-max border-collapse text-[11px] leading-tight">
           <thead className="sticky top-0 z-10">
             <tr className="bg-neutral-100">
               <th
                 colSpan={sideColSpan}
-                className="border-b border-r border-neutral-200 px-3 py-1.5 text-left text-[11px] font-semibold text-neutral-700"
+                className="border-b border-r-2 border-neutral-300 px-2 py-1 text-left text-[10px] font-semibold text-neutral-700"
               >
                 A · {labelA}
               </th>
               <th
                 colSpan={sideColSpan}
-                className="border-b border-neutral-200 px-3 py-1.5 text-left text-[11px] font-semibold text-neutral-700"
+                className="border-b border-neutral-200 px-2 py-1 text-left text-[10px] font-semibold text-neutral-700"
               >
                 B · {labelB}
               </th>
             </tr>
             <tr className="bg-neutral-50">
-              <th className="border-b px-2 py-2 text-left font-medium text-neutral-500">Δ</th>
+              <th className="border-b px-1.5 py-1 text-left text-[10px] font-medium text-neutral-500">Δ</th>
               {fields.map((field, index) => (
                 <th
                   key={`a-${field}`}
                   className={cn(
-                    "border-b px-2.5 py-2 text-left font-medium whitespace-nowrap text-neutral-500",
+                    "border-b px-2 py-1 text-left text-[10px] font-medium whitespace-nowrap text-neutral-500",
                     index === fields.length - 1 && "border-r-2 border-neutral-300"
                   )}
                 >
-                  {fieldLabel(field, model)}
+                  {fieldLabel(field, activeModel)}
                 </th>
               ))}
-              <th className="border-b px-2 py-2 text-left font-medium text-neutral-500">Δ</th>
+              <th className="border-b px-1.5 py-1 text-left text-[10px] font-medium text-neutral-500">Δ</th>
               {fields.map((field) => (
                 <th
                   key={`b-${field}`}
-                  className="border-b px-2.5 py-2 text-left font-medium whitespace-nowrap text-neutral-500"
+                  className="border-b px-2 py-1 text-left text-[10px] font-medium whitespace-nowrap text-neutral-500"
                 >
-                  {fieldLabel(field, model)}
+                  {fieldLabel(field, activeModel)}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
-              <tr
-                key={row.key}
-                className={cn(
-                  "border-b border-neutral-100",
-                  row.status === "added" && "bg-green-50/70",
-                  row.status === "removed" && "bg-red-50/70",
-                  row.status === "modified" && "bg-amber-50/50",
-                  row.status === "unchanged" && "bg-white"
-                )}
-              >
-                <ComparisonSideCells model={model} row={row} side="A" fields={fields} refMaps={refMaps} />
-                <ComparisonSideCells model={model} row={row} side="B" fields={fields} refMaps={refMaps} />
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={sideColSpan * 2} className="px-3 py-8 text-center text-neutral-500">
+                  Нет строк для сравнения
+                </td>
               </tr>
-            ))}
+            ) : (
+              rows.map((row) => (
+                <tr
+                  key={row.key}
+                  className={cn(
+                    "border-b border-neutral-100",
+                    row.status === "added" && "bg-green-50/70",
+                    row.status === "removed" && "bg-red-50/70",
+                    row.status === "modified" && "bg-amber-50/50",
+                    row.status === "unchanged" && "bg-white"
+                  )}
+                >
+                  <ComparisonSideCells model={activeModel} row={row} side="A" fields={fields} refMaps={refMaps} />
+                  <ComparisonSideCells model={activeModel} row={row} side="B" fields={fields} refMaps={refMaps} />
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -446,11 +564,24 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
 
   const pathParts = pathname.split("/").filter(Boolean);
   const section = pathParts[1] ?? "";
-  const isDetailRoute = pathParts.length >= 3;
+  const entityId = pathParts[2] ?? null;
+  const isExecutorDetail = section === "executors" && !!entityId;
+  const isProjectDetail = section === "projects" && !!entityId;
+  const compareSection = isExecutorDetail
+    ? "executor-estimate"
+    : isProjectDetail
+      ? "project-dashboard"
+      : section;
+  const compareFilter =
+    isExecutorDetail
+      ? { field: "executorId", id: entityId! }
+      : isProjectDetail
+        ? { field: "projectId", id: entityId! }
+        : null;
   const canCompareSection =
     pathname.startsWith("/admin/") &&
     section !== "export" &&
-    !isDetailRoute;
+    (isExecutorDetail || isProjectDetail || !entityId);
 
   const loadSnapshots = React.useCallback(async () => {
     if (!isAdminInterface) return [];
@@ -689,12 +820,13 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
         ) : (
           <div className="min-h-0 min-w-0 flex-1">
             <UnifiedSnapshotComparison
-              section={section}
+              section={compareSection}
               sourceA={sourceA}
               sourceB={sourceB}
               onlyChanges={onlyChanges}
               labelA={snapshotSourceLabel(sourceA, snapshots)}
               labelB={snapshotSourceLabel(sourceB, snapshots)}
+              filter={compareFilter}
             />
           </div>
         )}
