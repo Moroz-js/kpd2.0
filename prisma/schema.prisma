@@ -559,6 +559,20 @@ model SnapshotRun {
   @@map("snapshot_runs")
 }
 
+/// Бинарные объекты снимка (вместо S3/локальной папки). Режим SNAPSHOT_STORAGE_MODE=db.
+model SnapshotObject {
+  id              String   @id @default(cuid())
+  key             String   @unique
+  body            Bytes
+  contentType     String
+  contentEncoding String?
+  byteSize        Int
+  createdAt       DateTime @default(now())
+
+  @@index([key])
+  @@map("snapshot_objects")
+}
+
 model BankAccountReconciliation {
   id          String                            @id @default(cuid())
   date        DateTime

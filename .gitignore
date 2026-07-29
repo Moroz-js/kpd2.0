@@ -56,3 +56,4 @@ next-env.d.ts
 
 # local snapshot storage (SNAPSHOT_STORAGE_MODE=local)
 /.snapshots/
+/snapshots/

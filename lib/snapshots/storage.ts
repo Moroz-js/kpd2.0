@@ -2,18 +2,29 @@ import "server-only";
 
 import fs from "node:fs/promises";
 import path from "node:path";
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  DeleteObjectsCommand,
+  GetObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
+import { prisma } from "@/lib/db";
 
 type BodyLike = {
   transformToByteArray?: () => Promise<Uint8Array>;
 };
 
-function mode() {
-  return process.env.SNAPSHOT_STORAGE_MODE ?? (process.env.NODE_ENV === "production" ? "s3" : "local");
+export type SnapshotStorageMode = "db" | "local" | "s3";
+
+function mode(): SnapshotStorageMode {
+  const value = process.env.SNAPSHOT_STORAGE_MODE ?? "db";
+  if (value === "db" || value === "local" || value === "s3") return value;
+  throw new Error("SNAPSHOT_STORAGE_MODE должен быть db, local или s3");
 }
 
 function localRoot() {
-  return path.resolve(process.env.SNAPSHOT_LOCAL_DIR ?? path.join(process.cwd(), ".snapshots"));
+  return path.resolve(process.env.SNAPSHOT_LOCAL_DIR ?? path.join(process.cwd(), "snapshots"));
 }
 
 function safeLocalPath(key: string) {
@@ -43,7 +54,14 @@ function s3Config() {
 }
 
 export async function readSnapshotObject(key: string): Promise<Buffer> {
-  if (mode() === "local") {
+  const storageMode = mode();
+  if (storageMode === "db") {
+    const row = await prisma.snapshotObject.findUnique({ where: { key } });
+    if (!row) throw new Error(`Пустой snapshot object: ${key}`);
+    return Buffer.from(row.body);
+  }
+
+  if (storageMode === "local") {
     return fs.readFile(safeLocalPath(key));
   }
 
@@ -60,7 +78,21 @@ export async function writeSnapshotObject(
   contentType: string,
   contentEncoding?: string
 ): Promise<void> {
-  if (mode() === "local") {
+  const storageMode = mode();
+  if (storageMode === "db") {
+    await prisma.snapshotObject.create({
+      data: {
+        key,
+        body,
+        contentType,
+        contentEncoding: contentEncoding ?? null,
+        byteSize: body.byteLength,
+      },
+    });
+    return;
+  }
+
+  if (storageMode === "local") {
     const target = safeLocalPath(key);
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.writeFile(target, body, { flag: "wx" });
@@ -80,11 +112,43 @@ export async function writeSnapshotObject(
   );
 }
 
+export async function deleteSnapshotPrefix(prefix: string): Promise<void> {
+  const storageMode = mode();
+  const normalized = prefix.replace(/\/+$/, "");
+
+  if (storageMode === "db") {
+    await prisma.snapshotObject.deleteMany({
+      where: {
+        OR: [{ key: { startsWith: `${normalized}/` } }, { key: normalized }],
+      },
+    });
+    return;
+  }
+
+  if (storageMode === "local") {
+    const target = path.resolve(localRoot(), normalized);
+    if (target.startsWith(`${localRoot()}${path.sep}`)) {
+      await fs.rm(target, { recursive: true, force: true });
+    }
+    return;
+  }
+
+  const { Bucket, client } = s3Config();
+  let token: string | undefined;
+  do {
+    const page = await client.send(
+      new ListObjectsV2Command({ Bucket, Prefix: `${normalized}/`, ContinuationToken: token })
+    );
+    const objects = (page.Contents ?? []).flatMap((item) => (item.Key ? [{ Key: item.Key }] : []));
+    if (objects.length) {
+      await client.send(new DeleteObjectsCommand({ Bucket, Delete: { Objects: objects, Quiet: true } }));
+    }
+    token = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (token);
+}
+
 export function assertSnapshotStorageConfiguration() {
   const storageMode = mode();
-  if (!["local", "s3"].includes(storageMode)) {
-    throw new Error("SNAPSHOT_STORAGE_MODE должен быть local или s3");
-  }
   if (storageMode === "s3") {
     s3Config();
     if (!process.env.SNAPSHOT_S3_ENDPOINT && !process.env.AWS_REGION && !process.env.SNAPSHOT_S3_REGION) {

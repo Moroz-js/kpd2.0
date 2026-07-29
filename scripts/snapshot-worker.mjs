@@ -94,11 +94,11 @@ function parseBusinessDate(value) {
 }
 
 function storageMode() {
-  return process.env.SNAPSHOT_STORAGE_MODE ?? (process.env.NODE_ENV === "production" ? "s3" : "local");
+  return process.env.SNAPSHOT_STORAGE_MODE ?? "db";
 }
 
 function localRoot() {
-  return path.resolve(process.env.SNAPSHOT_LOCAL_DIR ?? path.join(process.cwd(), ".snapshots"));
+  return path.resolve(process.env.SNAPSHOT_LOCAL_DIR ?? path.join(process.cwd(), "snapshots"));
 }
 
 function s3() {
@@ -119,7 +119,20 @@ function s3() {
 }
 
 async function putObject(key, body, contentType, contentEncoding) {
-  if (storageMode() === "local") {
+  const mode = storageMode();
+  if (mode === "db") {
+    await prisma.snapshotObject.create({
+      data: {
+        key,
+        body,
+        contentType,
+        contentEncoding: contentEncoding ?? null,
+        byteSize: body.byteLength,
+      },
+    });
+    return;
+  }
+  if (mode === "local") {
     const root = localRoot();
     const target = path.resolve(root, key);
     if (!target.startsWith(`${root}${path.sep}`)) throw new Error("Некорректный object key");
@@ -127,6 +140,7 @@ async function putObject(key, body, contentType, contentEncoding) {
     await fs.writeFile(target, body, { flag: "wx" });
     return;
   }
+  if (mode !== "s3") throw new Error("SNAPSHOT_STORAGE_MODE должен быть db, local или s3");
   const { Bucket, client } = s3();
   await client.send(
     new PutObjectCommand({
@@ -141,10 +155,15 @@ async function putObject(key, body, contentType, contentEncoding) {
 }
 
 async function checkStorage() {
-  if (!["local", "s3"].includes(storageMode())) {
-    throw new Error("SNAPSHOT_STORAGE_MODE должен быть local или s3");
+  const mode = storageMode();
+  if (!["db", "local", "s3"].includes(mode)) {
+    throw new Error("SNAPSHOT_STORAGE_MODE должен быть db, local или s3");
   }
-  if (storageMode() === "local") {
+  if (mode === "db") {
+    await prisma.snapshotObject.count();
+    return;
+  }
+  if (mode === "local") {
     await fs.mkdir(localRoot(), { recursive: true });
     await fs.access(localRoot());
     return;
@@ -216,15 +235,25 @@ async function readConsistentTables() {
 }
 
 async function removePrefix(prefix) {
-  if (storageMode() === "local") {
-    const target = path.resolve(localRoot(), prefix);
+  const mode = storageMode();
+  const normalized = String(prefix).replace(/\/+$/, "");
+  if (mode === "db") {
+    await prisma.snapshotObject.deleteMany({
+      where: {
+        OR: [{ key: { startsWith: `${normalized}/` } }, { key: normalized }],
+      },
+    });
+    return;
+  }
+  if (mode === "local") {
+    const target = path.resolve(localRoot(), normalized);
     if (target.startsWith(`${localRoot()}${path.sep}`)) await fs.rm(target, { recursive: true, force: true });
     return;
   }
   const { Bucket, client } = s3();
   let token;
   do {
-    const page = await client.send(new ListObjectsV2Command({ Bucket, Prefix: `${prefix}/`, ContinuationToken: token }));
+    const page = await client.send(new ListObjectsV2Command({ Bucket, Prefix: `${normalized}/`, ContinuationToken: token }));
     const objects = (page.Contents ?? []).flatMap((item) => (item.Key ? [{ Key: item.Key }] : []));
     if (objects.length) await client.send(new DeleteObjectsCommand({ Bucket, Delete: { Objects: objects, Quiet: true } }));
     token = page.IsTruncated ? page.NextContinuationToken : undefined;
@@ -252,7 +281,12 @@ async function check() {
   const configured = new Set(MODELS.map(([model]) => model));
   const missingModels = Prisma.dmmf.datamodel.models
     .map((model) => model.name)
-    .filter((model) => model !== "SnapshotRun" && !configured.has(model));
+    .filter(
+      (model) =>
+        model !== "SnapshotRun" &&
+        model !== "SnapshotObject" &&
+        !configured.has(model)
+    );
   if (missingModels.length) {
     throw new Error(`Snapshot registry не содержит модели: ${missingModels.join(", ")}`);
   }

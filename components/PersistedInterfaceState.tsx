@@ -107,6 +107,11 @@ export function usePersistedState<T>(
   return [value, setValue];
 }
 
+/**
+ * Сохраняет/восстанавливает scrollTop/scrollLeft контейнера.
+ * Без MutationObserver: с виртуализацией он зацикливает restore
+ * («скролл сам возвращается» при фильтрах/группировке).
+ */
 export function usePersistedScroll(
   ref: React.RefObject<HTMLElement | null>,
   key: string
@@ -117,16 +122,24 @@ export function usePersistedScroll(
     let element: HTMLElement | null = null;
     let bindTimeout: ReturnType<typeof setTimeout> | undefined;
     let saveTimeout: ReturnType<typeof setTimeout> | undefined;
-    let restoreInterval: ReturnType<typeof setInterval> | undefined;
-    let mutationObserver: MutationObserver | undefined;
-    let resizeObserver: ResizeObserver | undefined;
+    let restoreTimeout: ReturnType<typeof setTimeout> | undefined;
     let disposed = false;
     let restoring = false;
-    let stored: { top?: number; left?: number } | null = null;
-    let restoreDeadline = 0;
-    const bindDeadline = Date.now() + 30_000;
+    let userTookOver = false;
+    let restoreAttempts = 0;
+    const bindDeadline = Date.now() + 10_000;
+    const MAX_RESTORE_ATTEMPTS = 24; // ~1.2s при шаге 50ms
 
-    const save = (target = element) => {
+    const readStored = (): { top?: number; left?: number } | null => {
+      try {
+        const raw = window.localStorage.getItem(storageKey);
+        return raw ? deserialize(raw) : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const saveAlways = (target = element) => {
       if (!target) return;
       try {
         window.localStorage.setItem(
@@ -138,42 +151,58 @@ export function usePersistedScroll(
       }
     };
 
-    const finishRestore = () => {
+    const stopRestore = () => {
       restoring = false;
-      clearInterval(restoreInterval);
-      restoreInterval = undefined;
+      clearTimeout(restoreTimeout);
+      restoreTimeout = undefined;
     };
 
-    const restore = () => {
-      if (!element || !stored || disposed) return;
-      const top = Math.max(0, stored.top ?? 0);
-      const left = Math.max(0, stored.left ?? 0);
+    const tryRestore = () => {
+      if (disposed || userTookOver || !element) {
+        stopRestore();
+        return;
+      }
+      const stored = readStored();
+      const top = Math.max(0, stored?.top ?? 0);
+      const left = Math.max(0, stored?.left ?? 0);
+      if (top === 0 && left === 0) {
+        stopRestore();
+        return;
+      }
+
+      restoring = true;
       element.scrollTo({ top, left, behavior: "auto" });
 
       const maxTop = Math.max(0, element.scrollHeight - element.clientHeight);
       const maxLeft = Math.max(0, element.scrollWidth - element.clientWidth);
-      const canReachTarget = maxTop + 1 >= top && maxLeft + 1 >= left;
-      const targetReached =
-        Math.abs(element.scrollTop - Math.min(top, maxTop)) <= 1 &&
-        Math.abs(element.scrollLeft - Math.min(left, maxLeft)) <= 1;
+      const reached =
+        Math.abs(element.scrollTop - Math.min(top, maxTop)) <= 2 &&
+        Math.abs(element.scrollLeft - Math.min(left, maxLeft)) <= 2;
+      const contentTallEnough = maxTop + 1 >= top;
 
-      if ((canReachTarget && targetReached) || Date.now() >= restoreDeadline) {
-        finishRestore();
+      restoreAttempts += 1;
+      if (
+        reached ||
+        (contentTallEnough && restoreAttempts >= 3) ||
+        restoreAttempts >= MAX_RESTORE_ATTEMPTS
+      ) {
+        stopRestore();
+        return;
+      }
+      restoreTimeout = setTimeout(tryRestore, 50);
+    };
+
+    const onUserInteract = () => {
+      if (!userTookOver) {
+        userTookOver = true;
+        stopRestore();
       }
     };
 
     const onScroll = () => {
       if (restoring) return;
       clearTimeout(saveTimeout);
-      saveTimeout = setTimeout(save, 120);
-    };
-
-    const cancelRestore = () => {
-      if (!restoring) return;
-      finishRestore();
-    };
-    const saveCurrent = () => {
-      if (!restoring) save();
+      saveTimeout = setTimeout(() => saveAlways(), 120);
     };
 
     const bind = () => {
@@ -184,48 +213,38 @@ export function usePersistedScroll(
         return;
       }
 
-      try {
-        const raw = window.localStorage.getItem(storageKey);
-        stored = raw ? deserialize(raw) : null;
-      } catch {
-        stored = null;
-      }
-
       element.addEventListener("scroll", onScroll, { passive: true });
-      element.addEventListener("wheel", cancelRestore, { passive: true });
-      element.addEventListener("pointerdown", cancelRestore, { passive: true });
-      element.addEventListener("touchstart", cancelRestore, { passive: true });
+      element.addEventListener("wheel", onUserInteract, { passive: true });
+      element.addEventListener("pointerdown", onUserInteract, { passive: true });
+      element.addEventListener("touchstart", onUserInteract, { passive: true });
+      element.addEventListener("keydown", onUserInteract);
 
+      const stored = readStored();
       if (stored && ((stored.top ?? 0) > 0 || (stored.left ?? 0) > 0)) {
-        restoring = true;
-        restoreDeadline = Date.now() + 30_000;
-        requestAnimationFrame(restore);
-        restoreInterval = setInterval(restore, 250);
-        mutationObserver = new MutationObserver(restore);
-        mutationObserver.observe(element, { childList: true, subtree: true });
-        resizeObserver = new ResizeObserver(restore);
-        resizeObserver.observe(element);
-        if (element.firstElementChild instanceof HTMLElement) {
-          resizeObserver.observe(element.firstElementChild);
-        }
+        // Даём фильтрам/данным кадр на восстановление из localStorage
+        requestAnimationFrame(() => {
+          if (!disposed && !userTookOver) tryRestore();
+        });
       }
     };
 
     bind();
-    window.addEventListener("pagehide", saveCurrent);
+    const onPageHide = () => saveAlways();
+    window.addEventListener("pagehide", onPageHide);
+
     return () => {
       disposed = true;
       clearTimeout(bindTimeout);
       clearTimeout(saveTimeout);
-      clearInterval(restoreInterval);
-      mutationObserver?.disconnect();
-      resizeObserver?.disconnect();
-      if (element && !restoring) save(element);
+      clearTimeout(restoreTimeout);
+      // Всегда сохраняем позицию при уходе (даже если restore ещё шёл)
+      if (element) saveAlways(element);
       element?.removeEventListener("scroll", onScroll);
-      element?.removeEventListener("wheel", cancelRestore);
-      element?.removeEventListener("pointerdown", cancelRestore);
-      element?.removeEventListener("touchstart", cancelRestore);
-      window.removeEventListener("pagehide", saveCurrent);
+      element?.removeEventListener("wheel", onUserInteract);
+      element?.removeEventListener("pointerdown", onUserInteract);
+      element?.removeEventListener("touchstart", onUserInteract);
+      element?.removeEventListener("keydown", onUserInteract);
+      window.removeEventListener("pagehide", onPageHide);
     };
   }, [ref, storageKey]);
 }

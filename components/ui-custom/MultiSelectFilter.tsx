@@ -44,7 +44,8 @@ export function MultiSelectFilter({
     if (value.length === 0) return label;
     if (value.length === 1) {
       const opt = options.find((o) => o.value === value[0]);
-      return `${label}: ${opt?.label ?? value[0]}`;
+      // Пока опции не подгрузились — не светим сырой id (cuid)
+      return opt ? `${label}: ${opt.label}` : `${label}: 1`;
     }
     return `${label}: ${value.length}`;
   })();
