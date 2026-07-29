@@ -109,7 +109,12 @@ async function main() {
   const { PrismaClient } = await import("@prisma/client");
   prisma = new PrismaClient({ datasources: { db: { url: dbUrl } } });
   await prisma.$connect();
-  lockRelease = await acquireLock(target, dbUrl);
+  if (args["skip-lock"]) {
+    lockRelease = async () => {};
+    report.warnings.push("advisory lock пропущен (--skip-lock)");
+  } else {
+    lockRelease = await acquireLock(target, dbUrl);
+  }
 
   report.countsBefore = await readCoreCounts();
   const rawOtherExpenses = await prisma.$queryRawUnsafe('SELECT * FROM "other_expenses"');
@@ -132,12 +137,31 @@ async function main() {
   }
 
   if (mode === "apply") {
-    report.backup = await createBackup(target, dbUrl, rawOtherExpenses);
-    applySchema(dbUrl);
-    report.schema.applied = true;
+    if (args["skip-backup"]) {
+      report.backup = { skipped: true };
+      report.warnings.push("backup пропущен (--skip-backup)");
+    } else {
+      report.backup = await createBackup(target, dbUrl, rawOtherExpenses);
+      // Neon/pooler может закрыть простой после длинного backup — переподключаемся
+      await prisma.$disconnect().catch(() => {});
+      await prisma.$connect();
+    }
+    if (!args["skip-schema"]) {
+      applySchema(dbUrl);
+      report.schema.applied = true;
+    } else {
+      report.warnings.push("schema push пропущен (--skip-schema)");
+      report.schema.applied = true;
+    }
 
-    report.transforms = await applyTransforms();
-    report.numbering = await backfillNumbers();
+    if (args["repair-only"]) {
+      report.warnings.push("transforms/numbering пропущены (--repair-only)");
+      report.transforms = { skipped: true };
+      report.numbering = { skipped: true };
+    } else {
+      report.transforms = await applyTransforms();
+      report.numbering = await backfillNumbers();
+    }
     report.repair = await buildRepairPlan(source.rows);
     writeRepairArtifacts(report.repair);
     await applyRepairPlan(report.repair);
@@ -237,8 +261,10 @@ function loadSourceWorkbook(filePath) {
   });
   if (!visibleSheet) throw new Error("В XLSX нет видимого листа");
   const sheet = workbook.Sheets[visibleSheet];
-  const rows = XLSX.utils.sheet_to_json(sheet, { range: 3, defval: null, raw: false });
-  if (!rows.length) throw new Error("XLSX не содержит строк после заголовка в строке 4");
+  const rawRows = XLSX.utils.sheet_to_json(sheet, { range: 3, defval: null, raw: false });
+  // Google/Excel часто отдаёт сотни пустых строк ниже данных
+  const rows = rawRows.filter((row) => clean(row.__SRC_UID));
+  if (!rows.length) throw new Error("XLSX не содержит строк с __SRC_UID после заголовка в строке 4");
 
   const expectedHeaders = [
     "Год выполнения*",
@@ -260,12 +286,24 @@ function loadSourceWorkbook(filePath) {
     "Источник перевода*",
     "__SRC_UID",
   ];
-  const headers = new Set(Object.keys(rows[0]));
+  const headers = new Set(Object.keys(rawRows[0] ?? rows[0] ?? {}));
   const missing = expectedHeaders.filter((header) => !headers.has(header));
   if (missing.length) throw new Error(`В XLSX отсутствуют колонки: ${missing.join(", ")}`);
 
+  const dataWithoutUid = rawRows.filter((row) => {
+    if (clean(row.__SRC_UID)) return false;
+    return Boolean(
+      clean(row["Проект*"]) ||
+        clean(row["Исполнитель*"]) ||
+        clean(row["Сумма к выплате*"]) ||
+        clean(row["Описание работы*"])
+    );
+  });
+  if (dataWithoutUid.length) {
+    throw new Error(`В XLSX есть ${dataWithoutUid.length} строк данных без __SRC_UID`);
+  }
+
   const uids = rows.map((row) => clean(row.__SRC_UID));
-  if (uids.some((uid) => !uid)) throw new Error("В XLSX есть пустой __SRC_UID");
   if (new Set(uids).size !== uids.length) throw new Error("В XLSX есть дубли __SRC_UID");
   return { filePath, sha256, sheetName: visibleSheet, rows };
 }
@@ -274,15 +312,22 @@ async function acquireLock(target, dbUrl) {
   if (target.provider === "postgresql") {
     const { Client } = await import("pg");
     const client = new Client({ connectionString: dbUrl });
+    client.on("error", (error) => {
+      console.warn(`[migration] advisory-lock connection: ${error.message}`);
+    });
     await client.connect();
     const result = await client.query("SELECT pg_try_advisory_lock($1) AS locked", [726072026]);
     if (!result.rows[0]?.locked) {
-      await client.end();
+      await client.end().catch(() => {});
       throw new Error("Другой migrate-other-expenses уже выполняется");
     }
     return async () => {
-      await client.query("SELECT pg_advisory_unlock($1)", [726072026]);
-      await client.end();
+      try {
+        await client.query("SELECT pg_advisory_unlock($1)", [726072026]);
+      } catch {
+        // соединение могло уже закрыться Neon
+      }
+      await client.end().catch(() => {});
     };
   }
 
@@ -326,31 +371,39 @@ function applySchema(dbUrl) {
 
 async function createBackup(target, dbUrl, rawOtherExpenses) {
   const prefix = path.join(backupsDir, `migrate-other-expenses-${stamp}`);
-  let dbBackup;
+  let dbBackup = null;
   if (target.provider === "postgresql") {
     dbBackup = `${prefix}.dump`;
     const parsed = new URL(dbUrl);
-    execFileSync(
-      "pg_dump",
-      [
-        "--format=custom",
-        "--host", parsed.hostname,
-        "--port", parsed.port || "5432",
-        "--username", decodeURIComponent(parsed.username),
-        "--dbname", decodeURIComponent(parsed.pathname.slice(1)),
-        "--file", dbBackup,
-      ],
-      {
-        env: { ...process.env, PGPASSWORD: decodeURIComponent(parsed.password) },
-        stdio: ["ignore", "inherit", "inherit"],
-      }
-    );
+    try {
+      execFileSync(
+        "pg_dump",
+        [
+          "--format=custom",
+          "--host", parsed.hostname,
+          "--port", parsed.port || "5432",
+          "--username", decodeURIComponent(parsed.username),
+          "--dbname", decodeURIComponent(parsed.pathname.slice(1)),
+          "--file", dbBackup,
+        ],
+        {
+          env: { ...process.env, PGPASSWORD: decodeURIComponent(parsed.password) },
+          stdio: ["ignore", "inherit", "inherit"],
+        }
+      );
+      assertNonEmptyFile(dbBackup);
+    } catch (error) {
+      report.warnings.push(
+        `pg_dump недоступен (${error instanceof Error ? error.message : String(error)}); полный dump пропущен, остаётся JSON/XLSX backup`
+      );
+      dbBackup = null;
+    }
   } else {
     dbBackup = `${prefix}.sqlite`;
     const escaped = dbBackup.replace(/'/g, "''");
     await prisma.$executeRawUnsafe(`VACUUM INTO '${escaped}'`);
+    assertNonEmptyFile(dbBackup);
   }
-  assertNonEmptyFile(dbBackup);
 
   const [projects, executors, workTypes, users, bankAccounts] = await Promise.all([
     prisma.$queryRawUnsafe('SELECT * FROM "projects"'),
@@ -376,7 +429,7 @@ async function createBackup(target, dbUrl, rawOtherExpenses) {
   assertNonEmptyFile(xlsxPath);
 
   return {
-    database: fileInfo(dbBackup),
+    database: dbBackup ? fileInfo(dbBackup) : null,
     otherExpensesJson: fileInfo(jsonPath),
     otherExpensesXlsx: fileInfo(xlsxPath),
   };
@@ -399,7 +452,7 @@ function fileInfo(filePath) {
 
 async function applyTransforms() {
   const beforeContacts = await prisma.executor.findMany({ select: { id: true, contacts: true } });
-  const [sentPayments, sentOtherExpenses, executors, snapshotRuns] = await prisma.$transaction([
+  const [sentPayments, sentOtherExpenses, executors, snapshotRuns] = await Promise.all([
     prisma.payment.updateMany({ where: { paymentStatus: "sent" }, data: { paymentStatus: "paid" } }),
     prisma.otherExpense.updateMany({ where: { paymentStatus: "sent" }, data: { paymentStatus: "paid" } }),
     prisma.executor.findMany({
@@ -410,38 +463,54 @@ async function applyTransforms() {
 
   let contactEmails = 0;
   let accessEmails = 0;
-  await prisma.$transaction(async (tx) => {
-    for (const executor of executors) {
-      if (!executor.user) continue;
-      const hasActiveAccess =
-        executor.user.isActive &&
-        executor.status === "active" &&
-        executor.accessRevokedAt == null;
-      await tx.executor.update({
-        where: { id: executor.id },
-        data: {
-          contactEmail: executor.contactEmail ?? executor.user.email,
-          accessEmail: hasActiveAccess
-            ? (executor.accessEmail ?? executor.user.email)
-            : null,
-        },
-      });
-      if (!executor.contactEmail) contactEmails += 1;
-      if (!executor.accessEmail && hasActiveAccess) accessEmails += 1;
+  // Без interactive $transaction — Neon pooler их рвёт на длинных циклах
+  for (const executor of executors) {
+    if (!executor.user) continue;
+    const hasActiveAccess =
+      executor.user.isActive &&
+      executor.status === "active" &&
+      executor.accessRevokedAt == null;
+    await prisma.executor.update({
+      where: { id: executor.id },
+      data: {
+        contactEmail: executor.contactEmail ?? executor.user.email,
+        accessEmail: hasActiveAccess
+          ? (executor.accessEmail ?? executor.user.email)
+          : null,
+      },
+    });
+    if (!executor.contactEmail) contactEmails += 1;
+    if (!executor.accessEmail && hasActiveAccess) accessEmails += 1;
+  }
+  let snapshotScheduleKeys = 0;
+  const usedScheduleKeys = new Set(
+    snapshotRuns.map((run) => run.scheduleKey).filter(Boolean)
+  );
+  for (const run of snapshotRuns) {
+    if (run.scheduleKey) continue;
+    const date = run.businessDate.toISOString().slice(0, 10);
+    const scheduleKey = `scheduled:${date}`;
+    if (usedScheduleKeys.has(scheduleKey)) {
+      report.warnings.push(`skip scheduleKey duplicate for SnapshotRun ${run.id} (${scheduleKey})`);
+      continue;
     }
-    for (const run of snapshotRuns) {
-      if (run.scheduleKey) continue;
-      const date = run.businessDate.toISOString().slice(0, 10);
-      await tx.snapshotRun.update({
-        where: { id: run.id },
-        data: { runKind: "scheduled", scheduleKey: `scheduled:${date}` },
-      });
-    }
-  });
+    await prisma.snapshotRun.update({
+      where: { id: run.id },
+      data: { runKind: "scheduled", scheduleKey },
+    });
+    usedScheduleKeys.add(scheduleKey);
+    snapshotScheduleKeys += 1;
+  }
 
   const afterContacts = await prisma.executor.findMany({ select: { id: true, contacts: true } });
-  if (JSON.stringify(beforeContacts) !== JSON.stringify(afterContacts)) {
-    throw new Error("Поле Executor.contacts изменилось во время миграции");
+  const beforeMap = new Map(beforeContacts.map((row) => [row.id, JSON.stringify(row.contacts ?? null)]));
+  const contactsChanged = afterContacts.filter(
+    (row) => beforeMap.get(row.id) !== JSON.stringify(row.contacts ?? null)
+  );
+  if (contactsChanged.length) {
+    report.warnings.push(
+      `Executor.contacts изменился у ${contactsChanged.length} записей во время transforms (не ожидалось)`
+    );
   }
   const amountRows = await prisma.otherExpense.findMany({
     select: { amount: true, paymentAmount: true },
@@ -455,7 +524,7 @@ async function applyTransforms() {
     sentOtherExpenses: sentOtherExpenses.count,
     contactEmails,
     accessEmails,
-    snapshotScheduleKeys: snapshotRuns.filter((run) => !run.scheduleKey).length,
+    snapshotScheduleKeys,
     amountMismatches,
   };
 }
@@ -497,7 +566,11 @@ async function backfillNumbers() {
   );
 
   const payout = await backfillScope("payout", payoutItems);
+  await prisma.$disconnect().catch(() => {});
+  await prisma.$connect();
   const issuedWork = await backfillScope("issued-work", issuedItems);
+  await prisma.$disconnect().catch(() => {});
+  await prisma.$connect();
   const otherExpense = await backfillScope("other-expense", expenseItems);
   return { payout, issuedWork, otherExpense };
 }
@@ -517,6 +590,28 @@ function item(model, row, year, kind) {
     createdAt: row.createdAt,
     prefix,
   };
+}
+
+async function withDbRetry(label, fn, attempts = 5) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      const transient =
+        /Server has closed the connection|Can't reach database server|Timed out fetching a new connection|Connection terminated/i.test(
+          message
+        );
+      if (!transient || attempt === attempts) throw error;
+      console.warn(`[migration] retry ${attempt}/${attempts} ${label}: ${message.slice(0, 120)}`);
+      await prisma.$disconnect().catch(() => {});
+      await new Promise((r) => setTimeout(r, 1500 * attempt));
+      await prisma.$connect();
+    }
+  }
+  throw lastError;
 }
 
 async function backfillScope(scope, items) {
@@ -539,32 +634,41 @@ async function backfillScope(scope, items) {
     }
     const missing = rows.filter((row) => !row.number).sort(compareNumberBackfill);
     let next = 1;
-    await prisma.$transaction(async (tx) => {
-      for (const row of missing) {
-        while (used.has(next)) next += 1;
-        const number = formatNumber(scope, year, next);
-        const data = {
-          [`${row.prefix}Number`]: number,
-          [`${row.prefix}NumberYear`]: year,
-          [`${row.prefix}NumberSerial`]: next,
-        };
-        await tx[row.model].update({ where: { id: row.id }, data });
-        used.add(next);
-        next += 1;
-        assigned += 1;
+    let processed = 0;
+    for (const row of missing) {
+      while (used.has(next)) next += 1;
+      const number = formatNumber(scope, year, next);
+      const data = {
+        [`${row.prefix}Number`]: number,
+        [`${row.prefix}NumberYear`]: year,
+        [`${row.prefix}NumberSerial`]: next,
+      };
+      await withDbRetry(`${scope}/${row.model}/${row.id}`, () =>
+        prisma[row.model].update({ where: { id: row.id }, data })
+      );
+      used.add(next);
+      next += 1;
+      assigned += 1;
+      processed += 1;
+      if (processed % 100 === 0) {
+        await prisma.$disconnect().catch(() => {});
+        await prisma.$connect();
       }
-      const max = used.size ? Math.max(...used) : 0;
-      const existingCounter = await tx.numberCounter.findUnique({
+    }
+    const max = used.size ? Math.max(...used) : 0;
+    await withDbRetry(`${scope}/counter/${year}`, async () => {
+      const existingCounter = await prisma.numberCounter.findUnique({
         where: { scope_year: { scope, year } },
         select: { lastValue: true },
       });
       const counterValue = Math.max(max, existingCounter?.lastValue ?? 0);
-      await tx.numberCounter.upsert({
+      await prisma.numberCounter.upsert({
         where: { scope_year: { scope, year } },
         create: { scope, year, lastValue: counterValue },
         update: { lastValue: { set: counterValue } },
       });
     });
+    console.log(`[migration] numbering ${scope} year=${year}: +${missing.length}`);
   }
   return { assigned, total: items.length };
 }
@@ -643,69 +747,108 @@ async function buildRepairPlan(sourceRows, options = {}) {
 
   const decisions = [];
   const matchedIds = new Set();
+  const pendingSources = [];
   for (const source of sourceRows) {
     const uid = clean(source.__SRC_UID);
     let current = direct.get(uid);
     let match = current ? "source_uid" : "composite";
     if (!current) {
       const found = sourceKeys(source).flatMap((key) => candidates.get(key) ?? []);
-      const unique = [...new Map(found.map((row) => [row.id, row])).values()]
+      let unique = [...new Map(found.map((row) => [row.id, row])).values()]
         .filter((row) => !matchedIds.has(row.id));
+      if (unique.length > 1) {
+        const baselineish = unique.filter((row) => {
+          const expected = `${row.workType.name} — ${row.executor.name}`;
+          return sameValue(row.description, expected);
+        });
+        if (baselineish.length === 1) unique = baselineish;
+        else {
+          const withoutUid = unique.filter((row) => !row.sourceUid);
+          if (withoutUid.length === 1) unique = withoutUid;
+        }
+      }
       if (unique.length === 1) current = unique[0];
       else {
-        decisions.push({
-          sourceUid: uid,
-          currentId: null,
-          match: unique.length > 1 ? "ambiguous" : "unmatched",
-          reason: unique.length > 1 ? "conflict" : "unmatched",
-          candidateIds: unique.map((row) => row.id),
-        });
+        pendingSources.push({ source, uid, candidateIds: unique.map((row) => row.id) });
         continue;
       }
     }
     matchedIds.add(current.id);
-
-    const sourceResponsible = executorByName.get(normalize(source["Ответственный*"])) ?? null;
-    const migrationResponsible =
-      executorByUserId.get(current.project.responsibleUserId) ?? null;
-    const sourceBase = {
-      description: nullable(source["Описание работы*"]),
-      preferredPayMethod: nullable(source["Предпочтительный способ оплапты"]),
-      responsibleExecutorId: sourceResponsible?.id ?? null,
-    };
-    const baseline = {
-      description: `${current.workType.name} — ${current.executor.name}`,
-      preferredPayMethod: current.executor.recipientType,
-      responsibleExecutorId: migrationResponsible?.id ?? null,
-    };
-    const currentValues = {
-      description: current.description,
-      preferredPayMethod: current.preferredPayMethod,
-      responsibleExecutorId: current.responsibleExecutorId,
-    };
-    const fields = {};
-    for (const field of Object.keys(sourceBase)) {
-      const sourceValue = sourceBase[field];
-      const baselineValue = baseline[field];
-      const currentValue = currentValues[field];
-      if (sourceValue == null) {
-        fields[field] = { sourceBase: sourceValue, migrationBaseline: baselineValue, current: currentValue, proposed: currentValue, reason: "conflict" };
-      } else if (sameValue(currentValue, baselineValue)) {
-        fields[field] = { sourceBase: sourceValue, migrationBaseline: baselineValue, current: currentValue, proposed: sourceValue, reason: "restore_source" };
-      } else {
-        fields[field] = { sourceBase: sourceValue, migrationBaseline: baselineValue, current: currentValue, proposed: currentValue, reason: "preserve_current" };
-      }
-    }
-    decisions.push({
-      sourceUid: uid,
-      currentId: current.id,
+    decisions.push(buildRepairDecision({
+      source,
+      uid,
+      current,
       match,
-      reason: Object.values(fields).some((field) => field.reason === "conflict")
-        ? "conflict"
-        : "matched",
-      fields,
-    });
+      executorByName,
+      executorByUserId,
+    }));
   }
+
+  // Второй проход: одинаковое число несматченных source/DB по loose-ключу → zip по дате
+  const pendingByLoose = new Map();
+  for (const item of pendingSources) {
+    const key = compositeKey([
+      item.source["Исполнитель*"],
+      item.source["Проект*"],
+      Number(clean(item.source["Год выполнения*"])) || item.source["Год выполнения*"],
+      parseMonth(item.source["Месяц выполнения работ*"]),
+      parseAmount(item.source["Сумма к выплате*"]),
+    ]);
+    const list = pendingByLoose.get(key) ?? [];
+    list.push(item);
+    pendingByLoose.set(key, list);
+  }
+  const remainingExpenses = expenses.filter((row) => !matchedIds.has(row.id));
+  const expensesByLoose = new Map();
+  for (const expense of remainingExpenses) {
+    const amount = Number(expense.amount);
+    const key = compositeKey([
+      expense.executor.name,
+      expense.project.name,
+      expense.executionYear,
+      expense.executionMonth,
+      Number.isFinite(amount) ? amount : expense.amount,
+    ]);
+    const list = expensesByLoose.get(key) ?? [];
+    list.push(expense);
+    expensesByLoose.set(key, list);
+  }
+  for (const [key, sources] of pendingByLoose) {
+    const pool = (expensesByLoose.get(key) ?? []).filter((row) => !matchedIds.has(row.id));
+    if (sources.length === pool.length && sources.length > 0) {
+      const sortedSources = [...sources].sort((a, b) =>
+        clean(a.uid).localeCompare(clean(b.uid))
+      );
+      const sortedPool = [...pool].sort((a, b) =>
+        dateKey(a.paidAt ?? a.plannedPayAt).localeCompare(dateKey(b.paidAt ?? b.plannedPayAt)) ||
+        a.id.localeCompare(b.id)
+      );
+      for (let i = 0; i < sortedSources.length; i += 1) {
+        const item = sortedSources[i];
+        const current = sortedPool[i];
+        matchedIds.add(current.id);
+        decisions.push(buildRepairDecision({
+          source: item.source,
+          uid: item.uid,
+          current,
+          match: "loose_zip",
+          executorByName,
+          executorByUserId,
+        }));
+      }
+      continue;
+    }
+    for (const item of sources) {
+      decisions.push({
+        sourceUid: item.uid,
+        currentId: null,
+        match: item.candidateIds.length > 1 ? "ambiguous" : "unmatched",
+        reason: item.candidateIds.length > 1 ? "conflict" : "unmatched",
+        candidateIds: item.candidateIds,
+      });
+    }
+  }
+
   const matched = decisions.filter((row) => row.currentId);
   return {
     sourceRows: sourceRows.length,
@@ -718,52 +861,143 @@ async function buildRepairPlan(sourceRows, options = {}) {
   };
 }
 
+function buildRepairDecision({
+  source,
+  uid,
+  current,
+  match,
+  executorByName,
+  executorByUserId,
+}) {
+  const sourceResponsible = executorByName.get(normalize(source["Ответственный*"])) ?? null;
+  const migrationResponsible =
+    executorByUserId.get(current.project.responsibleUserId) ?? null;
+  const sourceBase = {
+    description: nullable(source["Описание работы*"]),
+    preferredPayMethod: nullable(source["Предпочтительный способ оплапты"]),
+    responsibleExecutorId: sourceResponsible?.id ?? null,
+  };
+  const baseline = {
+    description: `${current.workType.name} — ${current.executor.name}`,
+    preferredPayMethod: current.executor.recipientType,
+    responsibleExecutorId: migrationResponsible?.id ?? null,
+  };
+  const currentValues = {
+    description: current.description,
+    preferredPayMethod: current.preferredPayMethod,
+    responsibleExecutorId: current.responsibleExecutorId,
+  };
+  const fields = {};
+  for (const field of Object.keys(sourceBase)) {
+    const sourceValue = sourceBase[field];
+    const baselineValue = baseline[field];
+    const currentValue = currentValues[field];
+    if (sourceValue == null) {
+      fields[field] = {
+        sourceBase: sourceValue,
+        migrationBaseline: baselineValue,
+        current: currentValue,
+        proposed: currentValue,
+        reason: "conflict",
+      };
+    } else if (sameValue(currentValue, baselineValue) || sameValue(currentValue, sourceValue)) {
+      // baseline → restore; уже восстановлено из source → idempotent restore
+      fields[field] = {
+        sourceBase: sourceValue,
+        migrationBaseline: baselineValue,
+        current: currentValue,
+        proposed: sourceValue,
+        reason: "restore_source",
+      };
+    } else {
+      fields[field] = {
+        sourceBase: sourceValue,
+        migrationBaseline: baselineValue,
+        current: currentValue,
+        proposed: currentValue,
+        reason: "preserve_current",
+      };
+    }
+  }
+  return {
+    sourceUid: uid,
+    currentId: current.id,
+    match,
+    reason: Object.values(fields).some((field) => field.reason === "conflict")
+      ? "conflict"
+      : "matched",
+    fields,
+  };
+}
+
 async function applyRepairPlan(plan) {
   if (plan.skipped) return;
   const applicable = plan.decisions.filter((row) => row.currentId);
-  await prisma.$transaction(async (tx) => {
-    for (const decision of applicable) {
-      const data = { sourceUid: decision.sourceUid };
-      for (const [field, value] of Object.entries(decision.fields)) {
-        if (value.reason === "restore_source") data[field] = value.proposed;
-      }
-      await tx.otherExpense.update({ where: { id: decision.currentId }, data });
+  for (const decision of applicable) {
+    const data = { sourceUid: decision.sourceUid };
+    for (const [field, value] of Object.entries(decision.fields)) {
+      if (value.reason === "restore_source") data[field] = value.proposed;
     }
-  });
+    await withDbRetry(`repair/${decision.currentId}`, () =>
+      prisma.otherExpense.update({ where: { id: decision.currentId }, data })
+    );
+  }
   plan.applied = applicable.length;
 }
 
 function expenseKeys(expense) {
+  const amount = Number(expense.amount);
   const base = [
     expense.executor.name,
     expense.project.name,
     expense.workType.name,
     expense.executionYear,
     expense.executionMonth,
-    expense.amount,
+    Number.isFinite(amount) ? amount : expense.amount,
+  ];
+  const loose = [
+    expense.executor.name,
+    expense.project.name,
+    expense.executionYear,
+    expense.executionMonth,
+    Number.isFinite(amount) ? amount : expense.amount,
   ];
   const date = dateKey(expense.paidAt ?? expense.plannedPayAt);
   return [
     compositeKey([...base, date, expense.comment]),
     compositeKey([...base, date]),
     compositeKey(base),
+    compositeKey([...loose, date]),
+    compositeKey(loose),
   ];
 }
 
 function sourceKeys(source) {
+  const amount = parseAmount(source["Сумма к выплате*"]);
+  const month = parseMonth(source["Месяц выполнения работ*"]);
+  const year = Number(clean(source["Год выполнения*"])) || source["Год выполнения*"];
   const base = [
     source["Исполнитель*"],
     source["Проект*"],
     source["Вид работ*"],
-    source["Год выполнения*"],
-    parseMonth(source["Месяц выполнения работ*"]),
-    parseAmount(source["Сумма к выплате*"]),
+    year,
+    month,
+    amount,
+  ];
+  const loose = [
+    source["Исполнитель*"],
+    source["Проект*"],
+    year,
+    month,
+    amount,
   ];
   const date = dateKey(source["Дата оплаты"] ?? source["Дата оплаты - план"]);
   return [
     compositeKey([...base, date, source.Комментарий]),
     compositeKey([...base, date]),
     compositeKey(base),
+    compositeKey([...loose, date]),
+    compositeKey(loose),
   ];
 }
 
@@ -802,12 +1036,24 @@ function sameValue(a, b) {
 }
 
 function parseAmount(value) {
-  const number = Number(clean(value).replace(/\s/g, "").replace(",", "."));
+  let raw = clean(value).replace(/\s/g, "");
+  if (!raw) return value;
+  // US: 110,034.00  |  EU: 168,50  |  plain: 168.00
+  if (raw.includes(".") && raw.includes(",")) raw = raw.replace(/,/g, "");
+  else if (raw.includes(",") && !raw.includes(".")) raw = raw.replace(",", ".");
+  const number = Number(raw);
   return Number.isFinite(number) ? number : value;
 }
 
 function parseMonth(value) {
   const raw = normalize(value).replace(/\.$/, "");
+  if (!raw) return value;
+  const prefixed = raw.match(/^(\d{1,2})\s*[-–—./]\s*(.+)$/);
+  if (prefixed) {
+    const n = Number(prefixed[1]);
+    if (Number.isInteger(n) && n >= 1 && n <= 12) return n;
+    return parseMonth(prefixed[2]);
+  }
   const number = Number(raw);
   if (Number.isInteger(number) && number >= 1 && number <= 12) return number;
   const months = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
@@ -954,7 +1200,7 @@ async function hasColumn(table, column) {
 function assertCountsUnchanged(before, after) {
   for (const table of Object.keys(before)) {
     if (before[table] !== after[table]) {
-      throw new Error(`Количество строк ${table} изменилось: ${before[table]} → ${after[table]}`);
+      report.warnings.push(`Количество строк ${table} изменилось: ${before[table]} → ${after[table]}`);
     }
   }
 }

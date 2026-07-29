@@ -164,8 +164,6 @@ export function ResponsiblesClient() {
                           <Link
                             key={p.id}
                             href={`/admin/projects/${p.id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
                             className={cn(
                               "block truncate hover:underline",
                               p.status === "archived" ? "text-neutral-400" : "text-blue-600"

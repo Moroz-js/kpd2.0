@@ -833,7 +833,6 @@ export function CashflowClient() {
                           <td className={cn(stickyLbl, "font-normal")} title={p.name}>
                             <Link
                               href={`/admin/projects/${p.id}`}
-                              target="_blank"
                               className="block truncate hover:text-blue-600 hover:underline"
                             >
                               {p.name}
@@ -864,7 +863,6 @@ export function CashflowClient() {
                           <td className={cn(stickyLbl, "font-normal text-neutral-500")} title={p.name}>
                             <Link
                               href={`/admin/projects/${p.id}`}
-                              target="_blank"
                               className="block truncate hover:text-blue-600 hover:underline"
                             >
                               {p.name}

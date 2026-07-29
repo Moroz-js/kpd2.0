@@ -106,8 +106,6 @@ function smetaTypeCell(row: Row) {
     return row.executorAccessEmail ? (
       <Link
         href={`/admin/executors/${row.executorId}`}
-        target="_blank"
-        rel="noopener noreferrer"
         className="text-blue-600 hover:underline"
         title="Открыть личную смету"
       >
@@ -183,11 +181,23 @@ const IssuedWorkRow = React.memo(function IssuedWorkRow({
       <TableCell className={cn(compactCell, "whitespace-nowrap", weekPayClass)}>
         {r.weekPlanFact != null ? weekLabel(r.weekPlanFact) : "—"}
       </TableCell>
-      <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>{r.executorName}</TableCell>
+      <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>
+        {r.executorAccessEmail ? (
+          <Link href={`/admin/executors/${r.executorId}`} className="hover:underline text-neutral-900">
+            {r.executorName}
+          </Link>
+        ) : (
+          r.executorName
+        )}
+      </TableCell>
       <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>
         {r.responsibleExecutorName ?? "—"}
       </TableCell>
-      <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>{r.projectName}</TableCell>
+      <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>
+        <Link href={`/admin/projects/${r.projectId}`} className="hover:underline text-neutral-900">
+          {r.projectName}
+        </Link>
+      </TableCell>
       <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>{r.workTypeName}</TableCell>
       <TableCell className={cn(compactCell, "text-right tabular-nums font-semibold")}>{formatMoney(r.amount)}</TableCell>
       <TableCell className={compactCell}>

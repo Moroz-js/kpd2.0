@@ -30,11 +30,43 @@ jobs:
     runs-on: ubuntu-latest
     needs: check
     steps:
-      - name: Run deploy script on server
+      - name: Deploy app and configure local snapshots
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           command_timeout: 20m
-          script: bash /opt/kpd/app/deploy/server-deploy.sh
+          script: |
+            set -euo pipefail
+            APP_DIR=/opt/kpd/app
+            ENV_FILE="$APP_DIR/.env.local"
+            SNAPSHOT_DIR=/opt/kpd/snapshots
+            SNAPSHOT_USER=kpd-app
+
+            if [ ! -f "$ENV_FILE" ]; then
+              echo "[deploy] FAIL: отсутствует $ENV_FILE" >&2
+              exit 1
+            fi
+
+            upsert_env() {
+              local key="$1" value="$2"
+              if grep -q "^${key}=" "$ENV_FILE"; then
+                sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+              else
+                printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+              fi
+            }
+
+            # Снимки на VPS — локальная папка (не Neon/S3)
+            upsert_env SNAPSHOT_STORAGE_MODE local
+            upsert_env SNAPSHOT_LOCAL_DIR "$SNAPSHOT_DIR"
+
+            if ! id "$SNAPSHOT_USER" >/dev/null 2>&1; then
+              useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin "$SNAPSHOT_USER"
+            fi
+            install -d -o "$SNAPSHOT_USER" -g "$SNAPSHOT_USER" -m 0750 "$SNAPSHOT_DIR"
+            chgrp "$SNAPSHOT_USER" "$ENV_FILE"
+            chmod 0640 "$ENV_FILE"
+
+            bash "$APP_DIR/deploy/server-deploy.sh"

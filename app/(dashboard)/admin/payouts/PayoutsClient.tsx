@@ -174,7 +174,18 @@ const PayoutRow = React.memo(function PayoutRow({
       <TableCell className={cn(periodYearMonthClass, yearColCell)}>{r.periodYear}</TableCell>
       <TableCell className={cn(periodYearMonthClass, "text-xs whitespace-nowrap")}>{monthLabel(r.periodMonth)}</TableCell>
       <TableCell className={cn(weekColClass, "text-xs whitespace-nowrap")}>{r.weekPlanFact != null ? weekLabel(r.weekPlanFact) : "—"}</TableCell>
-      <TableCell>{r.executorName}</TableCell>
+      <TableCell>
+        {r.executorAccessEmail ? (
+          <Link
+            href={`/admin/executors/${r.executorId}`}
+            className="hover:underline text-neutral-900"
+          >
+            {r.executorName}
+          </Link>
+        ) : (
+          r.executorName
+        )}
+      </TableCell>
       <TableCell>
         <Select value={r.paymentStatus} onValueChange={(v) => v && onPatchInlineStatus(r, v)}>
           <SelectTrigger className="h-6 w-auto min-w-[120px] border-0 bg-transparent shadow-none p-0 focus:ring-0 [&>svg]:hidden">

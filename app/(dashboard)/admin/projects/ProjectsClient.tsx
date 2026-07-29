@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { Plus, Pencil, Archive, ArchiveRestore, ExternalLink } from "lucide-react";
+import { Plus, Pencil, Archive, ArchiveRestore } from "lucide-react";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
@@ -352,11 +352,8 @@ export function ProjectsClient({ scope }: { scope: "all" | "mine" }) {
                   <TableCell className="font-medium">
                     <Link
                       href={detailHref(r.id)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 hover:underline text-neutral-900"
+                      className="hover:underline text-neutral-900"
                     >
-                      <ExternalLink className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
                       {r.name}
                     </Link>
                   </TableCell>

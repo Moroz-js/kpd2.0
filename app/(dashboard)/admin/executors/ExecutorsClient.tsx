@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { toast } from "sonner" ;
-import { Plus, Pencil, Archive, ArchiveRestore, Check, X, ExternalLink, Search } from "lucide-react";
+import { Plus, Pencil, Archive, ArchiveRestore, Check, X, Search } from "lucide-react";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
@@ -466,23 +466,12 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
                           {displayExecutorName(r.name, r.type)}
                         </Link>
                       ) : hasPersonalSmeta(r) ? (
-                        <>
-                          <Link
-                            href={`/admin/executors/${r.id}`}
-                            className="truncate hover:underline text-neutral-900"
-                          >
-                            {displayExecutorName(r.name, r.type)}
-                          </Link>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-5 w-5 p-0 shrink-0"
-                            title="Открыть смету в новом окне"
-                            onClick={() => window.open(`/admin/executors/${r.id}`, "_blank")}
-                          >
-                            <ExternalLink className="h-3 w-3 text-neutral-500" />
-                          </Button>
-                        </>
+                        <Link
+                          href={`/admin/executors/${r.id}`}
+                          className="truncate hover:underline text-neutral-900"
+                        >
+                          {displayExecutorName(r.name, r.type)}
+                        </Link>
                       ) : (
                         <span className="truncate">{displayExecutorName(r.name, r.type)}</span>
                       )}

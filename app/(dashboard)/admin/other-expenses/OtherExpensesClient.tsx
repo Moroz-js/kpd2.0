@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useCallback, useRef, useEffect } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, CheckCircle, RotateCcw, X, CircleDollarSign } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -289,10 +290,34 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
       <TableCell className="whitespace-nowrap">{MONTHS.find(m => m.value === String(row.executionMonth))?.label ?? row.executionMonth}</TableCell>
       <TableCell>{payWeek(row.plannedPayAt, row.paidAt)}</TableCell>
       <TableCell className={cn(cellClip, "whitespace-normal")}>
-        <ExpandableListCell items={[row.project.name]} />
+        <ExpandableListCell
+          items={[row.project.name]}
+          renderItem={() => (
+            <Link
+              href={isAdmin ? `/admin/projects/${row.projectId}` : `/responsible/projects/${row.projectId}`}
+              className="hover:underline text-neutral-900"
+            >
+              {row.project.name}
+            </Link>
+          )}
+        />
       </TableCell>
       <TableCell className={cn(cellClip, "whitespace-normal")}>
-        <ExpandableListCell items={[row.executor.name]} />
+        <ExpandableListCell
+          items={[row.executor.name]}
+          renderItem={() =>
+            isAdmin ? (
+              <Link
+                href={`/admin/executors/${row.executorId}`}
+                className="hover:underline text-neutral-900"
+              >
+                {row.executor.name}
+              </Link>
+            ) : (
+              row.executor.name
+            )
+          }
+        />
       </TableCell>
       <TableCell className={cn(cellClip, "whitespace-normal")}>
         <ExpandableListCell items={row.description ? [row.description] : []} />

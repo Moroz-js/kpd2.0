@@ -3,7 +3,8 @@
 import * as React from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { Trash2, ExternalLink } from "lucide-react";
+import { Trash2 } from "lucide-react";
+import Link from "next/link";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
@@ -165,15 +166,12 @@ export function TasksClient() {
               rows.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell>
-                    <a
+                    <Link
                       href={`/admin/executors/${r.executor.id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1 text-blue-600 hover:underline whitespace-nowrap"
+                      className="text-blue-600 hover:underline whitespace-nowrap"
                     >
                       {r.executor.name}
-                      <ExternalLink className="h-3 w-3 opacity-60" />
-                    </a>
+                    </Link>
                   </TableCell>
                   <TableCell className="max-w-xs">
                     <span className="line-clamp-2 text-sm">{r.title}</span>

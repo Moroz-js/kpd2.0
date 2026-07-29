@@ -222,8 +222,6 @@ export function ClientsClient() {
                         return p ? (
                           <Link
                             href={`/admin/projects/${p.id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
                             className="hover:underline text-blue-600"
                           >
                             {name}

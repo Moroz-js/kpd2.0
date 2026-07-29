@@ -3,7 +3,7 @@
 import React, { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
-import { ChevronLeft, Plus, Pencil, Check, TrendingUp, CreditCard, AlertTriangle, Trash2, ExternalLink } from "lucide-react";
+import { ChevronLeft, Plus, Pencil, Check, TrendingUp, CreditCard, AlertTriangle, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { CollapsibleSection, SectionChevron, useSectionCollapsed } from "@/components/ui-custom/CollapsibleSection";
 import { buttonVariants, Button } from "@/components/ui/button";
@@ -854,24 +854,18 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                                     {isAdmin && pl.executorHasPersonalSmeta ? (
                                       <Link
                                         href={`/admin/executors/${pl.executorId}?fromProject=${projectId}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-0.5 text-[11px] text-blue-600 hover:underline truncate max-w-full"
+                                        className="text-[11px] text-blue-600 hover:underline truncate max-w-full"
                                         title="Открыть личную смету"
                                       >
                                         <span className="truncate">{pl.executorName}</span>
-                                        <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
                                       </Link>
                                     ) : !isAdmin ? (
                                       <Link
                                         href={`/executor/executors/${pl.executorId}?tab=settings`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-0.5 text-[11px] text-blue-600 hover:underline truncate max-w-full"
+                                        className="text-[11px] text-blue-600 hover:underline truncate max-w-full"
                                         title="Открыть настройки исполнителя"
                                       >
                                         <span className="truncate">{pl.executorName}</span>
-                                        <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />
                                       </Link>
                                     ) : (
                                       <span className="text-neutral-500 text-[11px] truncate">{pl.executorName}</span>

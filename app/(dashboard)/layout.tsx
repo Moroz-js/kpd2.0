@@ -1,6 +1,7 @@
 import { getSessionUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { NavigationProgress } from "@/components/layout/NavigationProgress";
 import { prisma } from "@/lib/db";
 import {
   PersistedDashboardMain,
@@ -34,6 +35,9 @@ export default async function DashboardLayout({
   return (
     <PersistedInterfaceStateProvider userId={userId}>
       <div className="flex h-screen overflow-hidden bg-neutral-50">
+        <Suspense fallback={null}>
+          <NavigationProgress />
+        </Suspense>
         <Suspense fallback={null}>
           <Sidebar
             role={role}

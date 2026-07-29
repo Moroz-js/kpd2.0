@@ -109,8 +109,11 @@ export function usePersistedState<T>(
 
 /**
  * Сохраняет/восстанавливает scrollTop/scrollLeft контейнера.
- * Без MutationObserver: с виртуализацией он зацикливает restore
- * («скролл сам возвращается» при фильтрах/группировке).
+ *
+ * Важно для виртуализированных таблиц:
+ * - не считать «достигли цели», пока scrollHeight ещё мал (иначе 0 = «успех»);
+ * - не перезаписывать сохранённую позицию нулём при размонтировании во время restore;
+ * - ResizeObserver только пока идёт restore, отключается при жесте пользователя.
  */
 export function usePersistedScroll(
   ref: React.RefObject<HTMLElement | null>,
@@ -122,30 +125,34 @@ export function usePersistedScroll(
     let element: HTMLElement | null = null;
     let bindTimeout: ReturnType<typeof setTimeout> | undefined;
     let saveTimeout: ReturnType<typeof setTimeout> | undefined;
-    let restoreTimeout: ReturnType<typeof setTimeout> | undefined;
+    let pollTimeout: ReturnType<typeof setTimeout> | undefined;
+    let resizeObserver: ResizeObserver | undefined;
     let disposed = false;
     let restoring = false;
     let userTookOver = false;
-    let restoreAttempts = 0;
     const bindDeadline = Date.now() + 10_000;
-    const MAX_RESTORE_ATTEMPTS = 24; // ~1.2s при шаге 50ms
+    const restoreDeadline = Date.now() + 20_000;
 
-    const readStored = (): { top?: number; left?: number } | null => {
+    const readStored = (): { top: number; left: number } => {
       try {
         const raw = window.localStorage.getItem(storageKey);
-        return raw ? deserialize(raw) : null;
+        if (!raw) return { top: 0, left: 0 };
+        const parsed = deserialize<{ top?: number; left?: number }>(raw);
+        return {
+          top: Math.max(0, parsed.top ?? 0),
+          left: Math.max(0, parsed.left ?? 0),
+        };
       } catch {
-        return null;
+        return { top: 0, left: 0 };
       }
     };
 
-    const saveAlways = (target = element) => {
-      if (!target) return;
+    let stored = readStored();
+
+    const writeStored = (top: number, left: number) => {
+      stored = { top, left };
       try {
-        window.localStorage.setItem(
-          storageKey,
-          serialize({ top: target.scrollTop, left: target.scrollLeft })
-        );
+        window.localStorage.setItem(storageKey, serialize(stored));
       } catch {
         // Storage can be disabled or full.
       }
@@ -153,8 +160,32 @@ export function usePersistedScroll(
 
     const stopRestore = () => {
       restoring = false;
-      clearTimeout(restoreTimeout);
-      restoreTimeout = undefined;
+      clearTimeout(pollTimeout);
+      pollTimeout = undefined;
+      resizeObserver?.disconnect();
+      resizeObserver = undefined;
+    };
+
+    const saveFromElement = (reason: "scroll" | "unmount" | "pagehide") => {
+      if (!element) return;
+      const top = element.scrollTop;
+      const left = element.scrollLeft;
+
+      // Не затираем валидную позицию нулём, пока контент не готов / идёт restore
+      if (reason !== "scroll") {
+        if (restoring && !userTookOver) return;
+        if (
+          !userTookOver &&
+          top <= 1 &&
+          left <= 1 &&
+          (stored.top > 1 || stored.left > 1)
+        ) {
+          return;
+        }
+      }
+      if (restoring) return;
+
+      writeStored(top, left);
     };
 
     const tryRestore = () => {
@@ -162,10 +193,8 @@ export function usePersistedScroll(
         stopRestore();
         return;
       }
-      const stored = readStored();
-      const top = Math.max(0, stored?.top ?? 0);
-      const left = Math.max(0, stored?.left ?? 0);
-      if (top === 0 && left === 0) {
+      const { top, left } = stored;
+      if (top <= 0 && left <= 0) {
         stopRestore();
         return;
       }
@@ -175,21 +204,19 @@ export function usePersistedScroll(
 
       const maxTop = Math.max(0, element.scrollHeight - element.clientHeight);
       const maxLeft = Math.max(0, element.scrollWidth - element.clientWidth);
-      const reached =
-        Math.abs(element.scrollTop - Math.min(top, maxTop)) <= 2 &&
-        Math.abs(element.scrollLeft - Math.min(left, maxLeft)) <= 2;
-      const contentTallEnough = maxTop + 1 >= top;
+      const canReach = maxTop + 1 >= top && maxLeft + 1 >= left;
+      const atTarget =
+        Math.abs(element.scrollTop - top) <= 2 &&
+        Math.abs(element.scrollLeft - left) <= 2;
 
-      restoreAttempts += 1;
-      if (
-        reached ||
-        (contentTallEnough && restoreAttempts >= 3) ||
-        restoreAttempts >= MAX_RESTORE_ATTEMPTS
-      ) {
+      // Пока контент ниже цели — ждём рост scrollHeight (не считаем clamp=0 успехом)
+      if (canReach && atTarget) {
         stopRestore();
         return;
       }
-      restoreTimeout = setTimeout(tryRestore, 50);
+      if (Date.now() >= restoreDeadline) {
+        stopRestore();
+      }
     };
 
     const onUserInteract = () => {
@@ -202,7 +229,31 @@ export function usePersistedScroll(
     const onScroll = () => {
       if (restoring) return;
       clearTimeout(saveTimeout);
-      saveTimeout = setTimeout(() => saveAlways(), 120);
+      saveTimeout = setTimeout(() => saveFromElement("scroll"), 120);
+    };
+
+    const startRestore = () => {
+      if (stored.top <= 0 && stored.left <= 0) return;
+      restoring = true;
+      resizeObserver = new ResizeObserver(() => {
+        if (!restoring || userTookOver || disposed) return;
+        tryRestore();
+      });
+      if (element) {
+        resizeObserver.observe(element);
+        if (element.firstElementChild instanceof HTMLElement) {
+          resizeObserver.observe(element.firstElementChild);
+        }
+      }
+      const poll = () => {
+        if (!restoring || disposed || userTookOver) return;
+        tryRestore();
+        if (restoring) pollTimeout = setTimeout(poll, 100);
+      };
+      requestAnimationFrame(() => {
+        tryRestore();
+        if (restoring) pollTimeout = setTimeout(poll, 100);
+      });
     };
 
     const bind = () => {
@@ -219,26 +270,20 @@ export function usePersistedScroll(
       element.addEventListener("touchstart", onUserInteract, { passive: true });
       element.addEventListener("keydown", onUserInteract);
 
-      const stored = readStored();
-      if (stored && ((stored.top ?? 0) > 0 || (stored.left ?? 0) > 0)) {
-        // Даём фильтрам/данным кадр на восстановление из localStorage
-        requestAnimationFrame(() => {
-          if (!disposed && !userTookOver) tryRestore();
-        });
-      }
+      startRestore();
     };
 
     bind();
-    const onPageHide = () => saveAlways();
+    const onPageHide = () => saveFromElement("pagehide");
     window.addEventListener("pagehide", onPageHide);
 
     return () => {
       disposed = true;
       clearTimeout(bindTimeout);
       clearTimeout(saveTimeout);
-      clearTimeout(restoreTimeout);
-      // Всегда сохраняем позицию при уходе (даже если restore ещё шёл)
-      if (element) saveAlways(element);
+      clearTimeout(pollTimeout);
+      saveFromElement("unmount");
+      stopRestore();
       element?.removeEventListener("scroll", onScroll);
       element?.removeEventListener("wheel", onUserInteract);
       element?.removeEventListener("pointerdown", onUserInteract);

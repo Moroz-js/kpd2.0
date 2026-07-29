@@ -233,18 +233,18 @@ else
   done
 fi
 
-ensure_env "SNAPSHOT_STORAGE_MODE" "${SNAPSHOT_STORAGE_MODE:-db}"
+ensure_env "SNAPSHOT_STORAGE_MODE" "${SNAPSHOT_STORAGE_MODE:-local}"
 ensure_env "SNAPSHOT_LOCAL_DIR" "${SNAPSHOT_LOCAL_DIR:-/opt/kpd/snapshots}"
 for key in SNAPSHOT_S3_BUCKET SNAPSHOT_S3_REGION SNAPSHOT_S3_ENDPOINT SNAPSHOT_S3_FORCE_PATH_STYLE SNAPSHOT_ALERT_WEBHOOK_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
   value="${!key:-}"
   [ -n "$value" ] && ensure_env "$key" "$value"
 done
-if [ "${SNAPSHOT_STORAGE_MODE:-db}" = "local" ]; then
-  warn "Snapshot storage: локальный каталог."
-elif [ "${SNAPSHOT_STORAGE_MODE:-db}" = "s3" ]; then
+if [ "${SNAPSHOT_STORAGE_MODE:-local}" = "local" ]; then
+  warn "Snapshot storage: локальный каталог $SNAPSHOT_LOCAL_DIR"
+elif [ "${SNAPSHOT_STORAGE_MODE:-local}" = "s3" ]; then
   warn "Snapshot storage: S3."
 else
-  warn "Snapshot storage: db (Neon snapshot_objects)."
+  warn "Snapshot storage: db (Postgres snapshot_objects)."
 fi
 
 log "npm ci..."

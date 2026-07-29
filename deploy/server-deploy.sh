@@ -40,10 +40,19 @@ if ! id "$SNAPSHOT_USER" >/dev/null 2>&1; then
   useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin "$SNAPSHOT_USER"
 fi
 install -d -o "$SNAPSHOT_USER" -g "$SNAPSHOT_USER" -m 0750 /opt/kpd/snapshots
-if grep -q '^SNAPSHOT_STORAGE_MODE=local$' "$APP_ENV" &&
-   ! grep -q '^SNAPSHOT_LOCAL_DIR=' "$APP_ENV"; then
-  echo 'SNAPSHOT_LOCAL_DIR=/opt/kpd/snapshots' >> "$APP_ENV"
-fi
+
+upsert_env() {
+  local key="$1" value="$2"
+  if grep -q "^${key}=" "$APP_ENV"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$APP_ENV"
+  else
+    printf '%s=%s\n' "$key" "$value" >> "$APP_ENV"
+  fi
+}
+# VPS: снимки в локальную папку
+upsert_env SNAPSHOT_STORAGE_MODE local
+upsert_env SNAPSHOT_LOCAL_DIR /opt/kpd/snapshots
+
 chgrp "$SNAPSHOT_USER" "$APP_ENV"
 chmod 0640 "$APP_ENV"
 

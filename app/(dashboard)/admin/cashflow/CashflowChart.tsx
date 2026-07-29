@@ -56,11 +56,12 @@ const ALL_PROJECTS = "_all";
 const COLORS = { dp: "#2563eb", budget: "#d97706" } as const;
 
 function fmt(value: number) {
-  const sign = value < 0 ? "−" : "";
-  const absolute = Math.abs(value);
+  const rounded = Math.round(value);
+  const sign = rounded < 0 ? "−" : "";
+  const absolute = Math.abs(rounded);
   if (absolute >= 1_000_000) return `${sign}${(absolute / 1_000_000).toFixed(1)}М`;
   if (absolute >= 1_000) return `${sign}${(absolute / 1_000).toFixed(0)}К`;
-  return `${value}`;
+  return `${rounded}`;
 }
 
 function chartNumber(value: unknown): number | null {

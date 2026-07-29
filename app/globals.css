@@ -112,3 +112,12 @@ html, body {
   overflow: hidden !important;
   max-height: 100vh !important;
 }
+
+@keyframes navProgress {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}

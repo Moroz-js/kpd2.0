@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import useSWR from "swr";
+import Link from "next/link";
 import { toast } from "sonner";
 import { Plus, Pencil, Archive, ArchiveRestore } from "lucide-react";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
@@ -264,7 +265,14 @@ export function OrdersClient() {
                   <TableCell className="font-medium tabular-nums">{r.orderNumber}</TableCell>
                   <TableCell>{r.description}</TableCell>
                   <TableCell className="text-sm">{r.clientName ?? "—"}</TableCell>
-                  <TableCell className="text-sm">{r.projectName}</TableCell>
+                  <TableCell className="text-sm">
+                    <Link
+                      href={`/admin/projects/${r.projectId}`}
+                      className="hover:underline text-neutral-900"
+                    >
+                      {r.projectName}
+                    </Link>
+                  </TableCell>
                   <TableCell className="text-sm">{r.contractNumber ?? "—"}</TableCell>
                   <TableCell>
                     <StatusBadge dict={ENTITY_STATUSES} value={r.status} />
