@@ -1000,25 +1000,42 @@ function FilterSelect({
   );
 }
 
-// ─── DateInput ────────────────────────────────────────────────────────────────
+// ─── Decimal / Money input ────────────────────────────────────────────────────
+
+/** Парсит число с учётом русской запятой и пробелов-разрядов. */
+function parseDecimal(raw: string): number {
+  const normalized = raw.replace(/[\s\u00A0]/g, "").replace(",", ".");
+  return parseFloat(normalized);
+}
 
 function MoneyInput({ value, onChange, placeholder, disabled, className }: {
   value: string; onChange: (v: string) => void;
   placeholder?: string; disabled?: boolean; className?: string;
 }) {
   const [focused, setFocused] = React.useState(false);
-  const numVal = parseFloat(value.replace(/[\s\u00A0]/g, ""));
+  const numVal = parseDecimal(value);
   const display = !focused && value && !isNaN(numVal)
-    ? numVal.toLocaleString("ru-RU", { maximumFractionDigits: 2 })
+    ? numVal.toLocaleString("ru-RU", { maximumFractionDigits: 6 })
     : value;
   return (
     <Input
       type="text"
       inputMode="decimal"
       value={display}
-      onChange={(e) => onChange(e.target.value.replace(/[\s\u00A0 ]/g, ""))}
+      onChange={(e) => {
+        // Сохраняем ввод как есть (запятая/точка), без округления;
+        // убираем только пробелы разрядов.
+        onChange(e.target.value.replace(/[\s\u00A0]/g, ""));
+      }}
       onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
+      onBlur={() => {
+        setFocused(false);
+        // Нормализуем запятую → точку в состоянии, чтобы расчёт и API видели точное число
+        if (value.includes(",")) {
+          const n = parseDecimal(value);
+          if (!isNaN(n)) onChange(String(n));
+        }
+      }}
       placeholder={placeholder}
       disabled={disabled}
       className={className}
@@ -1167,7 +1184,8 @@ function CreateWorkDialog({ executorId, onClose, onCreated }: { executorId: stri
   }, [executorId, projectId]);
 
   useEffect(() => {
-    const v = parseFloat(volume); const r = parseFloat(rate);
+    const v = parseDecimal(volume);
+    const r = parseDecimal(rate);
     if (!isNaN(v) && !isNaN(r)) setAmount(String(v * r));
   }, [volume, rate]);
 
@@ -1182,9 +1200,9 @@ function CreateWorkDialog({ executorId, onClose, onCreated }: { executorId: stri
           projectId, workTypeId,
           executionYear: parseInt(year), executionMonth: parseInt(month),
           techTask,
-          volume: volume ? parseFloat(volume) : null,
-          rate: rate ? parseFloat(rate) : null,
-          amount: parseFloat(amount),
+          volume: volume ? parseDecimal(volume) : null,
+          rate: rate ? parseDecimal(rate) : null,
+          amount: parseDecimal(amount),
           plannedPayAt: plannedPayAt || null,
           link: link || null, report: report || null, comment: comment || null,
         }),
@@ -1302,6 +1320,12 @@ function EditWorkDialog({
     fetch(`/api/executors/${executorId}/plan-work-types?projectId=${projectId}`).then((r) => r.json()).then(setPlanWorkTypes).catch(() => {});
   }, [executorId, projectId]);
 
+  useEffect(() => {
+    const v = parseDecimal(volume);
+    const r = parseDecimal(rate);
+    if (!isNaN(v) && !isNaN(r)) setAmount(String(v * r));
+  }, [volume, rate]);
+
   const currentYear = new Date().getFullYear();
   const years = [currentYear - 2, currentYear - 1, currentYear, currentYear + 1];
 
@@ -1315,9 +1339,9 @@ function EditWorkDialog({
           projectId, workTypeId,
           executionYear: parseInt(year), executionMonth: parseInt(month),
           techTask,
-          volume: volume ? parseFloat(volume) : null,
-          rate: rate ? parseFloat(rate) : null,
-          amount: parseFloat(amount),
+          volume: volume ? parseDecimal(volume) : null,
+          rate: rate ? parseDecimal(rate) : null,
+          amount: parseDecimal(amount),
           responsibleExecutorId: responsibleExecutorId || null,
           ...(isLinked ? {} : { plannedPayAt: plannedPayAt || null }),
           link: link || null, report: report || null,
@@ -1428,7 +1452,7 @@ function CreatePaymentDialog({ executorId, bankAccounts, onClose, onCreated }: {
   const years = [currentYear - 1, currentYear, currentYear + 1];
 
   async function handleSave() {
-    if (!amount || parseFloat(amount) <= 0) {
+    if (!amount || parseDecimal(amount) <= 0) {
       toast.error("Введите сумму больше нуля");
       return;
     }
@@ -1439,7 +1463,7 @@ function CreatePaymentDialog({ executorId, bankAccounts, onClose, onCreated }: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           periodYear: parseInt(year), periodMonth: parseInt(month),
-          amount: amount ? parseFloat(amount) : 0,
+          amount: amount ? parseDecimal(amount) : 0,
           paymentStatus: "planned",
           bankAccountId: bankAccountId || null,
           plannedPayAt: plannedPayAt || null,
@@ -1581,7 +1605,7 @@ function EditPaymentDialog({
         filledTechTask: filledTechTask || null,
         filledAct: filledAct || null,
       };
-      if (!hasWorks && addIds.size === 0) body.amount = amount ? parseFloat(amount) : 0;
+      if (!hasWorks && addIds.size === 0) body.amount = amount ? parseDecimal(amount) : 0;
       const r = await fetch(`/api/executors/${executorId}/payments/${payment.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
