@@ -200,6 +200,239 @@ function relationHref(field: string, value: unknown): string | null {
   return null;
 }
 
+function rowSortKey(row: DiffRow): string {
+  const record = row.after ?? row.before;
+  if (!record) return row.key;
+  const number =
+    record.issuedWorkNumber ??
+    record.payoutNumber ??
+    record.otherExpenseNumber ??
+    record.name ??
+    record.fullName ??
+    record.title;
+  return `${String(number ?? "")}\0${row.key}`;
+}
+
+function collectFields(rows: DiffRow[]): string[] {
+  const fieldSet = new Set<string>();
+  for (const row of rows) {
+    for (const value of [row.before, row.after]) {
+      Object.keys(value ?? {}).forEach((field) => {
+        if (!HIDDEN_FIELDS.has(field)) fieldSet.add(field);
+      });
+    }
+  }
+  return [...fieldSet]
+    .sort((a, b) => {
+      const ai = PREFERRED_FIELD_ORDER.indexOf(a);
+      const bi = PREFERRED_FIELD_ORDER.indexOf(b);
+      return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi) || a.localeCompare(b);
+    })
+    .slice(0, 10);
+}
+
+function ComparisonSideCells({
+  model,
+  row,
+  side,
+  fields,
+  refMaps,
+}: {
+  model: string;
+  row: DiffRow;
+  side: "A" | "B";
+  fields: string[];
+  refMaps: RefMaps;
+}) {
+  const value = side === "A" ? row.before : row.after;
+  const changed = new Set(row.changes.map((change) => change.field));
+  const marker =
+    row.status === "added" ? "+" : row.status === "removed" ? "−" : row.status === "modified" ? "●" : "";
+  const paneEdge = side === "A" ? "border-r border-neutral-200" : "";
+
+  return (
+    <>
+      <td
+        className={cn(
+          "px-2 py-1.5 text-center font-bold",
+          row.status === "added" ? "text-green-600" : row.status === "removed" ? "text-red-600" : "text-amber-600",
+          !value && "text-neutral-300",
+          side === "A" && fields.length === 0 && "border-r-2 border-neutral-300"
+        )}
+      >
+        {value ? marker : "·"}
+      </td>
+      {fields.map((field, index) => {
+        const raw = value?.[field];
+        const label = value ? displayFieldValue(model, field, raw, refMaps) : "—";
+        const href = value ? relationHref(field, raw) : null;
+        const isLast = index === fields.length - 1;
+        return (
+          <td
+            key={`${side}-${field}`}
+            className={cn(
+              "max-w-56 truncate px-2.5 py-1.5",
+              changed.has(field) && value && "font-medium text-amber-900 ring-1 ring-inset ring-amber-200",
+              side === "A" && isLast && "border-r-2 border-neutral-300",
+              side === "A" && !isLast && paneEdge
+            )}
+            title={
+              changed.has(field)
+                ? `A: ${displayFieldValue(model, field, row.before?.[field], refMaps)}\nB: ${displayFieldValue(model, field, row.after?.[field], refMaps)}`
+                : label
+            }
+          >
+            {href && label !== "—" ? (
+              <a href={href} className="text-blue-600 hover:underline" title="Открыть">
+                {label}
+              </a>
+            ) : (
+              label
+            )}
+          </td>
+        );
+      })}
+    </>
+  );
+}
+
+/** Одна строка = одна сущность: A и B всегда на одном уровне. */
+function UnifiedSnapshotComparison({
+  section,
+  sourceA,
+  sourceB,
+  onlyChanges,
+  labelA,
+  labelB,
+}: {
+  section: string;
+  sourceA: string;
+  sourceB: string;
+  onlyChanges: boolean;
+  labelA: string;
+  labelB: string;
+}) {
+  const [diff, setDiff] = React.useState<Record<string, DiffRow[]> | null>(null);
+  const [model, setModel] = React.useState("");
+  const [error, setError] = React.useState("");
+  const [showAll, setShowAll] = React.useState(false);
+  const refMaps = useReferenceMaps(diff);
+
+  React.useEffect(() => {
+    setShowAll(false);
+    setDiff(null);
+    setError("");
+    const controller = new AbortController();
+    const query = new URLSearchParams({ sourceA, sourceB, section });
+    fetch(`/api/snapshots/compare?${query}`, { signal: controller.signal })
+      .then((response) => response.json().then((payload) => ({ ok: response.ok, payload })))
+      .then(({ ok, payload }) => {
+        if (!ok) throw new Error((payload as { error?: string }).error ?? "Не удалось загрузить сравнение");
+        const next = (payload as { diff: Record<string, DiffRow[]> }).diff;
+        setDiff(next);
+        setModel(Object.keys(next)[0] ?? "");
+      })
+      .catch((reason) => {
+        if (controller.signal.aborted) return;
+        setError(reason instanceof Error ? reason.message : "Не удалось загрузить сравнение");
+      });
+    return () => controller.abort();
+  }, [sourceA, sourceB, section]);
+
+  if (error) {
+    return <div className="m-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>;
+  }
+  if (!diff) {
+    return <div className="p-6 text-sm text-neutral-500">Загрузка сравнения…</div>;
+  }
+
+  const allRows = (diff[model] ?? [])
+    .filter((row) => !onlyChanges || row.status !== "unchanged")
+    .slice()
+    .sort((a, b) => rowSortKey(a).localeCompare(rowSortKey(b), "ru"));
+  const rows = showAll ? allRows : allRows.slice(0, COMPARE_ROW_LIMIT);
+  const truncated = allRows.length > rows.length;
+  const fields = collectFields(rows);
+  const sideColSpan = fields.length + 1;
+
+  return (
+    <div className="flex h-full min-h-0 min-w-0 flex-col bg-white">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
+        <span className="text-xs font-medium text-neutral-700">{modelLabel(model)}</span>
+        <span className="text-xs text-neutral-400">
+          {truncated ? `${rows.length} из ${allRows.length}` : allRows.length} строк · одна работа = один уровень
+        </span>
+        {truncated && (
+          <button type="button" className="text-xs text-blue-600 hover:underline" onClick={() => setShowAll(true)}>
+            Показать все
+          </button>
+        )}
+      </div>
+      <div className="min-h-0 min-w-0 flex-1 overflow-auto">
+        <table className="min-w-max border-collapse text-xs">
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-neutral-100">
+              <th
+                colSpan={sideColSpan}
+                className="border-b border-r border-neutral-200 px-3 py-1.5 text-left text-[11px] font-semibold text-neutral-700"
+              >
+                A · {labelA}
+              </th>
+              <th
+                colSpan={sideColSpan}
+                className="border-b border-neutral-200 px-3 py-1.5 text-left text-[11px] font-semibold text-neutral-700"
+              >
+                B · {labelB}
+              </th>
+            </tr>
+            <tr className="bg-neutral-50">
+              <th className="border-b px-2 py-2 text-left font-medium text-neutral-500">Δ</th>
+              {fields.map((field, index) => (
+                <th
+                  key={`a-${field}`}
+                  className={cn(
+                    "border-b px-2.5 py-2 text-left font-medium whitespace-nowrap text-neutral-500",
+                    index === fields.length - 1 && "border-r-2 border-neutral-300"
+                  )}
+                >
+                  {fieldLabel(field, model)}
+                </th>
+              ))}
+              <th className="border-b px-2 py-2 text-left font-medium text-neutral-500">Δ</th>
+              {fields.map((field) => (
+                <th
+                  key={`b-${field}`}
+                  className="border-b px-2.5 py-2 text-left font-medium whitespace-nowrap text-neutral-500"
+                >
+                  {fieldLabel(field, model)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr
+                key={row.key}
+                className={cn(
+                  "border-b border-neutral-100",
+                  row.status === "added" && "bg-green-50/70",
+                  row.status === "removed" && "bg-red-50/70",
+                  row.status === "modified" && "bg-amber-50/50",
+                  row.status === "unchanged" && "bg-white"
+                )}
+              >
+                <ComparisonSideCells model={model} row={row} side="A" fields={fields} refMaps={refMaps} />
+                <ComparisonSideCells model={model} row={row} side="B" fields={fields} refMaps={refMaps} />
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/** Односторонняя панель для iframe (кэшфлоу и прямые comparePanel-URL). */
 function SnapshotComparisonPanel({
   section,
   side,
@@ -231,8 +464,6 @@ function SnapshotComparisonPanel({
         if (!ok) throw new Error((payload as { error?: string }).error ?? "Не удалось загрузить сравнение");
         const next = (payload as { diff: Record<string, DiffRow[]> }).diff;
         setDiff(next);
-        // Всегда основная модель раздела (первая в SECTION_MODELS) — сравниваем ту же
-        // сущность, что показана в текущей таблице, без отдельного выбора модели.
         setModel(Object.keys(next)[0] ?? "");
       })
       .catch((reason) => {
@@ -244,21 +475,14 @@ function SnapshotComparisonPanel({
 
   if (error) return <div className="m-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>;
   if (!diff) return <div className="p-6 text-sm text-neutral-500">Загрузка сравнения…</div>;
-  const allRows = (diff[model] ?? []).filter((row) => !onlyChanges || row.status !== "unchanged");
+
+  const allRows = (diff[model] ?? [])
+    .filter((row) => !onlyChanges || row.status !== "unchanged")
+    .slice()
+    .sort((a, b) => rowSortKey(a).localeCompare(rowSortKey(b), "ru"));
   const rows = showAll ? allRows : allRows.slice(0, COMPARE_ROW_LIMIT);
   const truncated = allRows.length > rows.length;
-  const fieldSet = new Set<string>();
-  for (const row of rows) {
-    const value = side === "A" ? row.before : row.after;
-    Object.keys(value ?? {}).forEach((field) => {
-      if (!HIDDEN_FIELDS.has(field)) fieldSet.add(field);
-    });
-  }
-  const fields = [...fieldSet].sort((a, b) => {
-    const ai = PREFERRED_FIELD_ORDER.indexOf(a);
-    const bi = PREFERRED_FIELD_ORDER.indexOf(b);
-    return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi) || a.localeCompare(b);
-  }).slice(0, 12);
+  const fields = collectFields(rows);
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-white">
@@ -268,11 +492,7 @@ function SnapshotComparisonPanel({
           {truncated ? `${rows.length} из ${allRows.length}` : allRows.length} строк
         </span>
         {truncated && (
-          <button
-            type="button"
-            className="text-xs text-blue-600 hover:underline"
-            onClick={() => setShowAll(true)}
-          >
+          <button type="button" className="text-xs text-blue-600 hover:underline" onClick={() => setShowAll(true)}>
             Показать все
           </button>
         )}
@@ -282,14 +502,19 @@ function SnapshotComparisonPanel({
           <thead className="sticky top-0 z-10 bg-neutral-50">
             <tr>
               <th className="border-b px-2 py-2 text-left font-medium text-neutral-500">Δ</th>
-              {fields.map((field) => <th key={field} className="border-b px-3 py-2 text-left font-medium text-neutral-500 whitespace-nowrap">{fieldLabel(field, model)}</th>)}
+              {fields.map((field) => (
+                <th key={field} className="border-b px-3 py-2 text-left font-medium whitespace-nowrap text-neutral-500">
+                  {fieldLabel(field, model)}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => {
               const value = side === "A" ? row.before : row.after;
               const changed = new Set(row.changes.map((change) => change.field));
-              const marker = row.status === "added" ? "+" : row.status === "removed" ? "−" : row.status === "modified" ? "●" : "";
+              const marker =
+                row.status === "added" ? "+" : row.status === "removed" ? "−" : row.status === "modified" ? "●" : "";
               return (
                 <tr
                   key={row.key}
@@ -301,7 +526,12 @@ function SnapshotComparisonPanel({
                     !value && "bg-neutral-50 text-neutral-300"
                   )}
                 >
-                  <td className={cn("px-2 py-1.5 font-bold", row.status === "added" ? "text-green-600" : row.status === "removed" ? "text-red-600" : "text-amber-600")}>
+                  <td
+                    className={cn(
+                      "px-2 py-1.5 font-bold",
+                      row.status === "added" ? "text-green-600" : row.status === "removed" ? "text-red-600" : "text-amber-600"
+                    )}
+                  >
                     {value ? marker : "·"}
                   </td>
                   {fields.map((field) => {
@@ -311,7 +541,10 @@ function SnapshotComparisonPanel({
                     return (
                       <td
                         key={field}
-                        className={cn("max-w-64 px-3 py-1.5", changed.has(field) && value && "font-medium text-amber-800 ring-1 ring-inset ring-amber-200")}
+                        className={cn(
+                          "max-w-64 px-3 py-1.5",
+                          changed.has(field) && value && "font-medium text-amber-800 ring-1 ring-inset ring-amber-200"
+                        )}
                         title={
                           changed.has(field)
                             ? `A: ${displayFieldValue(model, field, row.before?.[field], refMaps)}\nB: ${displayFieldValue(model, field, row.after?.[field], refMaps)}`
@@ -319,12 +552,7 @@ function SnapshotComparisonPanel({
                         }
                       >
                         {href && label !== "—" ? (
-                          <a
-                            href={href}
-                            target="_top"
-                            className="text-blue-600 hover:underline"
-                            title="Открыть"
-                          >
+                          <a href={href} target="_top" className="text-blue-600 hover:underline" title="Открыть">
                             {label}
                           </a>
                         ) : (
@@ -582,6 +810,15 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
     return `${pathname}?${next.toString()}`;
   };
 
+  const pathParts = pathname.split("/").filter(Boolean);
+  const section = pathParts[1] ?? "";
+  const isDetailRoute = pathParts.length >= 3;
+  const useUnifiedCompare =
+    pathname.startsWith("/admin/") &&
+    section !== "cashflow" &&
+    section !== "export" &&
+    !isDetailRoute;
+
   return (
     <ComparisonContext.Provider value={context}>
       <div className="flex h-full min-w-0 flex-1 flex-col">
@@ -634,16 +871,18 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
             />
             Только изменения
           </label>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 text-xs"
-            onClick={() => replaceParams({ syncScroll: syncScroll ? "0" : null })}
-          >
-            {syncScroll ? <Link2 className="mr-1.5 h-4 w-4" /> : <Link2Off className="mr-1.5 h-4 w-4" />}
-            Скролл
-          </Button>
+          {!useUnifiedCompare && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => replaceParams({ syncScroll: syncScroll ? "0" : null })}
+            >
+              {syncScroll ? <Link2 className="mr-1.5 h-4 w-4" /> : <Link2Off className="mr-1.5 h-4 w-4" />}
+              Скролл
+            </Button>
+          )}
           <Button
             type="button"
             variant="ghost"
@@ -666,6 +905,17 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
         {sourceA === sourceB ? (
           <div className="m-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             Выберите разные источники A и B.
+          </div>
+        ) : useUnifiedCompare ? (
+          <div className="min-h-0 min-w-0 flex-1">
+            <UnifiedSnapshotComparison
+              section={section}
+              sourceA={sourceA}
+              sourceB={sourceB}
+              onlyChanges={onlyChanges}
+              labelA={snapshotSourceLabel(sourceA, snapshots)}
+              labelB={snapshotSourceLabel(sourceB, snapshots)}
+            />
           </div>
         ) : (
           <div className={cn("grid min-h-0 flex-1 grid-cols-1 gap-px bg-neutral-300 lg:grid-cols-2")}>
