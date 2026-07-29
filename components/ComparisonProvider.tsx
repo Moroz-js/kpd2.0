@@ -73,8 +73,46 @@ const STATUS_DICTS_BY_MODEL: Record<string, Record<string, { label: string }>> =
   BankAccount: ENTITY_STATUSES,
 };
 
-function useReferenceMaps() {
-  const [maps, setMaps] = React.useState<RefMaps>({});
+const COMPARE_ROW_LIMIT = 200;
+
+function mergeRefMap(
+  target: Map<string, string>,
+  rows: Array<{ id?: unknown; name?: unknown; fullName?: unknown; firstName?: unknown; lastName?: unknown }>
+) {
+  for (const row of rows) {
+    if (row?.id == null) continue;
+    const id = String(row.id);
+    if (target.has(id)) continue;
+    const fullName = row.fullName != null ? String(row.fullName).trim() : "";
+    const name = row.name != null ? String(row.name).trim() : "";
+    const composed = [row.lastName, row.firstName].filter(Boolean).map(String).join(" ").trim();
+    const label = fullName || name || composed;
+    if (label) target.set(id, label);
+  }
+}
+
+function mapsFromDiff(diff: Record<string, DiffRow[]>): RefMaps {
+  const pick = (model: string) =>
+    (diff[model] ?? []).flatMap((row) => [row.before, row.after]).filter(Boolean) as Array<
+      Record<string, unknown>
+    >;
+  const executor = new Map<string, string>();
+  const project = new Map<string, string>();
+  const workType = new Map<string, string>();
+  const bankAccount = new Map<string, string>();
+  const client = new Map<string, string>();
+  const user = new Map<string, string>();
+  mergeRefMap(executor, pick("Executor") as never);
+  mergeRefMap(project, pick("Project") as never);
+  mergeRefMap(workType, pick("WorkType") as never);
+  mergeRefMap(bankAccount, pick("BankAccount") as never);
+  mergeRefMap(client, pick("Client") as never);
+  mergeRefMap(user, pick("User") as never);
+  return { executor, project, workType, bankAccount, client, user };
+}
+
+function useReferenceMaps(diff: Record<string, DiffRow[]> | null) {
+  const [liveMaps, setLiveMaps] = React.useState<RefMaps>({});
   React.useEffect(() => {
     let cancelled = false;
     const build = (rows: Array<{ id: string; name?: string; fullName?: string }>) =>
@@ -89,13 +127,13 @@ function useReferenceMaps() {
     ])
       .then(([executors, projects, workTypes, bankAccounts, clients, users]) => {
         if (cancelled) return;
-        setMaps({
-          executor: build(executors),
-          project: build(projects),
-          workType: build(workTypes),
-          bankAccount: build(bankAccounts),
-          client: build(clients),
-          user: build(users),
+        setLiveMaps({
+          executor: build(Array.isArray(executors) ? executors : []),
+          project: build(Array.isArray(projects) ? projects : []),
+          workType: build(Array.isArray(workTypes) ? workTypes : []),
+          bankAccount: build(Array.isArray(bankAccounts) ? bankAccounts : []),
+          client: build(Array.isArray(clients) ? clients : []),
+          user: build(Array.isArray(users) ? users : []),
         });
       })
       .catch(() => undefined);
@@ -103,7 +141,24 @@ function useReferenceMaps() {
       cancelled = true;
     };
   }, []);
-  return maps;
+
+  return React.useMemo(() => {
+    const fromDiff = diff ? mapsFromDiff(diff) : {};
+    const merge = (key: keyof RefMaps) => {
+      const map = new Map<string, string>();
+      fromDiff[key]?.forEach((value, id) => map.set(id, value));
+      liveMaps[key]?.forEach((value, id) => map.set(id, value));
+      return map;
+    };
+    return {
+      executor: merge("executor"),
+      project: merge("project"),
+      workType: merge("workType"),
+      bankAccount: merge("bankAccount"),
+      client: merge("client"),
+      user: merge("user"),
+    } satisfies RefMaps;
+  }, [diff, liveMaps]);
 }
 
 function displayFieldValue(model: string, field: string, value: unknown, refMaps: RefMaps): string {
@@ -137,6 +192,14 @@ function displayFieldValue(model: string, field: string, value: unknown, refMaps
   return text.length > 80 ? `${text.slice(0, 77)}…` : text;
 }
 
+function relationHref(field: string, value: unknown): string | null {
+  if (value == null || value === "") return null;
+  const id = String(value);
+  if (field === "executorId" || field === "responsibleExecutorId") return `/admin/executors/${id}`;
+  if (field === "projectId") return `/admin/projects/${id}`;
+  return null;
+}
+
 function SnapshotComparisonPanel({
   section,
   side,
@@ -153,9 +216,13 @@ function SnapshotComparisonPanel({
   const [diff, setDiff] = React.useState<Record<string, DiffRow[]> | null>(null);
   const [model, setModel] = React.useState("");
   const [error, setError] = React.useState("");
-  const refMaps = useReferenceMaps();
+  const [showAll, setShowAll] = React.useState(false);
+  const refMaps = useReferenceMaps(diff);
 
   React.useEffect(() => {
+    setShowAll(false);
+    setDiff(null);
+    setError("");
     const controller = new AbortController();
     const query = new URLSearchParams({ sourceA, sourceB, section });
     fetch(`/api/snapshots/compare?${query}`, { signal: controller.signal })
@@ -177,7 +244,9 @@ function SnapshotComparisonPanel({
 
   if (error) return <div className="m-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>;
   if (!diff) return <div className="p-6 text-sm text-neutral-500">Загрузка сравнения…</div>;
-  const rows = (diff[model] ?? []).filter((row) => !onlyChanges || row.status !== "unchanged");
+  const allRows = (diff[model] ?? []).filter((row) => !onlyChanges || row.status !== "unchanged");
+  const rows = showAll ? allRows : allRows.slice(0, COMPARE_ROW_LIMIT);
+  const truncated = allRows.length > rows.length;
   const fieldSet = new Set<string>();
   for (const row of rows) {
     const value = side === "A" ? row.before : row.after;
@@ -193,9 +262,20 @@ function SnapshotComparisonPanel({
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-white">
-      <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
         <span className="text-xs font-medium text-neutral-700">{modelLabel(model)}</span>
-        <span className="text-xs text-neutral-400">{rows.length} строк</span>
+        <span className="text-xs text-neutral-400">
+          {truncated ? `${rows.length} из ${allRows.length}` : allRows.length} строк
+        </span>
+        {truncated && (
+          <button
+            type="button"
+            className="text-xs text-blue-600 hover:underline"
+            onClick={() => setShowAll(true)}
+          >
+            Показать все
+          </button>
+        )}
       </div>
       <div className="min-h-0 min-w-0 flex-1 overflow-auto">
         <table className="min-w-max border-collapse text-xs">
@@ -224,19 +304,35 @@ function SnapshotComparisonPanel({
                   <td className={cn("px-2 py-1.5 font-bold", row.status === "added" ? "text-green-600" : row.status === "removed" ? "text-red-600" : "text-amber-600")}>
                     {value ? marker : "·"}
                   </td>
-                  {fields.map((field) => (
-                    <td
-                      key={field}
-                      className={cn("max-w-64 px-3 py-1.5", changed.has(field) && value && "font-medium text-amber-800 ring-1 ring-inset ring-amber-200")}
-                      title={
-                        changed.has(field)
-                          ? `A: ${displayFieldValue(model, field, row.before?.[field], refMaps)}\nB: ${displayFieldValue(model, field, row.after?.[field], refMaps)}`
-                          : undefined
-                      }
-                    >
-                      {value ? displayFieldValue(model, field, value[field], refMaps) : "—"}
-                    </td>
-                  ))}
+                  {fields.map((field) => {
+                    const raw = value?.[field];
+                    const label = value ? displayFieldValue(model, field, raw, refMaps) : "—";
+                    const href = value ? relationHref(field, raw) : null;
+                    return (
+                      <td
+                        key={field}
+                        className={cn("max-w-64 px-3 py-1.5", changed.has(field) && value && "font-medium text-amber-800 ring-1 ring-inset ring-amber-200")}
+                        title={
+                          changed.has(field)
+                            ? `A: ${displayFieldValue(model, field, row.before?.[field], refMaps)}\nB: ${displayFieldValue(model, field, row.after?.[field], refMaps)}`
+                            : undefined
+                        }
+                      >
+                        {href && label !== "—" ? (
+                          <a
+                            href={href}
+                            target="_top"
+                            className="text-blue-600 hover:underline"
+                            title="Открыть"
+                          >
+                            {label}
+                          </a>
+                        ) : (
+                          label
+                        )}
+                      </td>
+                    );
+                  })}
                 </tr>
               );
             })}
@@ -316,8 +412,16 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
     if (!enabled || panel) return;
     const onClick = (event: MouseEvent) => {
       const anchor = (event.target as HTMLElement).closest("a[href]") as HTMLAnchorElement | null;
-      if (!anchor || anchor.target === "_blank" || anchor.origin !== window.location.origin) return;
+      if (!anchor || anchor.target === "_blank" || anchor.target === "_top" || anchor.origin !== window.location.origin) return;
       const url = new URL(anchor.href);
+      const parts = url.pathname.split("/").filter(Boolean);
+      // Детальные страницы (смета, дашборд проекта) — выходим из сравнения
+      if (parts.length >= 3) {
+        event.preventDefault();
+        event.stopPropagation();
+        router.push(url.pathname);
+        return;
+      }
       url.searchParams.set("compare", "1");
       url.searchParams.set("snapshotA", sourceA);
       url.searchParams.set("snapshotB", sourceB);
@@ -392,8 +496,14 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
   );
 
   if (panel) {
-    const section = pathname.split("/").filter(Boolean)[1] ?? "";
-    const canRenderSnapshotSection = pathname.startsWith("/admin/") && section !== "cashflow" && section !== "export";
+    const pathParts = pathname.split("/").filter(Boolean);
+    const section = pathParts[1] ?? "";
+    const isDetailRoute = pathParts.length >= 3;
+    const canRenderSnapshotSection =
+      pathname.startsWith("/admin/") &&
+      section !== "cashflow" &&
+      section !== "export" &&
+      !isDetailRoute;
     return (
       <ComparisonContext.Provider value={context}>
         <div className="flex h-screen min-h-0 min-w-0 flex-1 flex-col bg-neutral-50">
@@ -445,7 +555,12 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
                 onClick={() => {
                   const fallbackB = snapshots[0]?.id;
                   if (!fallbackB) return;
-                  replaceParams({ compare: "1", snapshotA: "live", snapshotB: fallbackB });
+                  replaceParams({
+                    compare: "1",
+                    snapshotA: "live",
+                    snapshotB: fallbackB,
+                    onlyChanges: "1",
+                  });
                 }}
                 disabled={!snapshots.length || creatingSnapshot}
               >

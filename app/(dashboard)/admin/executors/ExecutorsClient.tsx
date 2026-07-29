@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { toast } from "sonner" ;
-import { Plus, Pencil, Archive, ArchiveRestore, Check, X, Search } from "lucide-react";
+import { Plus, Pencil, Archive, ArchiveRestore, Check, X, ExternalLink, Search } from "lucide-react";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
@@ -466,12 +466,22 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
                           {displayExecutorName(r.name, r.type)}
                         </Link>
                       ) : hasPersonalSmeta(r) ? (
-                        <Link
-                          href={`/admin/executors/${r.id}`}
-                          className="truncate hover:underline text-neutral-900"
-                        >
-                          {displayExecutorName(r.name, r.type)}
-                        </Link>
+                        <>
+                          <Link
+                            href={`/admin/executors/${r.id}`}
+                            className="truncate hover:underline text-neutral-900"
+                            title="Открыть личную смету"
+                          >
+                            {displayExecutorName(r.name, r.type)}
+                          </Link>
+                          <Link
+                            href={`/admin/executors/${r.id}`}
+                            className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+                            title="Открыть личную смету"
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                          </Link>
+                        </>
                       ) : (
                         <span className="truncate">{displayExecutorName(r.name, r.type)}</span>
                       )}

@@ -28,6 +28,13 @@ export function NavigationProgress() {
     setPending(false);
   }, [key]);
 
+  // На случай, если навигация зависла — не держим оверлей вечно
+  React.useEffect(() => {
+    if (!pending) return;
+    const timer = window.setTimeout(() => setPending(false), 12_000);
+    return () => window.clearTimeout(timer);
+  }, [pending]);
+
   React.useEffect(() => {
     const onClick = (event: MouseEvent) => {
       if (event.defaultPrevented || event.button !== 0) return;
