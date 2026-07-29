@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Columns2, DatabaseBackup, Link2, Link2Off, Loader2, X } from "lucide-react";
+import { Columns2, DatabaseBackup, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -432,164 +432,25 @@ function UnifiedSnapshotComparison({
   );
 }
 
-/** Односторонняя панель для iframe (кэшфлоу и прямые comparePanel-URL). */
-function SnapshotComparisonPanel({
-  section,
-  side,
-  sourceA,
-  sourceB,
-  onlyChanges,
-}: {
-  section: string;
-  side: "A" | "B";
-  sourceA: string;
-  sourceB: string;
-  onlyChanges: boolean;
-}) {
-  const [diff, setDiff] = React.useState<Record<string, DiffRow[]> | null>(null);
-  const [model, setModel] = React.useState("");
-  const [error, setError] = React.useState("");
-  const [showAll, setShowAll] = React.useState(false);
-  const refMaps = useReferenceMaps(diff);
-
-  React.useEffect(() => {
-    setShowAll(false);
-    setDiff(null);
-    setError("");
-    const controller = new AbortController();
-    const query = new URLSearchParams({ sourceA, sourceB, section });
-    fetch(`/api/snapshots/compare?${query}`, { signal: controller.signal })
-      .then((response) => response.json().then((payload) => ({ ok: response.ok, payload })))
-      .then(({ ok, payload }) => {
-        if (!ok) throw new Error((payload as { error?: string }).error ?? "Не удалось загрузить сравнение");
-        const next = (payload as { diff: Record<string, DiffRow[]> }).diff;
-        setDiff(next);
-        setModel(Object.keys(next)[0] ?? "");
-      })
-      .catch((reason) => {
-        if (controller.signal.aborted) return;
-        setError(reason instanceof Error ? reason.message : "Не удалось загрузить сравнение");
-      });
-    return () => controller.abort();
-  }, [sourceA, sourceB, section]);
-
-  if (error) return <div className="m-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>;
-  if (!diff) return <div className="p-6 text-sm text-neutral-500">Загрузка сравнения…</div>;
-
-  const allRows = (diff[model] ?? [])
-    .filter((row) => !onlyChanges || row.status !== "unchanged")
-    .slice()
-    .sort((a, b) => rowSortKey(a).localeCompare(rowSortKey(b), "ru"));
-  const rows = showAll ? allRows : allRows.slice(0, COMPARE_ROW_LIMIT);
-  const truncated = allRows.length > rows.length;
-  const fields = collectFields(rows);
-
-  return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col bg-white">
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
-        <span className="text-xs font-medium text-neutral-700">{modelLabel(model)}</span>
-        <span className="text-xs text-neutral-400">
-          {truncated ? `${rows.length} из ${allRows.length}` : allRows.length} строк
-        </span>
-        {truncated && (
-          <button type="button" className="text-xs text-blue-600 hover:underline" onClick={() => setShowAll(true)}>
-            Показать все
-          </button>
-        )}
-      </div>
-      <div className="min-h-0 min-w-0 flex-1 overflow-auto">
-        <table className="min-w-max border-collapse text-xs">
-          <thead className="sticky top-0 z-10 bg-neutral-50">
-            <tr>
-              <th className="border-b px-2 py-2 text-left font-medium text-neutral-500">Δ</th>
-              {fields.map((field) => (
-                <th key={field} className="border-b px-3 py-2 text-left font-medium whitespace-nowrap text-neutral-500">
-                  {fieldLabel(field, model)}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => {
-              const value = side === "A" ? row.before : row.after;
-              const changed = new Set(row.changes.map((change) => change.field));
-              const marker =
-                row.status === "added" ? "+" : row.status === "removed" ? "−" : row.status === "modified" ? "●" : "";
-              return (
-                <tr
-                  key={row.key}
-                  className={cn(
-                    "border-b",
-                    row.status === "added" && side === "B" && "bg-green-50",
-                    row.status === "removed" && side === "A" && "bg-red-50",
-                    row.status === "modified" && "bg-amber-50/60",
-                    !value && "bg-neutral-50 text-neutral-300"
-                  )}
-                >
-                  <td
-                    className={cn(
-                      "px-2 py-1.5 font-bold",
-                      row.status === "added" ? "text-green-600" : row.status === "removed" ? "text-red-600" : "text-amber-600"
-                    )}
-                  >
-                    {value ? marker : "·"}
-                  </td>
-                  {fields.map((field) => {
-                    const raw = value?.[field];
-                    const label = value ? displayFieldValue(model, field, raw, refMaps) : "—";
-                    const href = value ? relationHref(field, raw) : null;
-                    return (
-                      <td
-                        key={field}
-                        className={cn(
-                          "max-w-64 px-3 py-1.5",
-                          changed.has(field) && value && "font-medium text-amber-800 ring-1 ring-inset ring-amber-200"
-                        )}
-                        title={
-                          changed.has(field)
-                            ? `A: ${displayFieldValue(model, field, row.before?.[field], refMaps)}\nB: ${displayFieldValue(model, field, row.after?.[field], refMaps)}`
-                            : undefined
-                        }
-                      >
-                        {href && label !== "—" ? (
-                          <a href={href} target="_top" className="text-blue-600 hover:underline" title="Открыть">
-                            {label}
-                          </a>
-                        ) : (
-                          label
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
 function ComparisonInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const params = useSearchParams();
   const enabled = params.get("compare") === "1";
-  const panelParam = params.get("comparePanel");
-  const panel: "A" | "B" | null =
-    panelParam === "A" || panelParam === "B" ? panelParam : null;
   const sourceA = params.get("snapshotA") ?? "live";
   const sourceB = params.get("snapshotB") ?? "live";
   const onlyChanges = params.get("onlyChanges") === "1";
-  const syncScroll = params.get("syncScroll") !== "0";
-  const activeSource = panel === "B" ? sourceB : sourceA;
   const isAdminInterface = pathname === "/admin" || pathname.startsWith("/admin/");
   const [snapshots, setSnapshots] = React.useState<SnapshotOption[]>([]);
   const [creatingSnapshot, setCreatingSnapshot] = React.useState(false);
-  const frameA = React.useRef<HTMLIFrameElement>(null);
-  const frameB = React.useRef<HTMLIFrameElement>(null);
-  const [framesLoaded, setFramesLoaded] = React.useState(0);
+
+  const pathParts = pathname.split("/").filter(Boolean);
+  const section = pathParts[1] ?? "";
+  const isDetailRoute = pathParts.length >= 3;
+  const canCompareSection =
+    pathname.startsWith("/admin/") &&
+    section !== "export" &&
+    !isDetailRoute;
 
   const loadSnapshots = React.useCallback(async () => {
     if (!isAdminInterface) return [];
@@ -631,19 +492,21 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
         if (value == null) next.delete(key);
         else next.set(key, value);
       }
+      next.delete("comparePanel");
+      next.delete("syncScroll");
+      next.delete("snapshot");
       router.replace(`${pathname}?${next.toString()}`, { scroll: false });
     },
     [params, pathname, router]
   );
 
   React.useEffect(() => {
-    if (!enabled || panel) return;
+    if (!enabled) return;
     const onClick = (event: MouseEvent) => {
       const anchor = (event.target as HTMLElement).closest("a[href]") as HTMLAnchorElement | null;
       if (!anchor || anchor.target === "_blank" || anchor.target === "_top" || anchor.origin !== window.location.origin) return;
       const url = new URL(anchor.href);
       const parts = url.pathname.split("/").filter(Boolean);
-      // Детальные страницы (смета, дашборд проекта) — выходим из сравнения
       if (parts.length >= 3) {
         event.preventDefault();
         event.stopPropagation();
@@ -654,13 +517,16 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
       url.searchParams.set("snapshotA", sourceA);
       url.searchParams.set("snapshotB", sourceB);
       if (onlyChanges) url.searchParams.set("onlyChanges", "1");
+      url.searchParams.delete("comparePanel");
+      url.searchParams.delete("syncScroll");
+      url.searchParams.delete("snapshot");
       event.preventDefault();
       event.stopPropagation();
       router.push(`${url.pathname}${url.search}${url.hash}`);
     };
     document.addEventListener("click", onClick, true);
     return () => document.removeEventListener("click", onClick, true);
-  }, [enabled, panel, sourceA, sourceB, onlyChanges, router]);
+  }, [enabled, sourceA, sourceB, onlyChanges, router]);
 
   React.useEffect(() => {
     if (!enabled) return;
@@ -680,79 +546,18 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
     };
   }, [enabled]);
 
-  React.useEffect(() => {
-    if (!enabled || panel || !syncScroll) return;
-    const a = frameA.current?.contentDocument;
-    const b = frameB.current?.contentDocument;
-    if (!a || !b) return;
-    let syncing = false;
-    const scrollables = (document: Document) =>
-      [...document.querySelectorAll<HTMLElement>("*")].filter(
-        (element) => element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth
-      );
-    const wire = (from: Document, to: Document) => {
-      const handler = (event: Event) => {
-        if (syncing || !(event.target instanceof from.defaultView!.HTMLElement)) return;
-        const fromItems = scrollables(from);
-        const index = fromItems.indexOf(event.target);
-        const target = scrollables(to)[index];
-        if (!target) return;
-        syncing = true;
-        target.scrollTop = event.target.scrollTop;
-        target.scrollLeft = event.target.scrollLeft;
-        requestAnimationFrame(() => { syncing = false; });
-      };
-      from.addEventListener("scroll", handler, true);
-      return () => from.removeEventListener("scroll", handler, true);
-    };
-    const unwireA = wire(a, b);
-    const unwireB = wire(b, a);
-    return () => { unwireA(); unwireB(); };
-  }, [enabled, panel, syncScroll, framesLoaded]);
-
   const context = React.useMemo(
     () => ({
       enabled,
-      readOnly: enabled || activeSource !== "live",
+      readOnly: enabled,
       sourceA,
       sourceB,
-      activeSource,
+      activeSource: "live" as const,
       onlyChanges,
-      panel,
+      panel: null as "A" | "B" | null,
     }),
-    [enabled, activeSource, sourceA, sourceB, onlyChanges, panel]
+    [enabled, sourceA, sourceB, onlyChanges]
   );
-
-  if (panel) {
-    const pathParts = pathname.split("/").filter(Boolean);
-    const section = pathParts[1] ?? "";
-    const isDetailRoute = pathParts.length >= 3;
-    const canRenderSnapshotSection =
-      pathname.startsWith("/admin/") &&
-      section !== "cashflow" &&
-      section !== "export" &&
-      !isDetailRoute;
-    return (
-      <ComparisonContext.Provider value={context}>
-        <div className="flex h-screen min-h-0 min-w-0 flex-1 flex-col bg-neutral-50">
-          <div className="shrink-0 border-b bg-white px-4 py-2 text-xs font-medium text-neutral-600">
-            {panel}: {snapshotSourceLabel(activeSource, snapshots)} · только чтение
-          </div>
-          <div className="min-h-0 min-w-0 flex-1">
-            {canRenderSnapshotSection ? (
-              <SnapshotComparisonPanel
-                section={section}
-                side={panel}
-                sourceA={sourceA}
-                sourceB={sourceB}
-                onlyChanges={onlyChanges}
-              />
-            ) : children}
-          </div>
-        </div>
-      </ComparisonContext.Provider>
-    );
-  }
 
   if (!enabled) {
     return (
@@ -802,22 +607,6 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
       </ComparisonContext.Provider>
     );
   }
-
-  const panelUrl = (side: "A" | "B") => {
-    const next = new URLSearchParams(params.toString());
-    next.set("comparePanel", side);
-    next.set("snapshot", side === "A" ? sourceA : sourceB);
-    return `${pathname}?${next.toString()}`;
-  };
-
-  const pathParts = pathname.split("/").filter(Boolean);
-  const section = pathParts[1] ?? "";
-  const isDetailRoute = pathParts.length >= 3;
-  const useUnifiedCompare =
-    pathname.startsWith("/admin/") &&
-    section !== "cashflow" &&
-    section !== "export" &&
-    !isDetailRoute;
 
   return (
     <ComparisonContext.Provider value={context}>
@@ -871,18 +660,6 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
             />
             Только изменения
           </label>
-          {!useUnifiedCompare && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => replaceParams({ syncScroll: syncScroll ? "0" : null })}
-            >
-              {syncScroll ? <Link2 className="mr-1.5 h-4 w-4" /> : <Link2Off className="mr-1.5 h-4 w-4" />}
-              Скролл
-            </Button>
-          )}
           <Button
             type="button"
             variant="ghost"
@@ -895,7 +672,6 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
                 snapshotA: null,
                 snapshotB: null,
                 onlyChanges: null,
-                syncScroll: null,
               })
             }
           >
@@ -906,7 +682,11 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
           <div className="m-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             Выберите разные источники A и B.
           </div>
-        ) : useUnifiedCompare ? (
+        ) : !canCompareSection ? (
+          <div className="m-4 rounded-md border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-600">
+            Сравнение в этом разделе недоступно. Откройте список (проекты, работы, выплаты и т.д.).
+          </div>
+        ) : (
           <div className="min-h-0 min-w-0 flex-1">
             <UnifiedSnapshotComparison
               section={section}
@@ -916,11 +696,6 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
               labelA={snapshotSourceLabel(sourceA, snapshots)}
               labelB={snapshotSourceLabel(sourceB, snapshots)}
             />
-          </div>
-        ) : (
-          <div className={cn("grid min-h-0 flex-1 grid-cols-1 gap-px bg-neutral-300 lg:grid-cols-2")}>
-            <iframe ref={frameA} onLoad={() => setFramesLoaded((value) => value + 1)} title="Состояние A" src={panelUrl("A")} className="h-full min-h-[45vh] w-full bg-white" />
-            <iframe ref={frameB} onLoad={() => setFramesLoaded((value) => value + 1)} title="Состояние B" src={panelUrl("B")} className="h-full min-h-[45vh] w-full bg-white" />
           </div>
         )}
       </div>
