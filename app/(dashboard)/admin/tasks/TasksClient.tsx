@@ -62,7 +62,10 @@ export function TasksClient() {
       if (stored.sort) setSort(stored.sort);
     }
   );
-  usePersistedScroll(scrollRef, "tasks-table");
+  usePersistedScroll(scrollRef, "tasks-table", {
+    enabled: !isLoading && !!data,
+    signature: { fExecutor, fStatus, sort },
+  });
 
   const allRows = data ?? [];
 
@@ -108,7 +111,7 @@ export function TasksClient() {
   const statusOptions = Object.entries(TASK_STATUSES).map(([value, { label }]) => ({ value, label }));
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] min-h-0">
+    <div className="flex flex-col h-full min-h-0">
       <PageHeader title="Задачи" />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">

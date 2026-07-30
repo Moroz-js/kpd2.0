@@ -84,7 +84,10 @@ export function BankAccountsClient() {
       if (stored.sort) setSort(stored.sort);
     }
   );
-  usePersistedScroll(scrollRef, `bank-accounts-table:${activeTab}`);
+  usePersistedScroll(scrollRef, `bank-accounts-table:${activeTab}`, {
+    enabled: !isLoading && !!data,
+    signature: { activeTab, statusFilter, sort },
+  });
 
   const rows = React.useMemo(() => {
     let list = data ?? [];
@@ -125,7 +128,7 @@ export function BankAccountsClient() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] min-h-0">
+    <div className="flex flex-col h-full min-h-0">
       <PageHeader
         title="Банковские счета"
         actions={

@@ -91,6 +91,7 @@ type OtherExpense = {
 };
 
 type Props = {
+  stateScope: "admin" | "responsible" | "executor";
   isAdmin: boolean;
   userId: string;
   executorId: string | null;
@@ -336,9 +337,7 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
         )}
       </TableCell>
       <TableCell className={cn(cellClip, "whitespace-nowrap")}>
-        {!row.paymentStatus ? (
-          <span className="text-neutral-300">—</span>
-        ) : inlineActive === "plannedPayAt" ? (
+        {inlineActive === "plannedPayAt" ? (
           <input
             autoFocus
             type="date"
@@ -352,7 +351,7 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
             }}
             className="w-full h-6 rounded border border-blue-300 px-1 text-xs bg-blue-50 focus:outline-none cursor-pointer"
           />
-        ) : (
+        ) : isAdmin ? (
           <button
             type="button"
             className="text-xs text-neutral-600 hover:text-blue-700 hover:underline"
@@ -360,6 +359,10 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
           >
             {formatDateShort(row.plannedPayAt)}
           </button>
+        ) : (
+          <span className="text-xs text-neutral-600">
+            {formatDateShort(row.plannedPayAt)}
+          </span>
         )}
       </TableCell>
       <TableCell className={cn(cellClip, "text-right tabular-nums font-semibold whitespace-nowrap")}>
@@ -450,7 +453,7 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
   );
 });
 
-export function OtherExpensesClient({ isAdmin, userId, executorId, projects: projectsProp, executors: executorsProp, workTypes: workTypesProp, permanentExecutors: permanentExecutorsProp, bankAccounts: bankAccountsProp }: Props) {
+export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, projects: projectsProp, executors: executorsProp, workTypes: workTypesProp, permanentExecutors: permanentExecutorsProp, bankAccounts: bankAccountsProp }: Props) {
   const projects = React.useMemo(() => sortByNameRu(projectsProp), [projectsProp]);
   const executors = React.useMemo(() => sortByNameRu(executorsProp), [executorsProp]);
   const workTypes = React.useMemo(() => sortByNameRu(workTypesProp), [workTypesProp]);
@@ -492,7 +495,7 @@ export function OtherExpensesClient({ isAdmin, userId, executorId, projects: pro
   const [sort, setSort] = useState<{ field: SortField; dir: SortDir } | null>(null);
 
   usePersistedInterfaceState(
-    "other-expenses",
+    `other-expenses:${stateScope}`,
     {
       fYear,
       fMonth,
@@ -518,7 +521,21 @@ export function OtherExpensesClient({ isAdmin, userId, executorId, projects: pro
       if ("sort" in stored) setSort(stored.sort ?? null);
     }
   );
-  usePersistedScroll(scrollRef, "other-expenses-table");
+  usePersistedScroll(scrollRef, `other-expenses-table:${stateScope}`, {
+    enabled: !loading,
+    signature: {
+      fYear,
+      fMonth,
+      fPayWeek,
+      fProject,
+      fExecutor,
+      fWorkType,
+      fResponsible,
+      fWorkStatus,
+      fPayStatus,
+      sort,
+    },
+  });
 
   const fetchData = useCallback(async () => {
     const r = await fetch("/api/other-expenses");
@@ -599,7 +616,6 @@ export function OtherExpensesClient({ isAdmin, userId, executorId, projects: pro
   }
 
   function startInline(row: OtherExpense, field: "plannedPayAt" | "paidAt") {
-    if (field === "plannedPayAt" && !row.paymentStatus) return;
     if (field === "paidAt" && !row.paymentStatus) return;
     if (!isAdmin) return;
     setInlineEdit({ rowId: row.id, field });
@@ -884,7 +900,7 @@ export function OtherExpensesClient({ isAdmin, userId, executorId, projects: pro
   );
 
   return (
-    <div className="flex flex-col gap-4 h-[calc(100vh-3rem)] min-h-0">
+    <div className="flex flex-col gap-4 h-full min-h-0">
       <PageHeader title="Прочие траты" />
 
       {/* Toolbar */}

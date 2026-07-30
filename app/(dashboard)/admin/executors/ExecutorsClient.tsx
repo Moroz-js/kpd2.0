@@ -149,7 +149,21 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
       if (stored.sort) setSort(stored.sort);
     }
   );
-  usePersistedScroll(scrollRef, `executors-table:${mode}`);
+  usePersistedScroll(scrollRef, `executors-table:${mode}`, {
+    enabled: !isLoading && !!data,
+    signature: {
+      typeFilter,
+      workTypeFilter,
+      projectFilter,
+      responsibleFilter,
+      bankFilter,
+      recipientFilter,
+      companyStatusFilter,
+      statusFilter,
+      nameSearch,
+      sort,
+    },
+  });
 
   const projectOptions = React.useMemo(() => {
     const list = data ?? [];
@@ -326,7 +340,7 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
   );
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] min-h-0">
+    <div className="flex flex-col h-full min-h-0">
       <PageHeader
         title="Исполнители"
         actions={

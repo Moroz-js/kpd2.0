@@ -96,7 +96,10 @@ export function OrdersClient() {
       if (stored.sort) setSort(stored.sort);
     }
   );
-  usePersistedScroll(scrollRef, "orders-table");
+  usePersistedScroll(scrollRef, "orders-table", {
+    enabled: !isLoading && !!data,
+    signature: { companyFilter, clientFilter, projectFilter, statusFilter, sort },
+  });
 
   const companyOptions = React.useMemo(() => {
     const companies = Array.from(new Set((data ?? []).map((r) => r.company ?? "__empty__")));
@@ -162,7 +165,7 @@ export function OrdersClient() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] min-h-0">
+    <div className="flex flex-col h-full min-h-0">
       <PageHeader
         title="Заказы"
         actions={

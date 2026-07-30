@@ -226,6 +226,13 @@ export function ExecutorWizard({
                     value={accessEmail}
                     onChange={(e) => setAccessEmail(e.target.value)}
                   />
+                  {accessEmail.trim() &&
+                    accessEmail.trim().toLowerCase() !== contactEmail.trim().toLowerCase() && (
+                      <p className="text-xs text-amber-700">
+                        Поле &quot;Контакт email&quot; не перезаписывается автоматически. При
+                        необходимости исправьте его вручную.
+                      </p>
+                    )}
                 </div>
                 {accessEmail.trim() && (
                   <>
@@ -249,12 +256,6 @@ export function ExecutorWizard({
                         </Button>
                       </div>
                     </div>
-                    {accessEmail.trim().toLowerCase() !== contactEmail.trim().toLowerCase() && (
-                      <p className="text-xs text-amber-700">
-                        Поле &quot;Контакт email&quot; не перезаписывается автоматически. При
-                        необходимости исправьте его вручную.
-                      </p>
-                    )}
                   </>
                 )}
               </div>

@@ -53,7 +53,10 @@ export function ResponsiblesClient() {
       if (stored.sort) setSort(stored.sort);
     }
   );
-  usePersistedScroll(scrollRef, "responsibles-table");
+  usePersistedScroll(scrollRef, "responsibles-table", {
+    enabled: !isLoading && !!data,
+    signature: { statusFilter, sort },
+  });
 
   const rows = React.useMemo(() => {
     let list = data ?? [];
@@ -95,7 +98,7 @@ export function ResponsiblesClient() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] min-h-0">
+    <div className="flex flex-col h-full min-h-0">
       <PageHeader title="Руководители проекта" />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">

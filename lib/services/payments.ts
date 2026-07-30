@@ -9,6 +9,7 @@
  */
 import { prisma } from "@/lib/db";
 import { logActivity } from "@/lib/audit/log";
+import { parseLocalDateInput } from "@/lib/date-string";
 import { nearestPaymentDate } from "@/lib/iso-weeks";
 import { allocateEntityNumber, withNumberedTransaction } from "@/lib/services/entity-numbering";
 
@@ -192,9 +193,9 @@ export async function createManualPayment(
         paymentStatus: input.paymentStatus ?? "planned",
         bankAccountId,
         plannedPayAt: input.plannedPayAt
-          ? new Date(input.plannedPayAt)
+          ? parseLocalDateInput(input.plannedPayAt)
           : nearestPaymentDate(),
-        paidAt: input.paidAt ? new Date(input.paidAt) : null,
+        paidAt: input.paidAt ? parseLocalDateInput(input.paidAt) : null,
         comment: input.comment ?? null,
       },
     });
@@ -266,7 +267,7 @@ export async function updatePayment(
 
   // Каскад «Дата оплаты план» на привязанные работы
   if (patch.plannedPayAt !== undefined) {
-    const planDate = patch.plannedPayAt ? new Date(patch.plannedPayAt) : null;
+    const planDate = patch.plannedPayAt ? parseLocalDateInput(patch.plannedPayAt) : null;
     await propagatePlanDate(paymentId, planDate, userId);
   }
 

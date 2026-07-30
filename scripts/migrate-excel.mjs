@@ -92,6 +92,8 @@ const TASK_STATUS_MAP = {
 
 const DRY_RUN    = !process.argv.includes("--run");
 const PRODUCTION = process.argv.includes("--production");
+/** Только обновить URL договор/NDA/старая смета у исполнителей (без wipe БД). */
+const FIX_EXECUTOR_LINKS = process.argv.includes("--fix-executor-links");
 
 // Загружаем .env.production или .env в process.env
 (function loadEnv() {
@@ -161,6 +163,29 @@ const MONTH_MAP = {
   "09-Сентябрь": 9,"10-Октябрь": 10, "11-Ноябрь": 11,  "11-Нобярь": 11,
   "12-Декабрь": 12,
 };
+
+/** Сегменты специальностей (как WORK_TYPE_SEGMENTS в UI). */
+const SPECIALTY_SEGMENTS = new Set([
+  "IT",
+  "Аналитика",
+  "Видео",
+  "Визуал",
+  "Менеджмент",
+  "Продвижение",
+  "Сервисы",
+  "Текст",
+  "Транзитные платежи",
+  "Экспертиза",
+]);
+
+/** «Текст» / «Аналитика, Менеджмент» → JSON-массив сегментов для Settings. */
+function parseSpecialtySegments(raw) {
+  if (raw == null) return [];
+  return String(raw)
+    .split(/[,;]/)
+    .map((s) => s.trim())
+    .filter((s) => s && SPECIALTY_SEGMENTS.has(s));
+}
 
 // ─── TABLE FORMATTER ─────────────────────────────────────────────────────────
 
@@ -233,7 +258,7 @@ function section(title) {
 // dataOffset: сколько строк пропустить ПОСЛЕ заголовка до данных (обычно 1,
 //   для БД_Выставленные_работы = 2 — там строка аннотаций между заголовком и данными).
 //
-function readSheet(wb, sheetName, { identifyBy, dataOffset = 1 }) {
+function readSheet(wb, sheetName, { identifyBy, dataOffset = 1, linkFields = [] }) {
   const ws = wb.Sheets[sheetName];
   if (!ws) throw new Error(`Лист "${sheetName}" не найден в файле`);
 
@@ -257,6 +282,11 @@ function readSheet(wb, sheetName, { identifyBy, dataOffset = 1 }) {
 
   const headers = raw[headerIdx].map((h) => (h != null ? String(h).trim() : null));
   const dataStartIdx = headerIdx + dataOffset;
+  const linkCols = new Set(
+    headers
+      .map((h, j) => (h && linkFields.includes(h) ? j : -1))
+      .filter((j) => j >= 0)
+  );
 
   const rows = [];
   for (let i = dataStartIdx; i < raw.length; i++) {
@@ -265,7 +295,18 @@ function readSheet(wb, sheetName, { identifyBy, dataOffset = 1 }) {
     if (!row || row.every((v) => v === null || v === "")) continue;
     const obj = {};
     for (let j = 0; j < headers.length; j++) {
-      if (headers[j]) obj[headers[j]] = row[j] ?? null;
+      if (!headers[j]) continue;
+      let value = row[j] ?? null;
+      // Чипы/гиперссылки Excel: видимый текст ≠ URL (URL в cell.l.Target)
+      if (linkCols.has(j)) {
+        const addr = XLSX.utils.encode_cell({ r: i, c: j });
+        const cell = ws[addr];
+        const target = cell?.l?.Target ?? cell?.l?.Rel?.Target;
+        if (typeof target === "string" && target.trim()) {
+          value = target.trim();
+        }
+      }
+      obj[headers[j]] = value;
     }
     rows.push(obj);
   }
@@ -557,7 +598,11 @@ function mapCompanyStatus(raw) {
 }
 
 function extractExecutors(wb, userMap, bankMap, workTypeMap) {
-  const rows = readSheet(wb, "БД_Исполнители", { identifyBy: "Исполнитель" });
+  const rows = readSheet(wb, "БД_Исполнители", {
+    identifyBy: "Исполнитель",
+    // В Excel это чипы с гиперссылкой: текст = имя файла, URL = cell.l.Target
+    linkFields: ["договор", "NDA", "Старая смета"],
+  });
   const executors = [];
   const executorWorkTypes = [];
   const projectExecutors = [];
@@ -592,12 +637,16 @@ function extractExecutors(wb, userMap, bankMap, workTypeMap) {
     const accessEmail =
       str(r["Email для доступа"]) || (accessField === "закрыт" ? null : legacyEmail);
 
+    const specialtyRaw = str(r["Специальность"]);
+    const specialtySegments = parseSpecialtySegments(specialtyRaw);
+
     executors.push({
       name,
       companyStatus: mapCompanyStatus(str(r["Статус в компании"])),
       type: mapV(str(r["Тип"]), EXECUTOR_TYPE_MAP, "external"),
       recipientType: str(r["Тип получателя"]),
-      specialty: str(r["Специальность"]),
+      specialty: specialtyRaw,
+      specialties: specialtySegments.length ? JSON.stringify(specialtySegments) : null,
       contractFile: str(r["договор"]),
       ndaFile: str(r["NDA"]),
       inTgChat: str(r["В чате ТГ"])?.toLowerCase() === "да",
@@ -1188,10 +1237,16 @@ function previewExecutors({ executors, executorWorkTypes, projectExecutors, warn
     { key: "status",        label: "status",         max: 10 },
     { key: "recipientType", label: "recipientType",  max: 20 },
     { key: "_bankName",     label: "bankAccount →",  max: 24 },
+    { key: "ndaFile",       label: "NDA url",        max: 36 },
+    { key: "oldEstimateUrl",label: "old smeta",      max: 28 },
     { key: "_wtShort",      label: "workTypes",      max: 28 },
     { key: "_projCount",    label: "#proj",          max: 5  },
   ], { title: "executors", total: executors.length, warnings: warnings.slice(0, 5) });
   if (warnings.length > 5) console.log(`     ⋯ ещё ${warnings.length - 5} предупреждений`);
+  const withNda = executors.filter((e) => e.ndaFile && /^https?:\/\//i.test(e.ndaFile)).length;
+  const withOld = executors.filter((e) => e.oldEstimateUrl && /^https?:\/\//i.test(e.oldEstimateUrl)).length;
+  const withSpec = executors.filter((e) => e.specialties).length;
+  console.log(`  ↳ NDA с URL: ${withNda} · старая смета с URL: ${withOld} · specialties JSON: ${withSpec}`);
   console.log(`  ↳ executor_work_types: ${executorWorkTypes.length} связей`);
   console.log(`  ↳ project_executors:   ${projectExecutors.length} связей`);
   const pmCount = executors.filter((e) => e._isProjectManager).length;
@@ -1484,10 +1539,90 @@ function printSummary(all) {
     console.log(`  ℹ️  Режим: DRY RUN. БД не изменена.`);
     console.log(`  ▶  Dev:        node scripts/migrate-excel.mjs --run`);
     console.log(`  ▶  Production: node scripts/migrate-excel.mjs --run --production`);
+    console.log(`  ▶  Только URL исполнителей (без wipe):`);
+    console.log(`       node scripts/migrate-excel.mjs --fix-executor-links --run`);
+    console.log(`       node scripts/migrate-excel.mjs --fix-executor-links --run --production`);
   } else {
     console.log(`  ✅  Режим: ЗАПИСЬ В БД`);
   }
   console.log(line2);
+}
+
+/** Патч URL и специальностей исполнителей без полной перезаливки. */
+async function fixExecutorLinks(wb) {
+  const line = "═".repeat(62);
+  console.log(line);
+  console.log(`  FIX EXECUTORS  [${DRY_RUN ? "DRY RUN" : `ЗАПИСЬ${PRODUCTION ? " [PRODUCTION]" : " [DEV]"}`}]`);
+  console.log(line);
+  console.log(`  Файл: ${EXCEL_PATH}\n`);
+
+  const extracted = extractExecutors(wb, {}, {}, {});
+  const fromExcel = extracted.executors.filter(
+    (e) => e.contractFile || e.ndaFile || e.oldEstimateUrl || e.specialty || e.specialties
+  );
+  const withLinks = extracted.executors.filter((e) => e.contractFile || e.ndaFile || e.oldEstimateUrl).length;
+  const withSpec = extracted.executors.filter((e) => e.specialties).length;
+  console.log(`  В Excel со ссылками: ${withLinks} · со специальностями (JSON): ${withSpec}`);
+  previewExecutors(extracted);
+
+  if (DRY_RUN) {
+    console.log(`\n  ℹ️  DRY RUN. Для записи: --fix-executor-links --run`);
+    return;
+  }
+
+  if (PRODUCTION) {
+    console.log("\n  ⚠️  PRODUCTION: обновление исполнителей через 5 сек...");
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+
+  const dbUrl = process.env.DATABASE_URL ?? "";
+  const isPostgres = dbUrl.startsWith("postgresql://") || dbUrl.startsWith("postgres://");
+  if (isPostgres) {
+    switchSchemaProvider("postgresql", { generate: false });
+    process.on("exit", () => switchSchemaProvider("sqlite", { generate: false }));
+  }
+
+  const prisma = await createPrismaClient();
+  try {
+    const existing = await prisma.executor.findMany({
+      select: {
+        id: true,
+        name: true,
+        contractFile: true,
+        ndaFile: true,
+        oldEstimateUrl: true,
+        specialty: true,
+        specialties: true,
+      },
+    });
+    const byName = new Map(existing.map((e) => [normKey(e.name), e]));
+
+    let updated = 0;
+    let skipped = 0;
+    let missing = 0;
+    for (const e of fromExcel) {
+      const row = byName.get(normKey(e.name));
+      if (!row) {
+        missing++;
+        continue;
+      }
+      const data = {};
+      if (e.contractFile && e.contractFile !== row.contractFile) data.contractFile = e.contractFile;
+      if (e.ndaFile && e.ndaFile !== row.ndaFile) data.ndaFile = e.ndaFile;
+      if (e.oldEstimateUrl && e.oldEstimateUrl !== row.oldEstimateUrl) data.oldEstimateUrl = e.oldEstimateUrl;
+      if (e.specialty && e.specialty !== row.specialty) data.specialty = e.specialty;
+      if (e.specialties && e.specialties !== row.specialties) data.specialties = e.specialties;
+      if (!Object.keys(data).length) {
+        skipped++;
+        continue;
+      }
+      await prisma.executor.update({ where: { id: row.id }, data });
+      updated++;
+    }
+    console.log(`\n  ✅ Обновлено: ${updated} · без изменений: ${skipped} · не найдено в БД: ${missing}`);
+  } finally {
+    await prisma.$disconnect();
+  }
 }
 
 // ─── MAIN ────────────────────────────────────────────────────────────────────
@@ -1504,6 +1639,11 @@ async function main() {
 
   const wb = XLSX.readFile(EXCEL_PATH);
   console.log(`  Листов: ${wb.SheetNames.length}\n`);
+
+  if (FIX_EXECUTOR_LINKS) {
+    await fixExecutorLinks(wb);
+    return;
+  }
 
   // ── Извлекаем данные (порядок важен — каждый шаг строит lookup для следующего) ──
 
@@ -1864,6 +2004,7 @@ async function runMigration(prisma, all) {
         companyStatus: e.companyStatus,
         recipientType: e.recipientType,
         specialty: e.specialty,
+        specialties: e.specialties,
         contractFile: e.contractFile,
         ndaFile: e.ndaFile,
         inTgChat: e.inTgChat ?? false,

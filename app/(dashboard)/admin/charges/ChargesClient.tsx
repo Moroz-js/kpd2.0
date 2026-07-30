@@ -590,7 +590,21 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
       if ("sort" in stored) setSort(stored.sort ?? null);
     }
   );
-  usePersistedScroll(scrollRef, "charges-table");
+  usePersistedScroll(scrollRef, "charges-table", {
+    enabled: !loading,
+    signature: {
+      fBankAccount,
+      fOrder,
+      fStatus,
+      fClient,
+      fProject,
+      fWeek,
+      hidePaid,
+      groupBy,
+      collapsedGroups,
+      sort,
+    },
+  });
 
   const fetchData = useCallback(async () => {
     const r = await fetch("/api/charges");
@@ -902,7 +916,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
   );
 
   return (
-    <div className="flex flex-col gap-4 h-[calc(100vh-3rem)] min-h-0">
+    <div className="flex flex-col gap-4 h-full min-h-0">
       <PageHeader title="Начисления" />
 
       {/* Toolbar */}

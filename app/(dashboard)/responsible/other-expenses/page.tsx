@@ -21,6 +21,7 @@ export default async function Page() {
 
   return (
     <OtherExpensesClient
+      stateScope="responsible"
       isAdmin={isAdmin(user)}
       userId={user.id}
       executorId={user.executorId ?? null}

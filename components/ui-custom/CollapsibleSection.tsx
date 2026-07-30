@@ -1,38 +1,23 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useCallback } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { usePersistedState } from "@/components/PersistedInterfaceState";
 
 /**
- * Хук хранения свёрнутости секции ДП в localStorage.
- * Ключ: dp:section:<sectionId>, значения "expanded" / "collapsed".
- * Если значения нет — используется defaultExpanded.
+ * Хук хранения свёрнутости секции ДП.
+ * Если сохранённого значения нет — используется defaultExpanded.
  */
 export function useSectionCollapsed(sectionId: string, defaultExpanded = true) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
-
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(`dp:section:${sectionId}`);
-      if (stored === "expanded") setExpanded(true);
-      else if (stored === "collapsed") setExpanded(false);
-    } catch {
-      // localStorage недоступен (SSR/приватный режим) — остаёмся на дефолте
-    }
-  }, [sectionId]);
+  const [expanded, setExpanded] = usePersistedState(
+    `section:${sectionId}`,
+    defaultExpanded
+  );
 
   const toggle = useCallback(() => {
-    setExpanded((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(`dp:section:${sectionId}`, next ? "expanded" : "collapsed");
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  }, [sectionId]);
+    setExpanded((prev) => !prev);
+  }, [setExpanded]);
 
   return [expanded, toggle] as const;
 }

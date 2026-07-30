@@ -35,6 +35,7 @@ import { TASK_STATUSES, BADGE_TONE_CLASS } from "@/lib/statuses";
 import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner } from "@/lib/table-styles";
 import { WorksReviewTable } from "@/components/ui-custom/WorksReviewTable";
+import { usePersistedInterfaceState } from "@/components/PersistedInterfaceState";
 
 type TaskRow = {
   id: string;
@@ -80,6 +81,18 @@ export function TasksTab({ executorId, isAdmin, isOwner, isPermanent = true, onT
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<TaskRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TaskRow | null>(null);
+
+  usePersistedInterfaceState(
+    `executor:${executorId}:tasks`,
+    { subView },
+    (stored) => {
+      if (stored.subView === "tasks") {
+        setSubView("tasks");
+      } else if (stored.subView === "review" && (isAdmin || isPermanent)) {
+        setSubView("review");
+      }
+    }
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -169,6 +182,7 @@ export function TasksTab({ executorId, isAdmin, isOwner, isPermanent = true, onT
         <div className="flex-1 min-h-0 min-w-0 overflow-auto">
           <WorksReviewTable
             fetchUrl={`/api/executors/${executorId}/review-works`}
+            stateKey={`executor:${executorId}:review-works`}
             emptyText="Нет работ, где вы назначены ответственным."
           />
         </div>

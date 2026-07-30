@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { usePathname } from "next/navigation";
 
 const STORAGE_PREFIX = "kpd:interface-state:v1";
 
@@ -118,12 +117,23 @@ export function usePersistedState<T>(
 export function usePersistedScroll(
   ref: React.RefObject<HTMLElement | null>,
   key: string,
-  enabled = true
+  options: {
+    enabled?: boolean;
+    signature?: unknown;
+  } = {}
 ) {
+  const { enabled = true, signature: signatureValue = "" } = options;
+  const signature = serialize(signatureValue);
   const storageKey = useStorageKey(`scroll:${key}`);
 
   React.useEffect(() => {
     if (!enabled) return;
+    const signatureKey = signature || "__default__";
+    type ScrollPosition = { top: number; left: number };
+    type StoredScroll = {
+      positions: Record<string, ScrollPosition>;
+    };
+
     let element: HTMLElement | null = null;
     let bindTimeout: ReturnType<typeof setTimeout> | undefined;
     let saveTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -131,35 +141,83 @@ export function usePersistedScroll(
     let resizeObserver: ResizeObserver | undefined;
     let disposed = false;
     let restoring = false;
-    let userTookOver = false;
-    let ignoreScroll = false;
+    let targetReachedAt: number | null = null;
+    let userGestureUntil = 0;
+    let pointerDraggingScrollbar = false;
+    let touchScrolling = false;
+    let pollingPaused = false;
     const bindDeadline = Date.now() + 10_000;
-    const restoreDeadline = Date.now() + 20_000;
+    const restoreDeadline = Date.now() + 5_000;
 
-    const readStored = (): { top: number; left: number } => {
+    const normalizePosition = (value: unknown): ScrollPosition => {
+      const item =
+        value && typeof value === "object"
+          ? (value as { top?: unknown; left?: unknown })
+          : {};
+      return {
+        top:
+          typeof item.top === "number" && Number.isFinite(item.top)
+            ? Math.max(0, item.top)
+            : 0,
+        left:
+          typeof item.left === "number" && Number.isFinite(item.left)
+            ? Math.max(0, item.left)
+            : 0,
+      };
+    };
+
+    const readStore = (): StoredScroll => {
       try {
         const raw = window.localStorage.getItem(storageKey);
-        if (!raw) return { top: 0, left: 0 };
-        const parsed = deserialize<{ top?: number; left?: number }>(raw);
+        if (!raw) return { positions: {} };
+        const parsed = deserialize<{
+          positions?: Record<string, unknown>;
+          top?: number;
+          left?: number;
+          signature?: string;
+        }>(raw);
+        if (parsed.positions && typeof parsed.positions === "object") {
+          return {
+            positions: Object.fromEntries(
+              Object.entries(parsed.positions).map(([itemKey, value]) => [
+                itemKey,
+                normalizePosition(value),
+              ])
+            ),
+          };
+        }
+        // Миграция формата v1 с одной позицией.
         return {
-          top: Math.max(0, parsed.top ?? 0),
-          left: Math.max(0, parsed.left ?? 0),
+          positions: {
+            [parsed.signature || "__legacy__"]: normalizePosition(parsed),
+          },
         };
       } catch {
-        return { top: 0, left: 0 };
+        return { positions: {} };
       }
     };
 
-    let stored = readStored();
+    const readTarget = (): ScrollPosition => {
+      const positions = readStore().positions;
+      return (
+        positions[signatureKey] ??
+        positions.__legacy__ ??
+        { top: 0, left: 0 }
+      );
+    };
 
-    const writeStored = (top: number, left: number) => {
-      stored = { top, left };
+    const writePosition = (position: ScrollPosition) => {
       try {
-        window.localStorage.setItem(storageKey, serialize(stored));
+        const store = readStore();
+        store.positions[signatureKey] = normalizePosition(position);
+        window.localStorage.setItem(storageKey, serialize(store));
       } catch {
         // Storage can be disabled or full.
       }
     };
+
+    const target = readTarget();
+    let lastConfirmedPosition = target;
 
     const stopRestore = () => {
       restoring = false;
@@ -167,88 +225,144 @@ export function usePersistedScroll(
       pollTimeout = undefined;
       resizeObserver?.disconnect();
       resizeObserver = undefined;
+      targetReachedAt = null;
+      pollingPaused = false;
     };
 
-    const saveFromElement = (reason: "scroll" | "unmount" | "pagehide") => {
+    const captureConfirmedPosition = () => {
       if (!element) return;
-      const top = element.scrollTop;
-      const left = element.scrollLeft;
-
-      // Не затираем валидную позицию нулём, пока контент не готов / идёт restore
-      if (reason !== "scroll") {
-        if (restoring && !userTookOver) return;
-        if (
-          !userTookOver &&
-          top <= 1 &&
-          left <= 1 &&
-          (stored.top > 1 || stored.left > 1)
-        ) {
-          return;
-        }
-      }
-      if (restoring) return;
-
-      writeStored(top, left);
+      lastConfirmedPosition = {
+        top: Math.max(0, element.scrollTop),
+        left: Math.max(0, element.scrollLeft),
+      };
     };
 
     const tryRestore = () => {
-      if (disposed || userTookOver || !element) {
+      if (disposed || !element) {
         stopRestore();
         return;
       }
-      const { top, left } = stored;
+      const { top, left } = target;
       if (top <= 0 && left <= 0) {
         stopRestore();
         return;
       }
 
       restoring = true;
-      ignoreScroll = true;
-      element.scrollTo({ top, left, behavior: "auto" });
-      requestAnimationFrame(() => {
-        ignoreScroll = false;
-      });
-
       const maxTop = Math.max(0, element.scrollHeight - element.clientHeight);
       const maxLeft = Math.max(0, element.scrollWidth - element.clientWidth);
       const canReach = maxTop + 1 >= top && maxLeft + 1 >= left;
+      const nextTop = Math.min(top, maxTop);
+      const nextLeft = Math.min(left, maxLeft);
+      element.scrollTo({ top: nextTop, left: nextLeft, behavior: "auto" });
       const atTarget =
         Math.abs(element.scrollTop - top) <= 2 &&
         Math.abs(element.scrollLeft - left) <= 2;
 
-      // Пока контент ниже цели — ждём рост scrollHeight (не считаем clamp=0 успехом)
       if (canReach && atTarget) {
-        stopRestore();
+        if (targetReachedAt === null) targetReachedAt = Date.now();
+        // Виртуализатор может перемерить строки и временно вернуть scrollTop в 0.
+        // Считаем restore завершённым только после устойчивой позиции.
+        if (
+          Date.now() >= restoreDeadline ||
+          Date.now() - targetReachedAt >= 600
+        ) {
+          stopRestore();
+        }
         return;
       }
+      targetReachedAt = null;
+
       if (Date.now() >= restoreDeadline) {
-        stopRestore();
+        // Прекращаем активный polling, но оставляем ResizeObserver: поздняя
+        // revalidation снова вызовет restore, когда таблица вырастет.
+        pollingPaused = true;
+        clearTimeout(pollTimeout);
+        pollTimeout = undefined;
       }
     };
 
-    const onUserInteract = () => {
-      if (!userTookOver) {
-        userTookOver = true;
-        stopRestore();
+    const beginUserScroll = () => {
+      userGestureUntil = performance.now() + 1_000;
+      if (restoring) stopRestore();
+    };
+
+    const onWheel = () => beginUserScroll();
+    const onTouchStart = () => {
+      touchScrolling = true;
+      beginUserScroll();
+    };
+    const onTouchEnd = () => {
+      touchScrolling = false;
+      userGestureUntil = performance.now() + 250;
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        [
+          "ArrowDown",
+          "ArrowUp",
+          "ArrowLeft",
+          "ArrowRight",
+          "PageDown",
+          "PageUp",
+          "Home",
+          "End",
+          " ",
+        ].includes(event.key)
+      ) {
+        beginUserScroll();
       }
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (!element) return;
+      const rect = element.getBoundingClientRect();
+      const onVerticalScrollbar =
+        element.offsetWidth > element.clientWidth &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom &&
+        event.clientX >= rect.left + element.clientWidth;
+      const onHorizontalScrollbar =
+        element.offsetHeight > element.clientHeight &&
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top + element.clientHeight;
+      if (onVerticalScrollbar || onHorizontalScrollbar) {
+        pointerDraggingScrollbar = true;
+        beginUserScroll();
+      }
+    };
+    const onPointerUp = () => {
+      if (!pointerDraggingScrollbar) return;
+      pointerDraggingScrollbar = false;
+      userGestureUntil = performance.now() + 250;
     };
 
     const onScroll = () => {
-      // Программный scrollTo игнорируем; любой другой скролл (в т.ч. scrollbar) — жест пользователя
-      if (ignoreScroll) return;
+      const confirmedUserScroll =
+        pointerDraggingScrollbar ||
+        touchScrolling ||
+        performance.now() <= userGestureUntil;
       if (restoring) {
-        userTookOver = true;
-        stopRestore();
+        if (confirmedUserScroll) {
+          stopRestore();
+          captureConfirmedPosition();
+        }
+        return;
       }
+      if (!confirmedUserScroll) return;
+      captureConfirmedPosition();
       clearTimeout(saveTimeout);
-      saveTimeout = setTimeout(() => saveFromElement("scroll"), 120);
+      saveTimeout = setTimeout(() => writePosition(lastConfirmedPosition), 120);
     };
 
     const startRestore = () => {
-      if (stored.top <= 0 && stored.left <= 0) return;
+      if (target.top <= 0 && target.left <= 0) {
+        element?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+        return;
+      }
       restoring = true;
       resizeObserver = new ResizeObserver(() => {
-        if (!restoring || userTookOver || disposed) return;
+        if (!restoring || disposed) return;
         tryRestore();
       });
       if (element) {
@@ -258,13 +372,13 @@ export function usePersistedScroll(
         }
       }
       const poll = () => {
-        if (!restoring || disposed || userTookOver) return;
+        if (!restoring || disposed || pollingPaused) return;
         tryRestore();
-        if (restoring) pollTimeout = setTimeout(poll, 100);
+        if (restoring && !pollingPaused) pollTimeout = setTimeout(poll, 100);
       };
       requestAnimationFrame(() => {
         tryRestore();
-        if (restoring) pollTimeout = setTimeout(poll, 100);
+        if (restoring && !pollingPaused) pollTimeout = setTimeout(poll, 100);
       });
     };
 
@@ -277,33 +391,37 @@ export function usePersistedScroll(
       }
 
       element.addEventListener("scroll", onScroll, { passive: true });
-      element.addEventListener("wheel", onUserInteract, { passive: true });
-      element.addEventListener("pointerdown", onUserInteract, { passive: true });
-      element.addEventListener("touchstart", onUserInteract, { passive: true });
-      element.addEventListener("keydown", onUserInteract);
+      element.addEventListener("wheel", onWheel, { passive: true });
+      element.addEventListener("touchstart", onTouchStart, { passive: true });
+      element.addEventListener("touchend", onTouchEnd, { passive: true });
+      element.addEventListener("keydown", onKeyDown);
+      window.addEventListener("pointerdown", onPointerDown, true);
+      window.addEventListener("pointerup", onPointerUp, true);
 
       startRestore();
     };
 
     bind();
-    const onPageHide = () => saveFromElement("pagehide");
+    const onPageHide = () => writePosition(lastConfirmedPosition);
     window.addEventListener("pagehide", onPageHide);
 
     return () => {
+      writePosition(lastConfirmedPosition);
       disposed = true;
       clearTimeout(bindTimeout);
-      clearTimeout(saveTimeout);
       clearTimeout(pollTimeout);
-      saveFromElement("unmount");
+      clearTimeout(saveTimeout);
       stopRestore();
       element?.removeEventListener("scroll", onScroll);
-      element?.removeEventListener("wheel", onUserInteract);
-      element?.removeEventListener("pointerdown", onUserInteract);
-      element?.removeEventListener("touchstart", onUserInteract);
-      element?.removeEventListener("keydown", onUserInteract);
+      element?.removeEventListener("wheel", onWheel);
+      element?.removeEventListener("touchstart", onTouchStart);
+      element?.removeEventListener("touchend", onTouchEnd);
+      element?.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("pointerup", onPointerUp, true);
       window.removeEventListener("pagehide", onPageHide);
     };
-  }, [ref, storageKey, enabled]);
+  }, [ref, storageKey, enabled, signature]);
 }
 
 export function PersistedDashboardMain({
@@ -311,16 +429,9 @@ export function PersistedDashboardMain({
 }: {
   children: React.ReactNode;
 }) {
-  const pathname = usePathname();
-  const ref = React.useRef<HTMLElement>(null);
-  usePersistedScroll(ref, `page:${pathname}`);
-
   return (
-    <main
-      ref={ref}
-      className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden bg-neutral-50"
-    >
-      <div className="p-6">{children}</div>
+    <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden bg-neutral-50">
+      <div className="h-full p-6">{children}</div>
     </main>
   );
 }

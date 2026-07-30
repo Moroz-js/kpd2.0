@@ -8,13 +8,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -25,6 +18,7 @@ import { WorkTypesMultiSelect } from "@/components/ui-custom/WorkTypesMultiSelec
 import { RecipientTypesPicker } from "@/components/ui-custom/RecipientTypesPicker";
 import { EXECUTOR_TYPES, WORK_TYPE_SEGMENTS, parseCompanyStatus, serializeCompanyStatus } from "@/lib/statuses";
 import { parseRecipientTypes } from "@/lib/executor-recipient-type";
+import { parseExecutorSpecialties } from "@/lib/executor-specialties";
 import { CompanyStatusPicker } from "@/components/ui-custom/CompanyStatusPicker";
 import {
   canBeResponsible,
@@ -57,6 +51,7 @@ type ExecutorDetail = {
   requisites: string | null;
   recipientType: string | null;
   defaultBankAccountId: string | null;
+  specialty: string | null;
   specialties: string | null;
   contractFile: string | null;
   ndaFile: string | null;
@@ -116,13 +111,9 @@ export function SettingsTab({
   const [defaultBankAccountId, setDefaultBankAccountId] = useState(
     executor.defaultBankAccountId ?? ""
   );
-  const [selectedSpecialties, setSelectedSpecialties] = useState<string[]>(() => {
-    try {
-      return JSON.parse(executor.specialties ?? "[]");
-    } catch {
-      return [];
-    }
-  });
+  const [selectedSpecialties, setSelectedSpecialties] = useState<string[]>(() =>
+    parseExecutorSpecialties(executor.specialties, executor.specialty)
+  );
   const [selectedWorkTypeIds, setSelectedWorkTypeIds] = useState<string[]>(
     executor.executorWorkTypes.map((ewt) => ewt.workType.id)
   );
@@ -135,13 +126,13 @@ export function SettingsTab({
   const [loadingPlanProjects, setLoadingPlanProjects] = useState(true);
   const [saving, setSaving] = useState(false);
   const [togglingAccess, setTogglingAccess] = useState(false);
-  const [accessDialogOpen, setAccessDialogOpen] = useState(false);
-  const [grantAccessEmail, setGrantAccessEmail] = useState(
-    executor.accessEmail ?? executor.user?.email ?? ""
-  );
+  const [grantAccessEmail, setGrantAccessEmail] = useState(executor.accessEmail ?? "");
   const hasAccess = Boolean(
     executor.accessEmail?.trim() && !executor.accessRevokedAt && executor.user?.isActive
   );
+  const accessEmailDiffersFromContact =
+    Boolean(grantAccessEmail.trim()) &&
+    grantAccessEmail.trim().toLowerCase() !== contactEmail.trim().toLowerCase();
 
   // Сброс пароля администратором
   const [adminResettingPassword, setAdminResettingPassword] = useState(false);
@@ -177,7 +168,7 @@ export function SettingsTab({
     setCompanyStatuses(parseCompanyStatus(executor.companyStatus));
     setContacts(executor.contacts ?? "");
     setContactEmail(executor.contactEmail ?? "");
-    setGrantAccessEmail(executor.accessEmail ?? executor.user?.email ?? "");
+    setGrantAccessEmail(executor.accessEmail ?? "");
     setRequisites(executor.requisites ?? "");
     setNote(executor.note ?? "");
     setContractFile(executor.contractFile ?? "");
@@ -189,11 +180,7 @@ export function SettingsTab({
     setIsResponsible(executor.isResponsible ?? false);
     setIsUserAdmin(executor.user ? executor.user.role === "admin" : false);
     setSelectedWorkTypeIds(executor.executorWorkTypes.map((ewt) => ewt.workType.id));
-    try {
-      setSelectedSpecialties(JSON.parse(executor.specialties ?? "[]"));
-    } catch {
-      setSelectedSpecialties([]);
-    }
+    setSelectedSpecialties(parseExecutorSpecialties(executor.specialties, executor.specialty));
   }, [executor]);
 
   useEffect(() => {
@@ -212,7 +199,7 @@ export function SettingsTab({
 
   async function handleToggleAccess() {
     if (!hasAccess) {
-      setAccessDialogOpen(true);
+      await handleGrantAccess();
       return;
     }
     setTogglingAccess(true);
@@ -221,6 +208,7 @@ export function SettingsTab({
         method: "DELETE",
       });
       if (!r.ok) throw new Error();
+      setGrantAccessEmail("");
       toast.success("Доступ отозван");
       onChanged();
     } catch {
@@ -252,7 +240,6 @@ export function SettingsTab({
       if (!r.ok) throw new Error(body.error ?? "Не удалось дать доступ");
       toast.success("Доступ выдан");
       if (body.warning) toast.warning(body.warning);
-      setAccessDialogOpen(false);
       onChanged();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Не удалось дать доступ");
@@ -279,6 +266,7 @@ export function SettingsTab({
         recipientTypes,
         defaultBankAccountId: defaultBankAccountId || null,
         specialties: JSON.stringify(selectedSpecialties),
+        specialty: selectedSpecialties.length ? selectedSpecialties.join(", ") : null,
         isResponsible: canBeResponsible(executorType) ? isResponsible : false,
         workTypeIds: selectedWorkTypeIds,
       };
@@ -396,14 +384,44 @@ export function SettingsTab({
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
-                      setAccessDialogOpen(true);
+                      void handleGrantAccess();
                     }
                   }}
                   placeholder="email@example.com"
                   disabled={executorArchived || togglingAccess}
                 />
               )}
+              {accessEmailDiffersFromContact && (
+                <p className="text-xs text-amber-700">
+                  Поле &quot;Контакт email&quot; не перезаписывается автоматически. При необходимости
+                  исправьте его вручную.
+                </p>
+              )}
             </div>
+            {!hasAccess && !executor.user && (
+              <div className="space-y-1.5">
+                <Label htmlFor="grantPassword">Пароль *</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="grantPassword"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="font-mono"
+                    disabled={executorArchived || togglingAccess}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={() => setPassword(generatePassword())}
+                    title="Сгенерировать"
+                    disabled={executorArchived || togglingAccess}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <div>
                 <span
@@ -726,67 +744,6 @@ export function SettingsTab({
           </Button>
         </div>
       )}
-
-      <Dialog open={accessDialogOpen} onOpenChange={setAccessDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Дать доступ</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="grantAccessEmail">Email для доступа *</Label>
-              <Input
-                id="grantAccessEmail"
-                type="email"
-                value={grantAccessEmail}
-                onChange={(e) => setGrantAccessEmail(e.target.value)}
-                placeholder="executor@example.com"
-              />
-            </div>
-            {!executor.user && (
-              <div className="space-y-1.5">
-                <Label htmlFor="grantPassword">Пароль *</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="grantPassword"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="font-mono"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={() => setPassword(generatePassword())}
-                    title="Сгенерировать"
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            )}
-            {grantAccessEmail.trim().toLowerCase() !== contactEmail.trim().toLowerCase() && (
-              <p className="text-xs text-amber-700">
-                Поле &quot;Контакт email&quot; не перезаписывается автоматически. При необходимости
-                исправьте его вручную.
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setAccessDialogOpen(false)}
-              disabled={togglingAccess}
-            >
-              Отмена
-            </Button>
-            <Button type="button" onClick={handleGrantAccess} disabled={togglingAccess}>
-              {togglingAccess ? "Выдача..." : "Дать доступ"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
     </div>
   );

@@ -197,12 +197,22 @@ export function ProjectsClient({ scope }: { scope: "all" | "mine" }) {
       if (stored.activeTab !== undefined) setActiveTab(stored.activeTab);
     }
   );
-  usePersistedScroll(scrollRef, `projects-table:${scope}:${activeTab}`);
+  usePersistedScroll(scrollRef, `projects-table:${scope}:${activeTab}`, {
+    enabled: !isLoading && !!data,
+    signature: {
+      responsibleFilter,
+      statusFilter,
+      clientFilter,
+      typeFilter,
+      sort,
+      activeTab,
+    },
+  });
   const detailHref = (id: string) =>
     isAdmin ? `/admin/projects/${id}` : `/responsible/projects/${id}`;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] min-h-0">
+    <div className="flex flex-col h-full min-h-0">
       <PageHeader
         title="Проекты"
         actions={

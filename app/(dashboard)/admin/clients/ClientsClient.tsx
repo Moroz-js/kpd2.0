@@ -78,7 +78,10 @@ export function ClientsClient() {
       if (stored.sort) setSort(stored.sort);
     }
   );
-  usePersistedScroll(scrollRef, "clients-table");
+  usePersistedScroll(scrollRef, "clients-table", {
+    enabled: !isLoading && !!data,
+    signature: { companyFilter, statusFilter, sort },
+  });
 
   const departmentUsage = React.useMemo(() => {
     const counts: Record<string, number> = {};
@@ -141,7 +144,7 @@ export function ClientsClient() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] min-h-0">
+    <div className="flex flex-col h-full min-h-0">
       <PageHeader
         title="Клиенты"
         actions={

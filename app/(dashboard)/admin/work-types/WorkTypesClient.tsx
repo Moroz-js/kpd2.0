@@ -83,7 +83,17 @@ export function WorkTypesClient() {
       if (stored.sort) setSort(stored.sort);
     }
   );
-  usePersistedScroll(scrollRef, "work-types-table");
+  usePersistedScroll(scrollRef, "work-types-table", {
+    enabled: !isLoading && !!data,
+    signature: {
+      segmentFilter,
+      projectTypeFilter,
+      sourceFilter,
+      statusFilter,
+      usageFilter,
+      sort,
+    },
+  });
 
   const segmentUsage = React.useMemo(() => {
     const counts: Record<string, number> = {};
@@ -152,7 +162,7 @@ export function WorkTypesClient() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] min-h-0">
+    <div className="flex flex-col h-full min-h-0">
       <PageHeader
         title="Виды работ"
         actions={

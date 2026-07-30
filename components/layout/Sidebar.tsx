@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
 import { useState, useCallback } from "react";
 import { toast } from "sonner";
+import { usePersistedState } from "@/components/PersistedInterfaceState";
 
 type NavItem = {
   label: string;
@@ -73,29 +74,12 @@ const ROLE_LABELS: Record<string, string> = {
   executor: "Исполнитель",
 };
 
-const SIDEBAR_STORAGE_KEY = "kpd:sidebar";
-
 function useSidebarCollapsed() {
-  const [collapsed, setCollapsed] = useState(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      return localStorage.getItem(SIDEBAR_STORAGE_KEY) === "collapsed";
-    } catch {
-      return false;
-    }
-  });
+  const [collapsed, setCollapsed] = usePersistedState("sidebar", false);
 
   const toggle = useCallback(() => {
-    setCollapsed((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(SIDEBAR_STORAGE_KEY, next ? "collapsed" : "expanded");
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  }, []);
+    setCollapsed((prev) => !prev);
+  }, [setCollapsed]);
 
   return [collapsed, toggle] as const;
 }

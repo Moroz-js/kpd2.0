@@ -37,6 +37,7 @@ import {
 import { VACATION_STATUSES, BADGE_TONE_CLASS } from "@/lib/statuses";
 import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner } from "@/lib/table-styles";
+import { usePersistedInterfaceState } from "@/components/PersistedInterfaceState";
 import {
   Select,
   SelectContent,
@@ -81,11 +82,26 @@ function VacationStatusBadge({ status }: { status: string }) {
   );
 }
 
-function SharedVacationCalendar() {
+function SharedVacationCalendar({ executorId }: { executorId: string }) {
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState(currentYear);
   const [rows, setRows] = useState<CalendarRow[]>([]);
   const [loading, setLoading] = useState(true);
+
+  usePersistedInterfaceState(
+    `executor:${executorId}:vacations-calendar`,
+    { year },
+    (stored) => {
+      if (
+        typeof stored.year === "number" &&
+        Number.isInteger(stored.year) &&
+        stored.year >= currentYear - 1 &&
+        stored.year <= currentYear + 1
+      ) {
+        setYear(stored.year);
+      }
+    }
+  );
 
   const allWeeks = React.useMemo(() => isoWeeksOfYear(year), [year]);
   const monthGroups = React.useMemo(() => isoWeekMonthGroups(year), [year]);
@@ -98,12 +114,20 @@ function SharedVacationCalendar() {
   );
 
   useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
-    fetch(`/api/vacations?year=${year}`)
+    fetch(`/api/vacations?year=${year}`, { signal: controller.signal })
       .then((r) => r.json())
-      .then(setRows)
-      .catch(() => setRows([]))
-      .finally(() => setLoading(false));
+      .then((data: CalendarRow[]) => {
+        if (!controller.signal.aborted) setRows(data);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setRows([]);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
   }, [year]);
 
   const thWeek =
@@ -359,7 +383,7 @@ export function VacationsTab({ executorId, isAdmin, isOwner }: Props) {
       {/* Общий календарь */}
       <div>
         <h3 className="text-sm font-semibold text-neutral-800 mb-2">Общий график отпусков</h3>
-        <SharedVacationCalendar />
+        <SharedVacationCalendar executorId={executorId} />
       </div>
       </div>
 

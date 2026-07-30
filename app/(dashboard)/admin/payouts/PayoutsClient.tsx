@@ -371,7 +371,21 @@ export function PayoutsClient() {
       if (stored.sort) setSort(stored.sort);
     }
   );
-  usePersistedScroll(scrollRef, "payouts-table");
+  usePersistedScroll(scrollRef, "payouts-table", {
+    enabled: !isLoading && !!data,
+    signature: {
+      periodYearFilter,
+      periodMonthFilter,
+      weekFilter,
+      executorFilter,
+      statusFilter,
+      bankFilter,
+      smetaFilter,
+      groupBy,
+      collapsedGroups,
+      sort,
+    },
+  });
 
   function compareRows(a: Row, b: Row): number {
     for (const s of sort) {
@@ -716,7 +730,7 @@ export function PayoutsClient() {
   function activeSortDir(): SortDir { return sort[0]?.dir ?? "desc"; }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] min-h-0">
+    <div className="flex flex-col h-full min-h-0">
       <PageHeader title="Выплаты" />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">

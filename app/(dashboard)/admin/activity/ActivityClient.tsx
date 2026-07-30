@@ -98,7 +98,6 @@ export function ActivityClient() {
       if (stored.userFilter) setUserFilter(stored.userFilter);
     }
   );
-  usePersistedScroll(scrollRef, "activity-list");
 
   const { data: users } = useSWR<UserOption[]>("/api/users", fetcher);
 
@@ -110,6 +109,10 @@ export function ActivityClient() {
     `/api/activity?${params}`,
     fetcher
   );
+  usePersistedScroll(scrollRef, "activity-list", {
+    enabled: !!data,
+    signature: { page, entityType, userFilter },
+  });
 
   const userOptions = Array.from(
     new Map((users ?? []).map((u) => [u.fullName, { value: u.id, label: u.fullName }])).values()
@@ -127,7 +130,7 @@ export function ActivityClient() {
   }
 
   return (
-    <div className="flex flex-col gap-4 h-[calc(100vh-3rem)] min-h-0">
+    <div className="flex flex-col gap-4 h-full min-h-0">
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-xl font-semibold">История действий</h1>
         <div className="flex flex-wrap items-center gap-2">

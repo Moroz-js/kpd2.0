@@ -23,6 +23,8 @@ import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ProjectCashflowChart } from "@/components/ui-custom/ProjectCashflowChart";
 import { WorksReviewTable } from "@/components/ui-custom/WorksReviewTable";
+import { usePersistedInterfaceState } from "@/components/PersistedInterfaceState";
+import { useComparison } from "@/components/ComparisonProvider";
 
 const fetcher = (url: string) => fetch(url).then(r => r.json());
 
@@ -181,6 +183,14 @@ type DashboardData = {
   availableWorkTypes: { id: string; name: string }[];
 };
 
+const CHANGED_CELL_CLASS = "bg-amber-100/80 font-medium text-amber-950";
+
+function planCellDisplay(value: string | null): string {
+  if (value === null) return "·";
+  const number = parseFloat(value);
+  return Number.isNaN(number) ? "·" : fmt(number);
+}
+
 /** Спец-записи «Пока не известен» (вид работ/исполнитель) определяются по имени. */
 function isUnknownName(name: string): boolean {
   return /не\s*извест/i.test(name);
@@ -195,6 +205,12 @@ type EditingCell = {
   value: string;
   lineId: string | null;
 };
+
+function restoreStringSet(value: unknown): Set<string> | null {
+  const values = value instanceof Set ? [...value] : Array.isArray(value) ? value : null;
+  if (!values) return null;
+  return new Set(values.filter((item): item is string => typeof item === "string"));
+}
 
 function AddPlanLineDialog({
   open,
@@ -311,6 +327,7 @@ function PlanCell({
   year,
   week,
   onUpdate,
+  changed,
 }: {
   value: string | null;
   lineId: string | null;
@@ -320,6 +337,7 @@ function PlanCell({
   year: number;
   week: number;
   onUpdate: () => void;
+  changed?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? "");
@@ -361,7 +379,8 @@ function PlanCell({
         "w-full h-full min-h-[22px] flex items-center justify-end px-1 cursor-pointer tabular-nums select-none",
         saving && "opacity-50",
         num !== null && num !== 0 ? "text-neutral-800" : "text-neutral-300",
-        "hover:bg-neutral-100/70"
+        "hover:bg-neutral-100/70",
+        changed && CHANGED_CELL_CLASS
       )}
       onClick={() => { setDraft(value ?? ""); setEditing(true); }}
     >
@@ -371,6 +390,7 @@ function PlanCell({
 }
 
 export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { projectId: string; isAdmin: boolean; canManagePlan?: boolean }) {
+  const { panel, sourceA, sourceB, onlyChanges } = useComparison();
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState(currentYear);
   const [addOpen, setAddOpen] = useState(false);
@@ -385,6 +405,42 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
   // Раскрытие видов работ внутри блоков (по умолчанию все свёрнуты)
   const [expandedExpenseWT, setExpandedExpenseWT] = useState<Set<string>>(new Set());
   const [expandedPlanWT, setExpandedPlanWT] = useState<Set<string>>(new Set());
+  const [compareResult, setCompareResult] = useState<{
+    key: string;
+    data: DashboardData;
+  } | null>(null);
+  const [compareError, setCompareError] = useState<{
+    key: string;
+    message: string;
+  } | null>(null);
+  const otherSource = panel === "A" ? sourceB : sourceA;
+  const compareRequestKey = panel
+    ? `${projectId}\0${year}\0${otherSource || "live"}`
+    : null;
+  const compareData =
+    compareResult?.key === compareRequestKey ? compareResult.data : null;
+
+  usePersistedInterfaceState(
+    `project:${projectId}:dashboard`,
+    { year, showOldWeeks, expandedExpenseWT, expandedPlanWT },
+    (stored) => {
+      if (
+        typeof stored.year === "number" &&
+        Number.isInteger(stored.year) &&
+        stored.year >= currentYear - 1 &&
+        stored.year <= currentYear + 1
+      ) {
+        setYear(stored.year);
+      }
+      if (typeof stored.showOldWeeks === "boolean") {
+        setShowOldWeeks(stored.showOldWeeks);
+      }
+      const expenseWorkTypes = restoreStringSet(stored.expandedExpenseWT);
+      if (expenseWorkTypes) setExpandedExpenseWT(expenseWorkTypes);
+      const planWorkTypes = restoreStringSet(stored.expandedPlanWT);
+      if (planWorkTypes) setExpandedPlanWT(planWorkTypes);
+    }
+  );
 
   const toggleSetItem = (setter: React.Dispatch<React.SetStateAction<Set<string>>>) => (id: string) =>
     setter(prev => {
@@ -420,7 +476,39 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
     fetcher
   );
 
+  React.useEffect(() => {
+    if (!panel || !compareRequestKey) return;
+    const controller = new AbortController();
+    const query = new URLSearchParams({
+      year: String(year),
+      source: otherSource || "live",
+    });
+    fetch(`/api/projects/${projectId}/dashboard?${query.toString()}`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Не удалось загрузить данные для сравнения");
+        return (await response.json()) as DashboardData;
+      })
+      .then((otherData) => {
+        setCompareResult({ key: compareRequestKey, data: otherData });
+        setCompareError(null);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setCompareResult(null);
+        setCompareError({
+          key: compareRequestKey,
+          message: error instanceof Error ? error.message : "Не удалось загрузить сравнение",
+        });
+        console.error(error);
+      });
+    return () => controller.abort();
+  }, [panel, otherSource, projectId, year, compareRequestKey]);
+
   const weeksCount = data?.weeks.length ?? getISOWeeksInYear(year);
+  const activeCompareError =
+    compareError?.key === compareRequestKey ? compareError.message : null;
   const currentISOWeek = getISOWeek(new Date());
 
   const visibleWeeks = React.useMemo(() => {
@@ -471,6 +559,198 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
     g.lines.sort((a, b) => a.executorName.localeCompare(b.executorName, "ru"));
   }
 
+  const compareWeekIndex = new Map(
+    (compareData?.weeks ?? []).map((week, index) => [week.week, index])
+  );
+  const compareWorkTypes = new Map(
+    (compareData?.workTypes ?? []).map((workType) => [workType.id, workType])
+  );
+  const compareExecutors = new Map<string, WorkTypeExpenseRow["executors"][number]>();
+  for (const workType of compareData?.workTypes ?? []) {
+    for (const executor of workType.executors) {
+      compareExecutors.set(`${workType.id}\0${executor.id}`, executor);
+    }
+  }
+  const comparePlanLines = new Map(
+    (compareData?.planLines ?? []).map((line) => [
+      `${line.executorId}\0${line.workTypeId}`,
+      line,
+    ])
+  );
+  const comparePlanGroupWeeks = new Map<string, number[]>();
+  for (const line of compareData?.planLines ?? []) {
+    const totals =
+      comparePlanGroupWeeks.get(line.workTypeId) ??
+      new Array(compareData?.weeks.length ?? 0).fill(0);
+    line.weeks.forEach((value, index) => {
+      if (value !== null) totals[index] += parseFloat(value) || 0;
+    });
+    comparePlanGroupWeeks.set(line.workTypeId, totals);
+  }
+
+  const compareReady = panel !== null && compareData !== null;
+  const valueChanged = (current: string, other: string | undefined) =>
+    compareReady && current !== other;
+  const numberAtWeek = (values: number[], week: number) => {
+    const index = compareWeekIndex.get(week);
+    return index === undefined ? undefined : values[index] ?? 0;
+  };
+  const planAtWeek = (values: (string | null)[], week: number) => {
+    const index = compareWeekIndex.get(week);
+    return index === undefined ? undefined : values[index] ?? null;
+  };
+  const summaryCellChanged = (key: SummaryKey | "expensePlan" | "overspend", week: number) => {
+    if (!compareReady) return false;
+    const currentIndex = data.weeks.findIndex((item) => item.week === week);
+    const currentValue = (summary[key] ?? [])[currentIndex] ?? 0;
+    const otherValue = numberAtWeek(compareData.summary[key] ?? [], week);
+    const display = (value: number) =>
+      key === "marginPct"
+        ? (value === 0 ? "—" : `${(value * 100).toFixed(0)}%`)
+        : fmt(value);
+    return valueChanged(display(currentValue), otherValue === undefined ? undefined : display(otherValue));
+  };
+  const summaryTotalDisplay = (
+    source: DashboardData,
+    key: SummaryKey
+  ): string => {
+    if (key === "cashflow") return fmt(source.project.cashflowInitial ?? 0);
+    if (key === "incomeCumulative" || key === "marginPct") return "—";
+    return fmt(rowTotal(source.summary[key] ?? []));
+  };
+  const summaryTotalChanged = (key: SummaryKey) =>
+    compareReady &&
+    valueChanged(summaryTotalDisplay(data, key), summaryTotalDisplay(compareData, key));
+  const aggregateTotalChanged = (key: "expenses" | "expensePlan" | "overspend") =>
+    compareReady &&
+    valueChanged(
+      fmt(rowTotal(summary[key] ?? [])),
+      fmt(rowTotal(compareData.summary[key] ?? []))
+    );
+  const startBalanceChanged =
+    compareReady &&
+    valueChanged(
+      fmt(project.cashflowInitial ?? 0),
+      fmt(compareData.project.cashflowInitial ?? 0)
+    );
+  const summaryRowChanged = (key: SummaryKey) =>
+    !compareReady ||
+    summaryTotalChanged(key) ||
+    visibleWeeks.some((week) => summaryCellChanged(key, week.week));
+  const rowOutline = (existsInOther: boolean) => {
+    if (!compareReady || existsInOther) return undefined;
+    return panel === "B"
+      ? "outline outline-1 -outline-offset-1 outline-green-400"
+      : "outline outline-1 -outline-offset-1 outline-red-400";
+  };
+  const workTypeCellChanged = (workType: WorkTypeExpenseRow, week: number) => {
+    if (!compareReady) return false;
+    const other = compareWorkTypes.get(workType.id);
+    const currentIndex = data.weeks.findIndex((item) => item.week === week);
+    return valueChanged(
+      fmt(workType.weeks[currentIndex] ?? 0),
+      other ? fmt(numberAtWeek(other.weeks, week) ?? 0) : undefined
+    );
+  };
+  const executorCellChanged = (
+    workTypeId: string,
+    executor: WorkTypeExpenseRow["executors"][number],
+    week: number
+  ) => {
+    if (!compareReady) return false;
+    const other = compareExecutors.get(`${workTypeId}\0${executor.id}`);
+    const currentIndex = data.weeks.findIndex((item) => item.week === week);
+    return valueChanged(
+      fmt(executor.weeks[currentIndex] ?? 0),
+      other ? fmt(numberAtWeek(other.weeks, week) ?? 0) : undefined
+    );
+  };
+  const executorRowChanged = (
+    workTypeId: string,
+    executor: WorkTypeExpenseRow["executors"][number]
+  ) => {
+    if (!compareReady) return true;
+    const other = compareExecutors.get(`${workTypeId}\0${executor.id}`);
+    return (
+      !other ||
+      valueChanged(executor.name, other.name) ||
+      valueChanged(fmt(rowTotal(executor.weeks)), fmt(rowTotal(other.weeks))) ||
+      visibleWeeks.some((week) => executorCellChanged(workTypeId, executor, week.week))
+    );
+  };
+  const workTypeRowChanged = (workType: WorkTypeExpenseRow) => {
+    if (!compareReady) return true;
+    const other = compareWorkTypes.get(workType.id);
+    return (
+      !other ||
+      valueChanged(workType.name, other.name) ||
+      valueChanged(fmt(rowTotal(workType.weeks)), fmt(rowTotal(other.weeks))) ||
+      visibleWeeks.some((week) => workTypeCellChanged(workType, week.week)) ||
+      workType.executors.some((executor) => executorRowChanged(workType.id, executor)) ||
+      other.executors.some(
+        (otherExecutor) =>
+          !workType.executors.some((executor) => executor.id === otherExecutor.id)
+      )
+    );
+  };
+  const planLineCellChanged = (line: PlanLineRow, week: number) => {
+    if (!compareReady) return false;
+    const other = comparePlanLines.get(`${line.executorId}\0${line.workTypeId}`);
+    const currentIndex = data.weeks.findIndex((item) => item.week === week);
+    return valueChanged(
+      planCellDisplay(line.weeks[currentIndex] ?? null),
+      other ? planCellDisplay(planAtWeek(other.weeks, week) ?? null) : undefined
+    );
+  };
+  const planLineRowChanged = (line: PlanLineRow) => {
+    if (!compareReady) return true;
+    const other = comparePlanLines.get(`${line.executorId}\0${line.workTypeId}`);
+    const currentAmounts = line.weeks.map((value) => (value ? parseFloat(value) : 0));
+    const otherAmounts = other?.weeks.map((value) => (value ? parseFloat(value) : 0));
+    return (
+      !other ||
+      valueChanged(line.executorName, other.executorName) ||
+      valueChanged(fmt(rowTotal(currentAmounts)), otherAmounts ? fmt(rowTotal(otherAmounts)) : undefined) ||
+      visibleWeeks.some((week) => planLineCellChanged(line, week.week))
+    );
+  };
+  const planGroupCellChanged = (workTypeId: string, values: number[], week: number) => {
+    if (!compareReady) return false;
+    const other = comparePlanGroupWeeks.get(workTypeId);
+    const currentIndex = data.weeks.findIndex((item) => item.week === week);
+    return valueChanged(
+      fmt(values[currentIndex] ?? 0),
+      other ? fmt(numberAtWeek(other, week) ?? 0) : undefined
+    );
+  };
+  const planGroupRowChanged = (group: (typeof planGroups)[number]) => {
+    if (!compareReady) return true;
+    const otherWeeks = comparePlanGroupWeeks.get(group.workTypeId);
+    const otherName = (compareData.planLines ?? []).find(
+      (line) => line.workTypeId === group.workTypeId
+    )?.workTypeName;
+    return (
+      !otherWeeks ||
+      valueChanged(group.workTypeName, otherName) ||
+      valueChanged(fmt(rowTotal(group.weekTotals)), fmt(rowTotal(otherWeeks))) ||
+      visibleWeeks.some((week) =>
+        planGroupCellChanged(group.workTypeId, group.weekTotals, week.week)
+      ) ||
+      group.lines.some(planLineRowChanged) ||
+      (compareData.planLines ?? []).some(
+        (otherLine) =>
+          otherLine.workTypeId === group.workTypeId &&
+          !group.lines.some((line) => line.executorId === otherLine.executorId)
+      )
+    );
+  };
+  const visibleSummaryDefs =
+    onlyChanges && panel ? SUMMARY_DEFS.filter(({ key }) => summaryRowChanged(key)) : SUMMARY_DEFS;
+  const visibleWorkTypes =
+    onlyChanges && panel ? workTypes.filter(workTypeRowChanged) : workTypes;
+  const visiblePlanGroups =
+    onlyChanges && panel ? planGroups.filter(planGroupRowChanged) : planGroups;
+
   // Group month headers
   const monthGroups: { label: string; count: number }[] = [];
   for (const wh of visibleWeeks) {
@@ -518,25 +798,49 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
         </div>
       </div>
 
+      {activeCompareError && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {activeCompareError}
+        </div>
+      )}
+
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="rounded-lg border border-neutral-200 bg-white p-4">
           <div className="flex items-center gap-2 text-neutral-500 text-xs mb-1"><TrendingUp className="h-3.5 w-3.5" />Приход</div>
-          <p className="text-lg font-semibold">{rowTotal(summary.incomeFact).toLocaleString("ru-RU", { maximumFractionDigits: 0 })} ₽</p>
+          <p className={cn(
+            "text-lg font-semibold",
+            compareReady &&
+              valueChanged(
+                fmt(rowTotal(summary.incomeFact)),
+                fmt(rowTotal(compareData.summary.incomeFact))
+              ) &&
+              CHANGED_CELL_CLASS
+          )}>{rowTotal(summary.incomeFact).toLocaleString("ru-RU", { maximumFractionDigits: 0 })} ₽</p>
         </div>
         <div className="rounded-lg border border-neutral-200 bg-white p-4">
           <div className="flex items-center gap-2 text-neutral-500 text-xs mb-1"><CreditCard className="h-3.5 w-3.5" />Расходы</div>
-          <p className="text-lg font-semibold">{rowTotal(summary.expenses).toLocaleString("ru-RU", { maximumFractionDigits: 0 })} ₽</p>
+          <p className={cn("text-lg font-semibold", aggregateTotalChanged("expenses") && CHANGED_CELL_CLASS)}>
+            {rowTotal(summary.expenses).toLocaleString("ru-RU", { maximumFractionDigits: 0 })} ₽
+          </p>
         </div>
         <div className="rounded-lg border border-neutral-200 bg-white p-4">
           <div className="flex items-center gap-2 text-neutral-500 text-xs mb-1">Кэшфлоу</div>
-          <p className="text-lg font-semibold">
+          <p className={cn(
+            "text-lg font-semibold",
+            compareReady &&
+              valueChanged(
+                fmtSign(summary.cashflow[summary.cashflow.length - 1] ?? 0),
+                fmtSign(compareData.summary.cashflow[compareData.summary.cashflow.length - 1] ?? 0)
+              ) &&
+              CHANGED_CELL_CLASS
+          )}>
             {fmtSign(summary.cashflow[summary.cashflow.length - 1])} ₽
           </p>
         </div>
         <div className="rounded-lg border border-neutral-200 bg-white p-4">
           <div className="flex items-center gap-2 text-neutral-500 text-xs mb-1"><AlertTriangle className="h-3.5 w-3.5" />Перерасход</div>
-          <p className="text-lg font-semibold">
+          <p className={cn("text-lg font-semibold", aggregateTotalChanged("overspend") && CHANGED_CELL_CLASS)}>
             {fmtSign(rowTotal(summary.overspend ?? []))} ₽
           </p>
         </div>
@@ -599,15 +903,18 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                 <td colSpan={visibleWeeks.length} className="bg-neutral-50" />
               </tr>
               {/* Стартовый баланс: редактируемый input в ячейке первой недели */}
-              {summaryExpanded && (
+              {summaryExpanded && (!onlyChanges || !panel || !compareReady || startBalanceChanged) && (
                 <tr className="hover:bg-neutral-50 border-b border-neutral-100">
                   <td className={cn(stickyLbl, "font-normal italic text-neutral-500")}>Стартовый баланс</td>
-                  <td className={stickyTotal}>{fmt(project.cashflowInitial ?? 0)}</td>
+                  <td className={cn(stickyTotal, startBalanceChanged && CHANGED_CELL_CLASS)}>
+                    {fmt(project.cashflowInitial ?? 0)}
+                  </td>
                   {visibleWeekIndices.map((idx, vi) => {
                     const wh = visibleWeeks[vi];
                     return (
                       <td key={idx} className={cn(tdCls,
                         wh?.week === currentISOWeek && year === currentYear ? "bg-blue-50" : wh?.week < currentISOWeek && year === currentYear ? "bg-neutral-50/40" : "",
+                        idx === 0 && startBalanceChanged && CHANGED_CELL_CLASS,
                       )}>
                         {idx === 0
                           ? (isAdmin
@@ -619,7 +926,7 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                   })}
                 </tr>
               )}
-              {summaryExpanded && SUMMARY_DEFS.map(({ key, label, signed, highlight, tooltip }) => {
+              {summaryExpanded && visibleSummaryDefs.map(({ key, label, signed, highlight, tooltip }) => {
                 const arr = summary[key] ?? [];
                 const totalRaw: number | null =
                   key === "cashflow"
@@ -652,7 +959,11 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                         label
                       )}
                     </td>
-                    <td className={cn(stickyTotal, highlight && "font-semibold")}>
+                    <td className={cn(
+                      stickyTotal,
+                      highlight && "font-semibold",
+                      summaryTotalChanged(key) && CHANGED_CELL_CLASS
+                    )}>
                       {totalRaw === null ? "—" : cellVal(totalRaw)}
                     </td>
                     {visibleWeekIndices.map((idx, vi) => {
@@ -661,6 +972,7 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                       return (
                         <td key={idx} className={cn(tdCls,
                           wh?.week === currentISOWeek && year === currentYear ? "bg-blue-50 font-semibold" : wh?.week < currentISOWeek && year === currentYear ? "text-neutral-400 bg-neutral-50/40" : "",
+                          summaryCellChanged(key, wh.week) && CHANGED_CELL_CLASS,
                         )}>
                           {cellVal(v)}
                         </td>
@@ -678,12 +990,21 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                     Расходы из смет
                   </span>
                 </td>
-                <td className={cn(stickyTotal, "font-semibold")}>{fmt(rowTotal(summary.expenses ?? []))}</td>
+                <td className={cn(
+                  stickyTotal,
+                  "font-semibold",
+                  aggregateTotalChanged("expenses") && CHANGED_CELL_CLASS
+                )}>{fmt(rowTotal(summary.expenses ?? []))}</td>
                 {visibleWeekIndices.map((idx, vi) => {
                   const wh = visibleWeeks[vi];
                   const v = (summary.expenses ?? [])[idx] ?? 0;
                   return (
-                    <td key={idx} className={cn(tdCls, "bg-neutral-50", wh?.week === currentISOWeek && year === currentYear ? "!bg-blue-50" : "")}>
+                    <td key={idx} className={cn(
+                      tdCls,
+                      "bg-neutral-50",
+                      wh?.week === currentISOWeek && year === currentYear ? "!bg-blue-50" : "",
+                      summaryCellChanged("expenses", wh.week) && CHANGED_CELL_CLASS
+                    )}>
                       {fmt(v)}
                     </td>
                   );
@@ -691,55 +1012,108 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
               </tr>
               {expensesExpanded && (
                 <>
-                  {workTypes.length === 0 && (
+                  {visibleWorkTypes.length === 0 && (
                     <tr>
                       <td className={stickyLbl}>—</td>
                       <td className={stickyTotal}>—</td>
                       {visibleWeeks.map((_, i) => <td key={i} className={tdCls}>—</td>)}
                     </tr>
                   )}
-                  {workTypes.map(wt => {
+                  {visibleWorkTypes.map(wt => {
                     const wtExpanded = expandedExpenseWT.has(wt.id);
+                    const otherWorkType = compareWorkTypes.get(wt.id);
                     return (
                       <React.Fragment key={wt.id}>
                         <tr
-                          className="hover:bg-neutral-50 border-b border-neutral-100 cursor-pointer select-none"
+                          className={cn(
+                            "hover:bg-neutral-50 border-b border-neutral-100 cursor-pointer select-none",
+                            rowOutline(!!otherWorkType)
+                          )}
                           onClick={() => toggleExpenseWT(wt.id)}
                         >
-                          <td className={cn(stickyLbl, "font-normal")}>
+                          <td className={cn(
+                            stickyLbl,
+                            "font-normal",
+                            compareReady &&
+                              valueChanged(wt.name, otherWorkType?.name) &&
+                              CHANGED_CELL_CLASS
+                          )}>
                             <span className="inline-flex items-center gap-1">
                               <SectionChevron expanded={wtExpanded} />
                               {wt.name}
                             </span>
                           </td>
-                          <td className={stickyTotal}>{fmt(rowTotal(wt.weeks))}</td>
+                          <td className={cn(
+                            stickyTotal,
+                            compareReady &&
+                              valueChanged(
+                                fmt(rowTotal(wt.weeks)),
+                                otherWorkType ? fmt(rowTotal(otherWorkType.weeks)) : undefined
+                              ) &&
+                              CHANGED_CELL_CLASS
+                          )}>{fmt(rowTotal(wt.weeks))}</td>
                           {visibleWeekIndices.map((idx, vi) => {
                             const wh = visibleWeeks[vi];
                             const v = wt.weeks[idx] ?? 0;
                             return (
-                              <td key={idx} className={cn(tdCls, wh?.week === currentISOWeek && year === currentYear ? "bg-blue-50 font-semibold" : wh?.week < currentISOWeek && year === currentYear ? "text-neutral-400 bg-neutral-50/40" : "")}>
+                              <td key={idx} className={cn(
+                                tdCls,
+                                wh?.week === currentISOWeek && year === currentYear ? "bg-blue-50 font-semibold" : wh?.week < currentISOWeek && year === currentYear ? "text-neutral-400 bg-neutral-50/40" : "",
+                                workTypeCellChanged(wt, wh.week) && CHANGED_CELL_CLASS
+                              )}>
                                 {fmt(v)}
                               </td>
                             );
                           })}
                         </tr>
-                        {wtExpanded && wt.executors.map(ex => (
-                          <tr key={`${wt.id}:${ex.id}`} className="hover:bg-neutral-50 border-b border-neutral-100">
-                            <td className={cn(stickyLbl, "font-normal")}>
+                        {wtExpanded && wt.executors
+                          .filter((executor) => !onlyChanges || !panel || executorRowChanged(wt.id, executor))
+                          .map(ex => {
+                          const otherExecutor = compareExecutors.get(`${wt.id}\0${ex.id}`);
+                          return (
+                          <tr
+                            key={`${wt.id}:${ex.id}`}
+                            className={cn(
+                              "hover:bg-neutral-50 border-b border-neutral-100",
+                              rowOutline(!!otherExecutor)
+                            )}
+                          >
+                            <td className={cn(
+                              stickyLbl,
+                              "font-normal",
+                              compareReady &&
+                                valueChanged(ex.name, otherExecutor?.name) &&
+                                CHANGED_CELL_CLASS
+                            )}>
                               <span className="pl-6 text-neutral-500 text-[11px] truncate block">{ex.name}</span>
                             </td>
-                            <td className={cn(stickyTotal, "font-normal text-neutral-500")}>{fmt(rowTotal(ex.weeks))}</td>
+                            <td className={cn(
+                              stickyTotal,
+                              "font-normal text-neutral-500",
+                              compareReady &&
+                                valueChanged(
+                                  fmt(rowTotal(ex.weeks)),
+                                  otherExecutor ? fmt(rowTotal(otherExecutor.weeks)) : undefined
+                                ) &&
+                                CHANGED_CELL_CLASS
+                            )}>{fmt(rowTotal(ex.weeks))}</td>
                             {visibleWeekIndices.map((idx, vi) => {
                               const wh = visibleWeeks[vi];
                               const v = ex.weeks[idx] ?? 0;
                               return (
-                                <td key={idx} className={cn(tdCls, "text-neutral-500", wh?.week === currentISOWeek && year === currentYear ? "bg-blue-50" : wh?.week < currentISOWeek && year === currentYear ? "bg-neutral-50/40" : "")}>
+                                <td key={idx} className={cn(
+                                  tdCls,
+                                  "text-neutral-500",
+                                  wh?.week === currentISOWeek && year === currentYear ? "bg-blue-50" : wh?.week < currentISOWeek && year === currentYear ? "bg-neutral-50/40" : "",
+                                  executorCellChanged(wt.id, ex, wh.week) && CHANGED_CELL_CLASS
+                                )}>
                                   {fmt(v)}
                                 </td>
                               );
                             })}
                           </tr>
-                        ))}
+                          );
+                        })}
                       </React.Fragment>
                     );
                   })}
@@ -747,7 +1121,12 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
               )}
 
               {/* Block 3: Overspend (row41 = expenses − expensePlan) */}
-              <tr className="bg-neutral-50 border-t-2 border-b border-neutral-200">
+              {(!onlyChanges ||
+                !panel ||
+                !compareReady ||
+                aggregateTotalChanged("overspend") ||
+                visibleWeeks.some((week) => summaryCellChanged("overspend", week.week))) && (
+                <tr className="bg-neutral-50 border-t-2 border-b border-neutral-200">
                 <td className={cn(stickyLbl, "bg-neutral-50 font-medium text-neutral-800")}>
                   <TooltipProvider delay={200}>
                     <Tooltip>
@@ -760,7 +1139,11 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                     </Tooltip>
                   </TooltipProvider>
                 </td>
-                <td className={cn(stickyTotal, overspendValueClass(rowTotal(summary.overspend ?? [])))}>
+                <td className={cn(
+                  stickyTotal,
+                  overspendValueClass(rowTotal(summary.overspend ?? [])),
+                  aggregateTotalChanged("overspend") && CHANGED_CELL_CLASS
+                )}>
                   {rowTotal(summary.overspend ?? []) === 0 ? "—" : fmtSign(rowTotal(summary.overspend ?? []))}
                 </td>
                 {visibleWeekIndices.map((idx, vi) => {
@@ -777,14 +1160,16 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                           ? "!bg-blue-50 font-semibold"
                           : wh?.week < currentISOWeek && year === currentYear && v === 0
                             ? "text-neutral-400"
-                            : ""
+                            : "",
+                        summaryCellChanged("overspend", wh.week) && CHANGED_CELL_CLASS
                       )}
                     >
                       {v === 0 ? "—" : fmtSign(v)}
                     </td>
                   );
                 })}
-              </tr>
+                </tr>
+              )}
 
               {/* Block 4: SpendingPlan — группировка по видам работ, итоги в строке заголовка */}
               <tr className="bg-neutral-50 border-t-2 border-b border-neutral-200 font-semibold">
@@ -794,12 +1179,21 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                     План расходов
                   </span>
                 </td>
-                <td className={cn(stickyTotal, "font-semibold")}>{fmt(rowTotal(summary.expensePlan ?? []))}</td>
+                <td className={cn(
+                  stickyTotal,
+                  "font-semibold",
+                  aggregateTotalChanged("expensePlan") && CHANGED_CELL_CLASS
+                )}>{fmt(rowTotal(summary.expensePlan ?? []))}</td>
                 {visibleWeekIndices.map((idx, vi) => {
                   const wh = visibleWeeks[vi];
                   const v = (summary.expensePlan ?? [])[idx] ?? 0;
                   return (
-                    <td key={idx} className={cn(tdCls, "bg-neutral-50", wh?.week === currentISOWeek && year === currentYear ? "!bg-blue-50" : "")}>
+                    <td key={idx} className={cn(
+                      tdCls,
+                      "bg-neutral-50",
+                      wh?.week === currentISOWeek && year === currentYear ? "!bg-blue-50" : "",
+                      summaryCellChanged("expensePlan", wh.week) && CHANGED_CELL_CLASS
+                    )}>
                       {fmt(v)}
                     </td>
                   );
@@ -807,7 +1201,7 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
               </tr>
               {planExpanded && (
                 <>
-                  {planLines.length === 0 && !canManagePlan && (
+                  {visiblePlanGroups.length === 0 && !canManagePlan && (
                     <tr className="border-b border-neutral-100">
                       <td className={cn(stickyLbl, "font-normal text-neutral-400")}>Нет строк плана</td>
                       <td className={stickyTotal}>—</td>
@@ -816,39 +1210,77 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                       ))}
                     </tr>
                   )}
-                  {planGroups.map(group => {
+                  {visiblePlanGroups.map(group => {
                     const groupExpanded = expandedPlanWT.has(group.workTypeId);
+                    const otherGroupWeeks = comparePlanGroupWeeks.get(group.workTypeId);
+                    const otherGroupName = compareData?.planLines.find(
+                      (line) => line.workTypeId === group.workTypeId
+                    )?.workTypeName;
                     return (
                       <React.Fragment key={group.workTypeId}>
                         {/* Строка вида работ (агрегат) */}
                         <tr
-                          className="hover:bg-neutral-50 border-b border-neutral-100 cursor-pointer select-none"
+                          className={cn(
+                            "hover:bg-neutral-50 border-b border-neutral-100 cursor-pointer select-none",
+                            rowOutline(!!otherGroupWeeks)
+                          )}
                           onClick={() => togglePlanWT(group.workTypeId)}
                         >
-                          <td className={cn(stickyLbl, "font-normal")}>
+                          <td className={cn(
+                            stickyLbl,
+                            "font-normal",
+                            compareReady &&
+                              valueChanged(group.workTypeName, otherGroupName) &&
+                              CHANGED_CELL_CLASS
+                          )}>
                             <span className="inline-flex items-center gap-1">
                               <SectionChevron expanded={groupExpanded} />
                               <span className="truncate font-medium text-neutral-900">{group.workTypeName}</span>
                             </span>
                           </td>
-                          <td className={stickyTotal}>{fmt(rowTotal(group.weekTotals))}</td>
+                          <td className={cn(
+                            stickyTotal,
+                            compareReady &&
+                              valueChanged(
+                                fmt(rowTotal(group.weekTotals)),
+                                otherGroupWeeks ? fmt(rowTotal(otherGroupWeeks)) : undefined
+                              ) &&
+                              CHANGED_CELL_CLASS
+                          )}>{fmt(rowTotal(group.weekTotals))}</td>
                           {visibleWeekIndices.map((idx, vi) => {
                             const wh = visibleWeeks[vi];
                             const v = group.weekTotals[idx] ?? 0;
                             return (
-                              <td key={idx} className={cn(tdCls, wh?.week === currentISOWeek && year === currentYear ? "bg-blue-50 font-semibold" : wh?.week < currentISOWeek && year === currentYear ? "text-neutral-400 bg-neutral-50/40" : "")}>
+                              <td key={idx} className={cn(
+                                tdCls,
+                                wh?.week === currentISOWeek && year === currentYear ? "bg-blue-50 font-semibold" : wh?.week < currentISOWeek && year === currentYear ? "text-neutral-400 bg-neutral-50/40" : "",
+                                planGroupCellChanged(group.workTypeId, group.weekTotals, wh.week) && CHANGED_CELL_CLASS
+                              )}>
                                 {fmt(v)}
                               </td>
                             );
                           })}
                         </tr>
                         {/* Строки исполнителей */}
-                        {groupExpanded && group.lines.map(pl => {
+                        {groupExpanded && group.lines
+                          .filter((line) => !onlyChanges || !panel || planLineRowChanged(line))
+                          .map(pl => {
                           const weekAmounts = pl.weeks.map(v => (v ? parseFloat(v) : 0));
                           const isDeleting = deletingRowId === pl.id;
+                          const otherPlanLine = comparePlanLines.get(`${pl.executorId}\0${pl.workTypeId}`);
                           return (
-                            <tr key={pl.id} className={cn("group hover:bg-neutral-50 border-b border-neutral-100", isDeleting && "opacity-40 pointer-events-none")}>
-                              <td className={cn(stickyLbl, "font-normal")}>
+                            <tr key={pl.id} className={cn(
+                              "group hover:bg-neutral-50 border-b border-neutral-100",
+                              isDeleting && "opacity-40 pointer-events-none",
+                              rowOutline(!!otherPlanLine)
+                            )}>
+                              <td className={cn(
+                                stickyLbl,
+                                "font-normal",
+                                compareReady &&
+                                  valueChanged(pl.executorName, otherPlanLine?.executorName) &&
+                                  CHANGED_CELL_CLASS
+                              )}>
                                 <div className="flex items-center gap-1 min-w-0 pl-6">
                                   <div className="flex flex-col leading-tight min-w-0 flex-1">
                                     {isAdmin && pl.executorHasPersonalSmeta ? (
@@ -885,12 +1317,28 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                                   )}
                                 </div>
                               </td>
-                              <td className={stickyTotal}>{fmt(rowTotal(weekAmounts))}</td>
+                              <td className={cn(
+                                stickyTotal,
+                                compareReady &&
+                                  valueChanged(
+                                    fmt(rowTotal(weekAmounts)),
+                                    otherPlanLine
+                                      ? fmt(rowTotal(otherPlanLine.weeks.map(
+                                          (value) => (value ? parseFloat(value) : 0)
+                                        )))
+                                      : undefined
+                                  ) &&
+                                  CHANGED_CELL_CLASS
+                              )}>{fmt(rowTotal(weekAmounts))}</td>
                               {visibleWeekIndices.map((idx, vi) => {
                                 const wh = visibleWeeks[vi];
                                 const v = pl.weeks[idx] ?? null;
                                 return (
-                                  <td key={idx} className={cn("p-0 text-right border-r border-neutral-100 last:border-0", wh?.week === currentISOWeek && year === currentYear ? "bg-blue-50" : wh?.week < currentISOWeek && year === currentYear ? "bg-neutral-50/40" : "")}>
+                                  <td key={idx} className={cn(
+                                    "p-0 text-right border-r border-neutral-100 last:border-0",
+                                    wh?.week === currentISOWeek && year === currentYear ? "bg-blue-50" : wh?.week < currentISOWeek && year === currentYear ? "bg-neutral-50/40" : "",
+                                    !canManagePlan && planLineCellChanged(pl, wh.week) && CHANGED_CELL_CLASS
+                                  )}>
                                     {canManagePlan ? (
                                       <PlanCell
                                         value={v}
@@ -901,6 +1349,7 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                                         year={year}
                                         week={visibleWeeks[vi]?.week ?? idx + 1}
                                         onUpdate={() => mutate()}
+                                        changed={planLineCellChanged(pl, wh.week)}
                                       />
                                     ) : (
                                       <span className="text-xs tabular-nums">{v ? fmt(parseFloat(v)) : "·"}</span>
@@ -951,6 +1400,7 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
       <CollapsibleSection sectionId="works" title="Все работы по проекту">
         <WorksReviewTable
           fetchUrl={`/api/projects/${projectId}/works`}
+          stateKey={`project:${projectId}:works`}
           emptyText="По проекту ещё нет работ (Личные сметы и Прочие траты)."
           showProjectColumn={false}
         />

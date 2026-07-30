@@ -42,6 +42,10 @@ import { stickyActionsHead, stickyActionsCell, stickyActionsInner } from "@/lib/
 import { RowSelectCheckbox } from "@/components/ui-custom/RowSelectCheckbox";
 import { useTableRowSelection } from "@/lib/useTableRowSelection";
 import { useComparison } from "@/components/ComparisonProvider";
+import {
+  usePersistedInterfaceState,
+  usePersistedScroll,
+} from "@/components/PersistedInterfaceState";
 
 type WorkType = { id: string; name: string };
 type Project = { id: string; name: string };
@@ -154,38 +158,73 @@ function worksCountLabel(n: number): string {
 const PAID_STATUSES_WORK = new Set(["paid"]);
 const PAID_STATUSES_PAYMENT = new Set(["paid"]);
 
-function workCompareKey(w: WorkRow): string {
-  return JSON.stringify({
-    projectId: w.projectId,
-    workTypeId: w.workTypeId,
+type WorkDiffField =
+  | "executionYear"
+  | "executionMonth"
+  | "projectTask"
+  | "workType"
+  | "volume"
+  | "rate"
+  | "responsible"
+  | "amount"
+  | "plannedPayAt"
+  | "paidAt"
+  | "workStatus";
+
+type PaymentDiffField =
+  | "summary"
+  | "amount"
+  | "plannedPayAt"
+  | "paidAt"
+  | "paymentStatus"
+  | "bankAccount";
+
+type DiffField<T extends string> = T | "__row__";
+
+function changedFields<T extends string>(
+  current: Record<T, unknown>,
+  other: Record<T, unknown> | null
+): Set<DiffField<T>> {
+  if (!other) return new Set<DiffField<T>>(["__row__"]);
+  const result = new Set<DiffField<T>>();
+  for (const key of Object.keys(current) as T[]) {
+    if (!Object.is(current[key], other[key])) result.add(key);
+  }
+  return result;
+}
+
+function workVisibleValues(w: WorkRow): Record<WorkDiffField, unknown> {
+  return {
     executionYear: w.executionYear,
     executionMonth: w.executionMonth,
-    techTask: w.techTask,
-    report: w.report,
-    link: w.link,
+    projectTask: `${w.project.name}\0${w.techTask ?? ""}`,
+    workType: w.workType.name,
     volume: w.volume,
     rate: w.rate,
+    responsible: w.responsibleExecutor?.name ?? "",
     amount: w.amount,
     plannedPayAt: w.plannedPayAt,
     paidAt: w.paidAt,
     workStatus: w.workStatus,
-    paymentId: w.paymentId,
-    responsibleExecutorId: w.responsibleExecutorId,
-    comment: w.comment,
-  });
+  };
 }
 
-function paymentCompareKey(p: AllPaymentRow): string {
-  return JSON.stringify({
+function paymentVisibleValues(
+  p: AllPaymentRow,
+  rows: Iterable<WorkRow>
+): Record<PaymentDiffField, unknown> {
+  let linkedCount = 0;
+  for (const work of rows) {
+    if (work.paymentId === p.id) linkedCount += 1;
+  }
+  return {
+    summary: `${linkedCount}\0${p.comment ?? ""}`,
     amount: p.amount,
-    paymentStatus: p.paymentStatus,
     plannedPayAt: p.plannedPayAt,
     paidAt: p.paidAt,
-    bankAccountId: p.bankAccountId,
-    periodYear: p.periodYear,
-    periodMonth: p.periodMonth,
-    comment: p.comment,
-  });
+    paymentStatus: p.paymentStatus,
+    bankAccount: p.bankAccount?.name ?? "",
+  };
 }
 
 export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccountsProp }: Props) {
@@ -193,8 +232,8 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
   const bankAccounts = React.useMemo(() => sortByNameRu(bankAccountsProp), [bankAccountsProp]);
   const [works, setWorks] = useState<WorkRow[]>([]);
   const [allPayments, setAllPayments] = useState<AllPaymentRow[]>([]);
-  const [compareWorkKeys, setCompareWorkKeys] = useState<Map<string, string> | null>(null);
-  const [comparePaymentKeys, setComparePaymentKeys] = useState<Map<string, string> | null>(null);
+  const [compareWorks, setCompareWorks] = useState<Map<string, WorkRow> | null>(null);
+  const [comparePayments, setComparePayments] = useState<Map<string, AllPaymentRow> | null>(null);
   const [permanentExecutors, setPermanentExecutors] = useState<ExecutorRef[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -207,6 +246,44 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
   const [filterBank, setFilterBank] = useState<string>("");
   const [filterRowType, setFilterRowType] = useState<string>(""); // "" | "works" | "payments"
   const [hidePaidGroups, setHidePaidGroups] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  usePersistedInterfaceState(
+    `executor:${executorId}:works`,
+    {
+      filterYear,
+      filterMonth,
+      filterProject,
+      filterWeek,
+      filterStatus,
+      filterBank,
+      filterRowType,
+      hidePaidGroups,
+    },
+    (stored) => {
+      if ("filterYear" in stored) setFilterYear(stored.filterYear ?? "");
+      if ("filterMonth" in stored) setFilterMonth(stored.filterMonth ?? "");
+      if ("filterProject" in stored) setFilterProject(stored.filterProject ?? "");
+      if ("filterWeek" in stored) setFilterWeek(stored.filterWeek ?? "");
+      if ("filterStatus" in stored) setFilterStatus(stored.filterStatus ?? "");
+      if ("filterBank" in stored) setFilterBank(stored.filterBank ?? "");
+      if ("filterRowType" in stored) setFilterRowType(stored.filterRowType ?? "");
+      if ("hidePaidGroups" in stored) setHidePaidGroups(Boolean(stored.hidePaidGroups));
+    }
+  );
+  usePersistedScroll(scrollRef, `executor:${executorId}:works`, {
+    enabled: !loading,
+    signature: {
+      filterYear,
+      filterMonth,
+      filterProject,
+      filterWeek,
+      filterStatus,
+      filterBank,
+      filterRowType,
+      hidePaidGroups,
+    },
+  });
 
   // Диалоги
   const [createWorkOpen, setCreateWorkOpen] = useState(false);
@@ -247,11 +324,7 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    if (!onlyChanges || !panel) {
-      setCompareWorkKeys(null);
-      setComparePaymentKeys(null);
-      return;
-    }
+    if (!panel) return;
     const otherSource = panel === "A" ? sourceB : sourceA;
     const controller = new AbortController();
     const otherQs = `?source=${encodeURIComponent(otherSource || "live")}`;
@@ -265,17 +338,17 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
           worksRes.json(),
           paymentsRes.json(),
         ])) as [WorkRow[], AllPaymentRow[]];
-        setCompareWorkKeys(new Map(worksData.map((w) => [w.id, workCompareKey(w)])));
-        setComparePaymentKeys(new Map(paymentsData.map((p) => [p.id, paymentCompareKey(p)])));
+        setCompareWorks(new Map(worksData.map((w) => [w.id, w])));
+        setComparePayments(new Map(paymentsData.map((p) => [p.id, p])));
       })
       .catch((err) => {
         if (controller.signal.aborted) return;
-        setCompareWorkKeys(null);
-        setComparePaymentKeys(null);
+        setCompareWorks(null);
+        setComparePayments(null);
         console.error(err);
       });
     return () => controller.abort();
-  }, [onlyChanges, panel, sourceA, sourceB, executorId]);
+  }, [panel, sourceA, sourceB, executorId]);
 
   useEffect(() => {
     fetch("/api/executors/active-permanent")
@@ -308,22 +381,43 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
   const workOnlyFilterActive = !!(filterYear || filterMonth || filterProject);
   const paymentOnlyFilterActive = !!filterBank;
 
+  const workDiffFields = useCallback(
+    (w: WorkRow): Set<DiffField<WorkDiffField>> => {
+      if (!panel || !compareWorks) return new Set();
+      const other = compareWorks.get(w.id);
+      return changedFields(workVisibleValues(w), other ? workVisibleValues(other) : null);
+    },
+    [panel, compareWorks]
+  );
+
+  const paymentDiffFields = useCallback(
+    (p: AllPaymentRow): Set<DiffField<PaymentDiffField>> => {
+      if (!panel || !comparePayments) return new Set();
+      const other = comparePayments.get(p.id);
+      return changedFields(
+        paymentVisibleValues(p, works),
+        other
+          ? paymentVisibleValues(other, compareWorks?.values() ?? [])
+          : null
+      );
+    },
+    [panel, comparePayments, compareWorks, works]
+  );
+
   const workChanged = useCallback(
     (w: WorkRow): boolean => {
-      if (!onlyChanges || !panel || !compareWorkKeys) return true;
-      const other = compareWorkKeys.get(w.id);
-      return other === undefined || other !== workCompareKey(w);
+      if (!panel || !compareWorks) return true;
+      return workDiffFields(w).size > 0;
     },
-    [onlyChanges, panel, compareWorkKeys]
+    [panel, compareWorks, workDiffFields]
   );
 
   const paymentChanged = useCallback(
     (p: AllPaymentRow): boolean => {
-      if (!onlyChanges || !panel || !comparePaymentKeys) return true;
-      const other = comparePaymentKeys.get(p.id);
-      return other === undefined || other !== paymentCompareKey(p);
+      if (!panel || !comparePayments) return true;
+      return paymentDiffFields(p).size > 0;
     },
-    [onlyChanges, panel, comparePaymentKeys]
+    [panel, comparePayments, paymentDiffFields]
   );
 
   const workPasses = useCallback(
@@ -334,13 +428,13 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
       if (filterWeek && payWeekText(w.paidAt ?? w.plannedPayAt) !== filterWeek) return false;
       if (filterStatus === "unpaid" && PAID_STATUSES_WORK.has(w.workStatus)) return false;
       if (filterStatus === "paid" && !PAID_STATUSES_WORK.has(w.workStatus)) return false;
-      if (!workChanged(w)) {
+      if (onlyChanges && !workChanged(w)) {
         const parent = w.paymentId ? allPayments.find((p) => p.id === w.paymentId) : null;
         if (!parent || !paymentChanged(parent)) return false;
       }
       return true;
     },
-    [filterYear, filterMonth, filterProject, filterWeek, filterStatus, workChanged, paymentChanged, allPayments]
+    [filterYear, filterMonth, filterProject, filterWeek, filterStatus, onlyChanges, workChanged, paymentChanged, allPayments]
   );
 
   const paymentPasses = useCallback(
@@ -349,14 +443,14 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
       if (filterStatus === "unpaid" && PAID_STATUSES_PAYMENT.has(p.paymentStatus)) return false;
       if (filterStatus === "paid" && !PAID_STATUSES_PAYMENT.has(p.paymentStatus)) return false;
       if (filterBank && p.bankAccountId !== filterBank) return false;
-      if (!paymentChanged(p)) {
+      if (onlyChanges && !paymentChanged(p)) {
         // Показать выплату, если изменилась хотя бы одна её работа
         const linked = works.filter((w) => w.paymentId === p.id);
         if (!linked.some((w) => workChanged(w))) return false;
       }
       return true;
     },
-    [filterWeek, filterStatus, filterBank, paymentChanged, workChanged, works]
+    [filterWeek, filterStatus, filterBank, onlyChanges, paymentChanged, workChanged, works]
   );
 
   // ── Группировка (§6) ────────────────────────────────────────────────────────
@@ -620,12 +714,24 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
   const td = "border-b border-neutral-100 px-1.5 py-1 text-[10px] leading-tight align-middle";
   const tdr = td + " text-right tabular-nums";
   const dim = "border-b border-neutral-100 px-1.5 py-1 text-[10px] text-neutral-300";
+  const changedCell = "bg-amber-100/80 font-medium text-amber-950";
+
+  function comparisonRowClass<T>(
+    id: string,
+    compareRows: Map<string, T> | null
+  ): string | undefined {
+    if (!panel || !compareRows || compareRows.has(id)) return undefined;
+    return panel === "B"
+      ? "outline outline-1 -outline-offset-1 outline-green-400"
+      : "outline outline-1 -outline-offset-1 outline-red-400";
+  }
 
   function WorkCells({ w }: { w: WorkRow }) {
     const canEditWork = isAdmin || (isOwner && w.workStatus !== "checked" && w.workStatus !== "paid");
     const dateEditable = !w.paymentId && (isAdmin || (isOwner && w.workStatus !== "paid"));
     const respEditable = isAdmin || isOwner;
     const active = !!w.paymentId && hoverPaymentId === w.paymentId;
+    const diff = workDiffFields(w);
     return (
       <>
         <td className="border-b border-neutral-100 px-1 py-1 w-8 text-center align-middle">
@@ -636,9 +742,9 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
             onSelect={handleRowSelect}
           />
         </td>
-        <td className={td}>{w.executionYear}</td>
-        <td className={cn(td, "whitespace-nowrap")}>{monthFullLabel(w.executionMonth)}</td>
-        <td className={cn(td, cellClip)}>
+        <td className={cn(td, diff.has("executionYear") && changedCell)}>{w.executionYear}</td>
+        <td className={cn(td, "whitespace-nowrap", diff.has("executionMonth") && changedCell)}>{monthFullLabel(w.executionMonth)}</td>
+        <td className={cn(td, cellClip, diff.has("projectTask") && changedCell)}>
           <div className="truncate" title={w.project.name}>{w.project.name}</div>
           {w.techTask ? (
             <TooltipProvider delay={200}>
@@ -655,12 +761,12 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
             <div className="text-neutral-300">—</div>
           )}
         </td>
-        <td className={cn(td, cellClip, "text-neutral-600")} title={w.workType.name}>
+        <td className={cn(td, cellClip, "text-neutral-600", diff.has("workType") && changedCell)} title={w.workType.name}>
           <div className="truncate">{w.workType.name}</div>
         </td>
-        <td className={tdr}>{w.volume != null ? w.volume.toLocaleString("ru-RU") : "—"}</td>
-        <td className={tdr}>{w.rate != null ? w.rate.toLocaleString("ru-RU") : "—"}</td>
-        <td className={cn(td, "min-w-[120px]")}>
+        <td className={cn(tdr, diff.has("volume") && changedCell)}>{w.volume != null ? w.volume.toLocaleString("ru-RU") : "—"}</td>
+        <td className={cn(tdr, diff.has("rate") && changedCell)}>{w.rate != null ? w.rate.toLocaleString("ru-RU") : "—"}</td>
+        <td className={cn(td, "min-w-[120px]", diff.has("responsible") && changedCell)}>
           {respEditable ? (
             <Select value={w.responsibleExecutorId ?? ""} onValueChange={(v) => v && patchWorkResponsible(w.id, v)}>
               <SelectTrigger className="h-6 text-[10px] px-1.5">
@@ -674,18 +780,18 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
             <span className="text-neutral-600">{w.responsibleExecutor?.name ?? "—"}</span>
           )}
         </td>
-        <td className={tdr}>
+        <td className={cn(tdr, diff.has("amount") && changedCell)}>
           <InlineAmountInput value={w.amount} disabled={!canEditWork} onSave={(n) => patchWorkAmount(w.id, n)} />
         </td>
-        <td className={td}>
+        <td className={cn(td, diff.has("plannedPayAt") && changedCell)}>
           <InlineDateInput
             value={w.plannedPayAt ? toLocalDateString(new Date(w.plannedPayAt)) : ""}
             disabled={!dateEditable}
             onSave={(d) => patchWorkPlannedDate(w.id, d)}
           />
         </td>
-        <td className={cn(td, "whitespace-nowrap text-neutral-500", w.workStatus === "paid" && !w.paidAt && "bg-red-100 text-red-700")}>{formatDate(w.paidAt)}</td>
-        <td className={cn(td, "min-w-[140px]")}><StatusBadge status={w.workStatus} type="work" /></td>
+        <td className={cn(td, "whitespace-nowrap text-neutral-500", w.workStatus === "paid" && !w.paidAt && "bg-red-100 text-red-700", diff.has("paidAt") && changedCell)}>{formatDate(w.paidAt)}</td>
+        <td className={cn(td, "min-w-[140px]", diff.has("workStatus") && changedCell)}><StatusBadge status={w.workStatus} type="work" /></td>
         <td className={dim}>—</td>
         <td className={cn(td, stickyActionsCell, active && "bg-blue-100")}>
           <div className={stickyActionsInner}>
@@ -717,10 +823,11 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
     const linkedCount = worksByPayment.get(p.id)?.length ?? 0;
     const worksLabel = linkedCount ? worksCountLabel(linkedCount) : "без работ";
     const paymentSubtitle = p.comment ? `${worksLabel} · ${p.comment}` : worksLabel;
+    const diff = paymentDiffFields(p);
     return (
       <>
         <td className="border-b border-neutral-100 px-1 py-1 w-8" />
-        <td className={cn(td, "align-middle")} colSpan={7}>
+        <td className={cn(td, "align-middle", diff.has("summary") && changedCell)} colSpan={7}>
           <div className="flex items-center gap-2 min-w-0">
             <span className="inline-flex items-center gap-1 font-semibold text-green-800 shrink-0">
               <CircleDollarSign className="h-3.5 w-3.5" /> Выплата
@@ -730,17 +837,17 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
             </span>
           </div>
         </td>
-        <td className={tdr + " font-semibold text-green-800"}>{formatMoney(p.amount)}</td>
-        <td className={td}>
+        <td className={cn(tdr, "font-semibold text-green-800", diff.has("amount") && changedCell)}>{formatMoney(p.amount)}</td>
+        <td className={cn(td, diff.has("plannedPayAt") && changedCell)}>
           <InlineDateInput
             value={p.plannedPayAt ? toLocalDateString(new Date(p.plannedPayAt)) : ""}
             disabled={!isAdmin}
             onSave={(d) => patchPaymentPlannedDate(p.id, d)}
           />
         </td>
-        <td className={cn(td, "whitespace-nowrap")}>{formatDate(p.paidAt)}</td>
-        <td className={cn(td, "min-w-[140px]")}><StatusBadge status={p.paymentStatus} type="payment" /></td>
-        <td className={cn(td, cellClip, "text-neutral-600")} title={p.bankAccount?.name ?? undefined}>
+        <td className={cn(td, "whitespace-nowrap", diff.has("paidAt") && changedCell)}>{formatDate(p.paidAt)}</td>
+        <td className={cn(td, "min-w-[140px]", diff.has("paymentStatus") && changedCell)}><StatusBadge status={p.paymentStatus} type="payment" /></td>
+        <td className={cn(td, cellClip, "text-neutral-600", diff.has("bankAccount") && changedCell)} title={p.bankAccount?.name ?? undefined}>
           <div className="truncate">{p.bankAccount?.name ?? "—"}</div>
         </td>
         <td className={cn(td, stickyActionsCell, active && "bg-blue-100")}>
@@ -897,7 +1004,10 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
         </div>
       )}
 
-      <div className="flex-1 min-h-0 min-w-0 overflow-auto rounded-md border bg-white">
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 min-w-0 overflow-auto rounded-md border bg-white"
+      >
         {loading ? (
           <div className="text-sm text-neutral-400 py-8 text-center">Загрузка...</div>
         ) : isEmpty ? (
@@ -952,7 +1062,8 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
                       onMouseLeave={() => setHoverPaymentId(null)}
                       className={cn(
                         "border-l-2 transition-colors",
-                        active ? "bg-blue-100 border-l-blue-500" : "bg-blue-50 hover:bg-blue-100 border-l-blue-300"
+                        active ? "bg-blue-100 border-l-blue-500" : "bg-blue-50 hover:bg-blue-100 border-l-blue-300",
+                        comparisonRowClass(w.id, compareWorks)
                       )}
                     >
                       <WorkCells w={w} />
@@ -964,7 +1075,8 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
                     onMouseLeave={() => setHoverPaymentId(null)}
                     className={cn(
                       "border-l-2 border-b-2 border-b-neutral-200 transition-colors font-medium",
-                      active ? "bg-emerald-100 border-l-emerald-600" : "bg-emerald-50 hover:bg-emerald-100 border-l-emerald-400"
+                      active ? "bg-emerald-100 border-l-emerald-600" : "bg-emerald-50 hover:bg-emerald-100 border-l-emerald-400",
+                      comparisonRowClass(g.payment.id, comparePayments)
                     )}
                   >
                     <PaymentCells p={g.payment} />
@@ -980,11 +1092,20 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
               )}
               {unlinkedItems.map((item) =>
                 item.kind === "work" ? (
-                  <tr key={item.work.id} className="hover:bg-neutral-50">
+                  <tr
+                    key={item.work.id}
+                    className={cn("hover:bg-neutral-50", comparisonRowClass(item.work.id, compareWorks))}
+                  >
                     <WorkCells w={item.work} />
                   </tr>
                 ) : (
-                  <tr key={item.payment.id} className="bg-emerald-50/60 hover:bg-emerald-100 font-medium">
+                  <tr
+                    key={item.payment.id}
+                    className={cn(
+                      "bg-emerald-50/60 hover:bg-emerald-100 font-medium",
+                      comparisonRowClass(item.payment.id, comparePayments)
+                    )}
+                  >
                     <PaymentCells p={item.payment} />
                   </tr>
                 )
@@ -1148,8 +1269,8 @@ function DateInput({
   value: string;
   onChange: (v: string) => void;
   className?: string;
-  /** Предзаполнение при первом фокусе на пустом поле */
-  onEmptyFocus?: () => void;
+  /** Предзаполнение при первом фокусе на пустом поле — вернуть YYYY-MM-DD */
+  onEmptyFocus?: () => string;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   return (
@@ -1163,7 +1284,9 @@ function DateInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onFocus={() => {
-          if (!value && onEmptyFocus) onEmptyFocus();
+          if (value) return;
+          const next = onEmptyFocus?.();
+          if (next) onChange(next);
         }}
         className={`w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer ${className ?? ""}`}
       />
@@ -1224,12 +1347,15 @@ function InlineDateInput({ value, disabled, onSave }: { value: string; disabled?
   const [localVal, setLocalVal] = useState(value);
   const [saving, setSaving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const openedEmpty = useRef(false);
 
   useEffect(() => { if (editing && inputRef.current) { inputRef.current.focus(); try { inputRef.current.showPicker(); } catch { /* ignore */ } } }, [editing]);
 
   async function handleBlur() {
     setEditing(false);
-    if (localVal === value) return;
+    // Если открыли пустую ячейку и подставили 5/20 — тоже сохраняем
+    if (localVal === value && !openedEmpty.current) return;
+    openedEmpty.current = false;
     setSaving(true);
     try { await onSave(localVal || null); } catch { toast.error("Не удалось сохранить дату"); } finally { setSaving(false); }
   }
@@ -1245,7 +1371,7 @@ function InlineDateInput({ value, disabled, onSave }: { value: string; disabled?
         value={localVal}
         onChange={(e) => setLocalVal(e.target.value)}
         onBlur={handleBlur}
-        onKeyDown={(e) => { if (e.key === "Escape") { setEditing(false); setLocalVal(value); } }}
+        onKeyDown={(e) => { if (e.key === "Escape") { setEditing(false); setLocalVal(value); openedEmpty.current = false; } }}
         disabled={saving}
       />
     );
@@ -1256,8 +1382,13 @@ function InlineDateInput({ value, disabled, onSave }: { value: string; disabled?
       type="button"
       className="text-[10px] text-left w-full hover:text-blue-600 hover:underline cursor-pointer"
       onClick={() => {
-        const next = value || toLocalDateString(nearestPaymentDate());
-        setLocalVal(next);
+        if (!value) {
+          openedEmpty.current = true;
+          setLocalVal(toLocalDateString(nearestPaymentDate()));
+        } else {
+          openedEmpty.current = false;
+          setLocalVal(value);
+        }
         setEditing(true);
       }}
     >
@@ -1311,6 +1442,8 @@ function CreateWorkDialog({ executorId, onClose, onCreated }: { executorId: stri
     if (!projectId || !workTypeId || !techTask || !amount) { toast.error("Заполните обязательные поля"); return; }
     setSaving(true);
     try {
+      // Пустое поле = ближайшее 5/20 (как на сервере), чтобы дата точно ушла в БД
+      const planDate = plannedPayAt || toLocalDateString(nearestPaymentDate());
       const r = await fetch(`/api/executors/${executorId}/works`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1321,7 +1454,7 @@ function CreateWorkDialog({ executorId, onClose, onCreated }: { executorId: stri
           volume: volume ? parseDecimal(volume) : null,
           rate: rate ? parseDecimal(rate) : null,
           amount: parseDecimal(amount),
-          plannedPayAt: plannedPayAt || null,
+          plannedPayAt: planDate,
           link: link || null, report: report || null, comment: comment || null,
         }),
       });
@@ -1384,7 +1517,7 @@ function CreateWorkDialog({ executorId, onClose, onCreated }: { executorId: stri
             <div className="space-y-1.5"><Label>Ставка</Label><MoneyInput value={rate} onChange={setRate} placeholder="0" /></div>
             <div className="space-y-1.5"><Label>Сумма *</Label><MoneyInput value={amount} onChange={setAmount} placeholder="0" /></div>
           </div>
-          <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => setPlannedPayAt(toLocalDateString(nearestPaymentDate()))} /></div>
+          <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => toLocalDateString(nearestPaymentDate())} /></div>
           <div className="space-y-1.5"><Label>Ссылка</Label><Input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://..." /></div>
           <div className="space-y-1.5"><Label>Отчёт</Label><Textarea value={report} onChange={(e) => setReport(e.target.value)} placeholder="Текст отчёта" rows={3} className="field-sizing-fixed min-w-0 resize-y break-words text-xs" /></div>
           <div className="space-y-1.5"><Label>Комментарий</Label><Input value={comment} onChange={(e) => setComment(e.target.value)} /></div>
@@ -1450,6 +1583,10 @@ function EditWorkDialog({
   async function handleSave() {
     setSaving(true);
     try {
+      // Без выплаты дата план должна писаться в Work; пустое → ближайшее 5/20
+      const planDate = isLinked
+        ? undefined
+        : (plannedPayAt || toLocalDateString(nearestPaymentDate()));
       const r = await fetch(`/api/executors/${executorId}/works/${work.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -1461,7 +1598,7 @@ function EditWorkDialog({
           rate: rate ? parseDecimal(rate) : null,
           amount: parseDecimal(amount),
           responsibleExecutorId: responsibleExecutorId || null,
-          ...(isLinked ? {} : { plannedPayAt: plannedPayAt || null }),
+          ...(planDate !== undefined ? { plannedPayAt: planDate } : {}),
           link: link || null, report: report || null,
           ...(isAdmin && !isLinked ? { workStatus } : {}),
           comment: comment || null,
@@ -1530,7 +1667,7 @@ function EditWorkDialog({
             <div className="space-y-1.5"><Label>Сумма</Label><MoneyInput value={amount} onChange={setAmount} /></div>
           </div>
           {!isLinked && (
-            <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => setPlannedPayAt(toLocalDateString(nearestPaymentDate()))} /></div>
+            <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => toLocalDateString(nearestPaymentDate())} /></div>
           )}
           {isAdmin && !isLinked && (
             <div className="space-y-1.5">
@@ -1584,7 +1721,7 @@ function CreatePaymentDialog({ executorId, bankAccounts, onClose, onCreated }: {
           amount: amount ? parseDecimal(amount) : 0,
           paymentStatus: "planned",
           bankAccountId: bankAccountId || null,
-          plannedPayAt: plannedPayAt || null,
+          plannedPayAt: plannedPayAt || toLocalDateString(nearestPaymentDate()),
           comment: comment || null,
         }),
       });
@@ -1626,7 +1763,7 @@ function CreatePaymentDialog({ executorId, bankAccounts, onClose, onCreated }: {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => setPlannedPayAt(toLocalDateString(nearestPaymentDate()))} /></div>
+          <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => toLocalDateString(nearestPaymentDate())} /></div>
           <div className="space-y-1.5"><Label>Комментарий</Label><Input value={comment} onChange={(e) => setComment(e.target.value)} /></div>
         </div>
         <DialogFooter>
@@ -1718,7 +1855,7 @@ function EditPaymentDialog({
       const body: Record<string, unknown> = {
         paymentStatus,
         bankAccountId: bankAccountId || null,
-        plannedPayAt: plannedPayAt || null,
+        plannedPayAt: plannedPayAt || toLocalDateString(nearestPaymentDate()),
         comment: comment || null,
         filledTechTask: filledTechTask || null,
         filledAct: filledAct || null,
@@ -1766,7 +1903,7 @@ function EditPaymentDialog({
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => setPlannedPayAt(toLocalDateString(nearestPaymentDate()))} /></div>
+          <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => toLocalDateString(nearestPaymentDate())} /></div>
           <div className="space-y-1.5"><Label>Комментарий</Label><Input value={comment} onChange={(e) => setComment(e.target.value)} /></div>
           <div className="space-y-1.5"><Label>Заполненное ТЗ (URL)</Label><Input value={filledTechTask} onChange={(e) => setFilledTechTask(e.target.value)} placeholder="https://..." /></div>
           <div className="space-y-1.5"><Label>Заполненный акт (URL)</Label><Input value={filledAct} onChange={(e) => setFilledAct(e.target.value)} placeholder="https://..." /></div>

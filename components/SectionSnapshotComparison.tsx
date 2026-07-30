@@ -333,7 +333,7 @@ const EXECUTOR_COLUMNS: CompareColumn[] = [
   },
   {
     key: "accessEmail",
-    label: "Email доступа",
+    label: "Email для доступа",
     fields: ["accessEmail"],
     render: ({ record }) => str(record.accessEmail) || "—",
   },
@@ -1071,8 +1071,7 @@ function SideCells({
       >
         {value ? marker : "·"}
       </td>
-      {columns.map((col, index) => {
-        const isLast = index === columns.length - 1;
+      {columns.map((col) => {
         const highlighted =
           !!value && (col.fields ?? []).some((f) => changed.has(f));
         const content = value
@@ -1082,10 +1081,9 @@ function SideCells({
           <td
             key={`${side}-${col.key}`}
             className={cn(
-              "px-1.5 py-1 text-[11px] leading-tight align-middle",
+              "whitespace-nowrap px-1.5 py-1 text-[11px] leading-tight align-middle",
               col.align === "right" && "text-right tabular-nums",
               highlighted && "bg-amber-100/80 font-medium text-amber-950",
-              side === "A" && isLast && "border-r-2 border-neutral-300",
               !value && "text-neutral-300"
             )}
           >
@@ -1098,6 +1096,82 @@ function SideCells({
 }
 
 type TaggedRow = DiffRow & { model: string };
+
+function ComparisonSideTable({
+  side,
+  label,
+  rows,
+  columns,
+  refs,
+}: {
+  side: "A" | "B";
+  label: string;
+  rows: TaggedRow[];
+  columns: CompareColumn[];
+  refs: RefMaps;
+}) {
+  const colSpan = columns.length + 1;
+  return (
+    <table className="min-w-max border-collapse text-[11px] leading-tight">
+      <thead className="sticky top-0 z-10">
+        <tr className="bg-neutral-100">
+          <th
+            colSpan={colSpan}
+            className="border-b border-neutral-200 px-2 py-1 text-left text-[10px] font-semibold text-neutral-700"
+          >
+            {side} · {label}
+          </th>
+        </tr>
+        <tr className="bg-neutral-50">
+          <th className="border-b px-1 py-1 text-left text-[10px] font-medium text-neutral-500">
+            Δ
+          </th>
+          {columns.map((col) => (
+            <th
+              key={`${side}-${col.key}`}
+              className={cn(
+                "whitespace-nowrap border-b px-1.5 py-1 text-left text-[10px] font-medium text-neutral-500",
+                col.align === "right" && "text-right"
+              )}
+            >
+              {col.label}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.length === 0 ? (
+          <tr>
+            <td colSpan={colSpan} className="px-3 py-8 text-center text-neutral-500">
+              Нет строк для сравнения
+            </td>
+          </tr>
+        ) : (
+          rows.map((row) => (
+            <tr
+              key={`${row.model}:${row.key}`}
+              className={cn(
+                "h-7 border-b border-neutral-100",
+                row.status === "added" && "bg-green-50/70",
+                row.status === "removed" && "bg-red-50/70",
+                row.status === "modified" && "bg-amber-50/40",
+                row.status === "unchanged" && "bg-white"
+              )}
+            >
+              <SideCells
+                row={row}
+                model={row.model}
+                side={side}
+                columns={columns}
+                refs={refs}
+              />
+            </tr>
+          ))
+        )}
+      </tbody>
+    </table>
+  );
+}
 
 export function SectionSnapshotComparison({
   section,
@@ -1120,6 +1194,8 @@ export function SectionSnapshotComparison({
   const [model, setModel] = React.useState("");
   const [error, setError] = React.useState("");
   const [showAll, setShowAll] = React.useState(false);
+  const scrollARef = React.useRef<HTMLDivElement>(null);
+  const scrollBRef = React.useRef<HTMLDivElement>(null);
   const refMaps = useReferenceMaps(diff);
   const entityFilter = filter ?? null;
   const config = SECTION_COMPARE_CONFIG[section] ?? null;
@@ -1151,6 +1227,30 @@ export function SectionSnapshotComparison({
       });
     return () => controller.abort();
   }, [sourceA, sourceB, section, config?.preferredModel, config?.rowModels]);
+
+  React.useEffect(() => {
+    if (!diff) return;
+    const a = scrollARef.current;
+    const b = scrollBRef.current;
+    if (!a || !b) return;
+    let syncing = false;
+    const syncTop = (from: HTMLDivElement, to: HTMLDivElement) => {
+      if (syncing) return;
+      syncing = true;
+      to.scrollTop = from.scrollTop;
+      requestAnimationFrame(() => {
+        syncing = false;
+      });
+    };
+    const onA = () => syncTop(a, b);
+    const onB = () => syncTop(b, a);
+    a.addEventListener("scroll", onA, { passive: true });
+    b.addEventListener("scroll", onB, { passive: true });
+    return () => {
+      a.removeEventListener("scroll", onA);
+      b.removeEventListener("scroll", onB);
+    };
+  }, [diff, model, onlyChanges, showAll, filter?.field, filter?.id]);
 
   if (error) {
     return <div className="m-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>;
@@ -1227,8 +1327,6 @@ export function SectionSnapshotComparison({
   const allRows = tagged;
   const rows = showAll ? allRows : allRows.slice(0, COMPARE_ROW_LIMIT);
   const truncated = allRows.length > rows.length;
-  const sideColSpan = columns.length + 1;
-
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col bg-white">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5">
@@ -1259,77 +1357,25 @@ export function SectionSnapshotComparison({
           </button>
         )}
       </div>
-      <div className="min-h-0 min-w-0 flex-1 overflow-auto">
-        <table className="min-w-max border-collapse text-[11px] leading-tight">
-          <thead className="sticky top-0 z-10">
-            <tr className="bg-neutral-100">
-              <th
-                colSpan={sideColSpan}
-                className="border-b border-r-2 border-neutral-300 px-2 py-1 text-left text-[10px] font-semibold text-neutral-700"
-              >
-                A · {labelA}
-              </th>
-              <th
-                colSpan={sideColSpan}
-                className="border-b border-neutral-200 px-2 py-1 text-left text-[10px] font-semibold text-neutral-700"
-              >
-                B · {labelB}
-              </th>
-            </tr>
-            <tr className="bg-neutral-50">
-              <th className="border-b px-1 py-1 text-left text-[10px] font-medium text-neutral-500">Δ</th>
-              {columns.map((col, index) => (
-                <th
-                  key={`a-${col.key}`}
-                  className={cn(
-                    "border-b px-1.5 py-1 text-left text-[10px] font-medium text-neutral-500",
-                    col.align === "right" && "text-right",
-                    index === columns.length - 1 && "border-r-2 border-neutral-300"
-                  )}
-                >
-                  {col.label}
-                </th>
-              ))}
-              <th className="border-b px-1 py-1 text-left text-[10px] font-medium text-neutral-500">Δ</th>
-              {columns.map((col) => (
-                <th
-                  key={`b-${col.key}`}
-                  className={cn(
-                    "border-b px-1.5 py-1 text-left text-[10px] font-medium text-neutral-500",
-                    col.align === "right" && "text-right"
-                  )}
-                >
-                  {col.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td colSpan={sideColSpan * 2} className="px-3 py-8 text-center text-neutral-500">
-                  Нет строк для сравнения
-                </td>
-              </tr>
-            ) : (
-              rows.map((row) => (
-                <tr
-                  key={`${row.model}:${row.key}`}
-                  className={cn(
-                    "border-b border-neutral-100",
-                    row.status === "added" && "bg-green-50/70",
-                    row.status === "removed" && "bg-red-50/70",
-                    row.status === "modified" && "bg-amber-50/40",
-                    row.status === "unchanged" && "bg-white"
-                  )}
-                >
-                  <SideCells row={row} model={row.model} side="A" columns={columns} refs={refMaps} />
-                  <SideCells row={row} model={row.model} side="B" columns={columns} refs={refMaps} />
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-2 gap-px bg-neutral-300">
+        <div ref={scrollARef} className="min-h-0 min-w-0 overflow-auto bg-white">
+          <ComparisonSideTable
+            side="A"
+            label={labelA}
+            rows={rows}
+            columns={columns}
+            refs={refMaps}
+          />
+        </div>
+        <div ref={scrollBRef} className="min-h-0 min-w-0 overflow-auto bg-white">
+          <ComparisonSideTable
+            side="B"
+            label={labelB}
+            rows={rows}
+            columns={columns}
+            refs={refMaps}
+          />
+        </div>
       </div>
     </div>
   );

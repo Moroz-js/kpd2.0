@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { MONTHS, formatDate } from "@/lib/format";
+import { nearestPaymentDate, toLocalDateString } from "@/lib/iso-weeks";
 import { sortByNameRu } from "@/lib/sort";
 import { WORK_STATUSES, WORK_STATUSES_SETTABLE, EXECUTOR_TYPES, PROJECT_TYPES } from "@/lib/statuses";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
@@ -88,12 +89,12 @@ export function IssuedWorkEditDialog({
     };
     if (!statusLocked) payload.workStatus = workStatus;
     if (isPersonal) {
-      payload.plannedPayAt = plannedPayAt || null;
+      payload.plannedPayAt = plannedPayAt || toLocalDateString(nearestPaymentDate());
     } else {
       payload.executionMonth = Number(executionMonth);
       payload.executionYear = Number(executionYear);
       payload.executorId = executorId;
-      payload.plannedPayAt = plannedPayAt || null;
+      payload.plannedPayAt = plannedPayAt || toLocalDateString(nearestPaymentDate());
     }
 
     setSubmitting(true);
@@ -159,7 +160,9 @@ export function IssuedWorkEditDialog({
             </div>
             <div>
               <span className="text-neutral-500">Дата оплаты план: </span>
-              <span className="font-medium">{formatDate(row.plannedPayAt)}</span>
+              <span className="font-medium">
+                {formatDate(plannedPayAt || row.plannedPayAt)}
+              </span>
             </div>
           </div>
 
@@ -208,6 +211,7 @@ export function IssuedWorkEditDialog({
                 id="plannedPayAt"
                 value={plannedPayAt}
                 onChange={(e) => setPlannedPayAt(e.target.value)}
+                onEmptyFocus={() => toLocalDateString(nearestPaymentDate())}
               />
             </div>
           ) : (
@@ -267,6 +271,7 @@ export function IssuedWorkEditDialog({
                   id="plannedPayAt"
                   value={plannedPayAt}
                   onChange={(e) => setPlannedPayAt(e.target.value)}
+                  onEmptyFocus={() => toLocalDateString(nearestPaymentDate())}
                 />
               </div>
             </>

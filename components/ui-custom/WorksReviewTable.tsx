@@ -32,6 +32,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { BulkSelectTableBody } from "@/components/ui-custom/BulkSelectTableBody";
+import {
+  usePersistedInterfaceState,
+  usePersistedScroll,
+} from "@/components/PersistedInterfaceState";
 import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner } from "@/lib/table-styles";
 
@@ -189,11 +193,13 @@ function SortableHead({
  */
 export function WorksReviewTable({
   fetchUrl,
+  stateKey,
   emptyText = "Работ пока нет.",
   showProjectColumn = true,
   showExecutorFilter = true,
 }: {
   fetchUrl: string;
+  stateKey: string;
   emptyText?: string;
   showProjectColumn?: boolean;
   showExecutorFilter?: boolean;
@@ -214,6 +220,44 @@ export function WorksReviewTable({
   const [busyIds, setBusyIds] = React.useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = React.useState(false);
   const [sort, setSort] = React.useState<SortState>(null);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  usePersistedInterfaceState(
+    `works-review:${stateKey}`,
+    {
+      executorFilter,
+      statusFilter,
+      projectFilter,
+      workTypeFilter,
+      weekFilter,
+      monthFilter,
+      hidePaid,
+      sort,
+    },
+    (stored) => {
+      if (stored.executorFilter) setExecutorFilter(stored.executorFilter);
+      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
+      if (stored.projectFilter) setProjectFilter(stored.projectFilter);
+      if (stored.workTypeFilter) setWorkTypeFilter(stored.workTypeFilter);
+      if (stored.weekFilter) setWeekFilter(stored.weekFilter);
+      if (stored.monthFilter) setMonthFilter(stored.monthFilter);
+      if ("hidePaid" in stored) setHidePaid(Boolean(stored.hidePaid));
+      if ("sort" in stored) setSort(stored.sort ?? null);
+    }
+  );
+  usePersistedScroll(scrollRef, `works-review:${stateKey}`, {
+    enabled: !isLoading && !!data,
+    signature: {
+      executorFilter,
+      statusFilter,
+      projectFilter,
+      workTypeFilter,
+      weekFilter,
+      monthFilter,
+      hidePaid,
+      sort,
+    },
+  });
 
   function handleSort(key: SortKey) {
     setSort((prev) => {
@@ -433,6 +477,7 @@ export function WorksReviewTable({
       <Table
         className="min-w-[1250px]"
         containerClassName="rounded-md border bg-white max-h-[60vh] overflow-auto"
+        containerRef={scrollRef}
       >
         <TableHeader className="sticky top-0 z-10 bg-white">
           {rows.length > 0 && (

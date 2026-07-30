@@ -218,7 +218,6 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
         if (!target) return;
         syncing = true;
         target.scrollTop = event.target.scrollTop;
-        target.scrollLeft = event.target.scrollLeft;
         requestAnimationFrame(() => {
           syncing = false;
         });
@@ -254,7 +253,7 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
           <div className="shrink-0 border-b bg-white px-4 py-2 text-xs font-medium text-neutral-600">
             {panel}: {snapshotSourceLabel(activeSource, snapshots)} · только чтение
           </div>
-          <div className="min-h-0 min-w-0 flex-1 overflow-auto">{children}</div>
+          <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">{children}</div>
         </div>
       </ComparisonContext.Provider>
     );
@@ -366,15 +365,13 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
               </SelectContent>
             </Select>
           </div>
-          {(!isDetailUiCompare || isExecutorDetail) && (
-            <label className="ml-1 flex items-center gap-1.5 text-xs text-neutral-700">
-              <Checkbox
-                checked={onlyChanges}
-                onCheckedChange={(checked) => replaceParams({ onlyChanges: checked === true ? "1" : null })}
-              />
-              Только изменения
-            </label>
-          )}
+          <label className="ml-1 flex items-center gap-1.5 text-xs text-neutral-700">
+            <Checkbox
+              checked={onlyChanges}
+              onCheckedChange={(checked) => replaceParams({ onlyChanges: checked === true ? "1" : null })}
+            />
+            Только изменения
+          </label>
           {isDetailUiCompare && (
             <Button
               type="button"
@@ -417,14 +414,14 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
               onLoad={() => setFramesLoaded((value) => value + 1)}
               title="Состояние A"
               src={panelUrl("A")}
-              className="h-full min-h-[45vh] w-full bg-white"
+              className="h-full min-h-[45vh] min-w-0 w-full bg-white"
             />
             <iframe
               ref={frameB}
               onLoad={() => setFramesLoaded((value) => value + 1)}
               title="Состояние B"
               src={panelUrl("B")}
-              className="h-full min-h-[45vh] w-full bg-white"
+              className="h-full min-h-[45vh] min-w-0 w-full bg-white"
             />
           </div>
         ) : !canCompareTable ? (

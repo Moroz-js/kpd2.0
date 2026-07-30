@@ -12,6 +12,7 @@ import { SettingsTab } from "./SettingsTab";
 import { EXECUTOR_TYPES } from "@/lib/statuses";
 import { normalizeExecutorType } from "@/lib/executor-type";
 import { hasPersonalSmeta } from "@/lib/executor-personal-estimate";
+import { usePersistedInterfaceState } from "@/components/PersistedInterfaceState";
 
 type WorkType = { id: string; name: string };
 type Project = { id: string; name: string; status: string };
@@ -30,6 +31,7 @@ type ExecutorDetail = {
   recipientType: string | null;
   defaultBankAccountId: string | null;
   oldEstimateUrl: string | null;
+  specialty: string | null;
   specialties: string | null;
   companyStatus: string | null;
   contractFile: string | null;
@@ -89,6 +91,22 @@ export function ExecutorEstimateClient({
     return "works";
   });
   const [openTaskCount, setOpenTaskCount] = useState(0);
+
+  usePersistedInterfaceState(
+    `executor:${executorId}:estimate`,
+    { activeTab },
+    (stored) => {
+      if (initialTab !== undefined) return;
+      if (
+        stored.activeTab === "works" ||
+        stored.activeTab === "vacations" ||
+        stored.activeTab === "tasks" ||
+        stored.activeTab === "settings"
+      ) {
+        setActiveTab(stored.activeTab);
+      }
+    }
+  );
 
   const loadExecutor = useCallback(async () => {
     const r = await fetch(`/api/executors/${executorId}`);
@@ -161,7 +179,7 @@ export function ExecutorEstimateClient({
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-3rem)] text-sm text-neutral-400">
+      <div className="flex items-center justify-center h-full text-sm text-neutral-400">
         Загрузка...
       </div>
     );
@@ -169,7 +187,7 @@ export function ExecutorEstimateClient({
 
   if (!executor) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-3rem)] text-sm text-neutral-500">
+      <div className="flex items-center justify-center h-full text-sm text-neutral-500">
         Исполнитель не найден или нет доступа.
       </div>
     );
@@ -183,9 +201,12 @@ export function ExecutorEstimateClient({
         ...TABS.filter((t) => !(t.id === "vacations" && isExternalOwner)),
         ...(canSeeSettings ? [{ id: "settings" as TabId, label: "Настройки" }] : []),
       ];
+  const selectedTab = visibleTabs.some((tab) => tab.id === activeTab)
+    ? activeTab
+    : (visibleTabs[0]?.id ?? activeTab);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] min-h-0 gap-3">
+    <div className="flex flex-col h-full min-h-0 gap-3">
       {/* Header */}
       <div className="shrink-0 flex items-start justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -231,7 +252,7 @@ export function ExecutorEstimateClient({
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-                activeTab === tab.id
+                selectedTab === tab.id
                   ? "border-blue-600 text-blue-600"
                   : "border-transparent text-neutral-500 hover:text-neutral-800 hover:border-neutral-300"
               }`}
@@ -249,7 +270,7 @@ export function ExecutorEstimateClient({
 
       {/* Tab content */}
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        {hasPersonalEstimate && activeTab === "works" && (
+        {hasPersonalEstimate && selectedTab === "works" && (
           <WorksTab
             executorId={executorId}
             isAdmin={isAdmin}
@@ -257,10 +278,10 @@ export function ExecutorEstimateClient({
             bankAccounts={bankAccounts}
           />
         )}
-        {hasPersonalEstimate && activeTab === "vacations" && (
+        {hasPersonalEstimate && selectedTab === "vacations" && (
           <VacationsTab executorId={executorId} isAdmin={isAdmin} isOwner={isOwner} />
         )}
-        {hasPersonalEstimate && activeTab === "tasks" && (
+        {hasPersonalEstimate && selectedTab === "tasks" && (
           <TasksTab
             executorId={executorId}
             isAdmin={isAdmin}
@@ -269,7 +290,7 @@ export function ExecutorEstimateClient({
             onTaskCountChange={setOpenTaskCount}
           />
         )}
-        {activeTab === "settings" && canSeeSettings && (
+        {selectedTab === "settings" && canSeeSettings && (
           <div className="flex-1 min-h-0 overflow-y-auto">
             <SettingsTab
               executorId={executorId}

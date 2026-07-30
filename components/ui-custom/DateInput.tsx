@@ -9,8 +9,14 @@ import { cn } from "@/lib/utils";
  */
 export function DateInput({
   className,
+  onEmptyFocus,
+  onChange,
+  value,
   ...props
-}: React.InputHTMLAttributes<HTMLInputElement>) {
+}: React.InputHTMLAttributes<HTMLInputElement> & {
+  /** Предзаполнение при фокусе на пустом поле — вернуть YYYY-MM-DD */
+  onEmptyFocus?: () => string;
+}) {
   const ref = useRef<HTMLInputElement>(null);
 
   function handleClick() {
@@ -21,7 +27,25 @@ export function DateInput({
     <input
       ref={ref}
       type="date"
-      onClick={handleClick}
+      {...props}
+      value={value}
+      onClick={(e) => {
+        props.onClick?.(e);
+        handleClick();
+      }}
+      onFocus={(e) => {
+        props.onFocus?.(e);
+        if (value) return;
+        const next = onEmptyFocus?.();
+        if (next && onChange) {
+          onChange({
+            ...e,
+            target: { ...e.target, value: next },
+            currentTarget: { ...e.currentTarget, value: next },
+          } as React.ChangeEvent<HTMLInputElement>);
+        }
+      }}
+      onChange={onChange}
       className={cn(
         "flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm transition-colors",
         "cursor-pointer file:border-0 file:bg-transparent file:text-sm file:font-medium",
@@ -29,7 +53,6 @@ export function DateInput({
         "disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}
-      {...props}
     />
   );
 }

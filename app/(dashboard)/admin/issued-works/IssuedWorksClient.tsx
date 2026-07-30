@@ -285,7 +285,23 @@ export function IssuedWorksClient() {
       if (stored.sort) setSort(stored.sort);
     }
   );
-  usePersistedScroll(scrollRef, "issued-works-table", !isLoading && !!data);
+  usePersistedScroll(scrollRef, "issued-works-table", {
+    enabled: !isLoading && !!data,
+    signature: {
+      yearPlanFactFilter,
+      executionYearFilter,
+      executionMonthFilter,
+      weekFilter,
+      executorFilter,
+      projectFilter,
+      workTypeFilter,
+      statusFilter,
+      smetaFilter,
+      groupBy,
+      collapsedGroups,
+      sort,
+    },
+  });
 
   function compareRows(a: Row, b: Row): number {
     for (const s of sort) {
@@ -562,7 +578,7 @@ export function IssuedWorksClient() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] min-h-0">
+    <div className="flex flex-col h-full min-h-0">
       <PageHeader title="Выставленные работы" />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">

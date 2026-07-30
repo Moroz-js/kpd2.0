@@ -303,7 +303,10 @@ export function CashflowClient() {
       if (stored.showOldWeeks !== undefined) setShowOldWeeks(stored.showOldWeeks);
     }
   );
-  usePersistedScroll(tableScrollRef, `cashflow-table:${activeTab}`);
+  usePersistedScroll(tableScrollRef, `cashflow-table:${activeTab}`, {
+    enabled: !!data,
+    signature: { year, activeTab, showOldWeeks },
+  });
 
   const weeks = React.useMemo(
     () => (data && !("error" in data) ? data.weeks : []),
@@ -332,14 +335,14 @@ export function CashflowClient() {
 
   if (!data) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-3rem)] text-sm text-neutral-500">
+      <div className="flex items-center justify-center h-full text-sm text-neutral-500">
         Загрузка…
       </div>
     );
   }
   if ("error" in data) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-3rem)] text-sm text-neutral-500">
+      <div className="flex items-center justify-center h-full text-sm text-neutral-500">
         {data.error}
       </div>
     );
@@ -446,7 +449,7 @@ export function CashflowClient() {
     : [];
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] min-h-0 gap-3">
+    <div className="flex flex-col h-full min-h-0 gap-3">
       <div className="shrink-0 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">Кэшфлоу проектов</h1>
