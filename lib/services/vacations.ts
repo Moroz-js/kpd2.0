@@ -21,8 +21,11 @@ function calcDays(start: Date, end: Date): number {
   return Math.max(1, Math.round(diff / (1000 * 60 * 60 * 24)) + 1);
 }
 
-export async function listVacationsForExecutor(executorId: string) {
-  return prisma.vacationEntry.findMany({
+export async function listVacationsForExecutor(
+  executorId: string,
+  db: { vacationEntry: { findMany: typeof prisma.vacationEntry.findMany } } = prisma
+) {
+  return db.vacationEntry.findMany({
     where: { executorId },
     orderBy: { startAt: "asc" },
     include: {

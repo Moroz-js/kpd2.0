@@ -4,6 +4,7 @@
 import { prisma } from "@/lib/db";
 import { logActivity } from "@/lib/audit/log";
 import { nearestPaymentDate } from "@/lib/iso-weeks";
+import { parseLocalDateInput } from "@/lib/date-string";
 import { resolveProjectManagerExecutorId } from "@/lib/services/projects";
 import { allocateEntityNumber, withNumberedTransaction } from "@/lib/services/entity-numbering";
 
@@ -28,8 +29,11 @@ export type UpdateWorkInput = Partial<CreateWorkInput> & {
   paidAt?: string | null;
 };
 
-export async function listWorksForExecutor(executorId: string) {
-  return prisma.work.findMany({
+export async function listWorksForExecutor(
+  executorId: string,
+  db: { work: { findMany: typeof prisma.work.findMany } } = prisma
+) {
+  return db.work.findMany({
     where: { executorId },
     include: {
       project: { select: { id: true, name: true } },
@@ -84,7 +88,7 @@ export async function createWork(
         volume: input.volume ?? null,
         rate: input.rate ?? null,
         amount: input.amount,
-        plannedPayAt: input.plannedPayAt ? new Date(input.plannedPayAt) : nearestPaymentDate(),
+        plannedPayAt: input.plannedPayAt ? parseLocalDateInput(input.plannedPayAt) : nearestPaymentDate(),
         responsibleExecutorId: responsibleExecutorId ?? null,
         workStatus: "submitted",
         comment: input.comment ?? null,
@@ -149,7 +153,7 @@ export async function updateWork(
         ...(patch.rate !== undefined && { rate: patch.rate }),
         ...(patch.amount !== undefined && { amount: patch.amount }),
         ...(patch.plannedPayAt !== undefined && {
-          plannedPayAt: patch.plannedPayAt ? new Date(patch.plannedPayAt) : null,
+          plannedPayAt: patch.plannedPayAt ? parseLocalDateInput(patch.plannedPayAt) : null,
         }),
         ...(patch.responsibleExecutorId !== undefined && {
           responsibleExecutorId: patch.responsibleExecutorId,

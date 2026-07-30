@@ -198,7 +198,7 @@ export function ActivityClient() {
                         {ENTITY_LABELS[item.entityType] ?? item.entityType}
                       </td>
                       <td className="px-4 py-2 text-xs text-neutral-700">
-                        {item.entityLabel ?? item.entityId.slice(0, 8) + "…"}
+                        {item.entityLabel ?? "—"}
                       </td>
                       <td className="px-4 py-2 text-xs text-neutral-400">
                         {changes.length > 0 && (

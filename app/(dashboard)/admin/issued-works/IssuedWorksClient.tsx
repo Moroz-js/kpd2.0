@@ -102,19 +102,7 @@ const SMETA_LABEL: Record<SmetaType, string> = {
 };
 
 function smetaTypeCell(row: Row) {
-  if (row.sourceType === "personal") {
-    return row.executorAccessEmail ? (
-      <Link
-        href={`/admin/executors/${row.executorId}`}
-        className="text-blue-600 hover:underline"
-        title="Открыть личную смету"
-      >
-        {SMETA_LABEL.personal}
-      </Link>
-    ) : (
-      SMETA_LABEL.personal
-    );
-  }
+  if (row.sourceType === "personal") return SMETA_LABEL.personal;
   return SMETA_LABEL["other-expense"];
 }
 
@@ -193,11 +181,7 @@ const IssuedWorkRow = React.memo(function IssuedWorkRow({
       <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>
         {r.responsibleExecutorName ?? "—"}
       </TableCell>
-      <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>
-        <Link href={`/admin/projects/${r.projectId}`} className="hover:underline text-neutral-900">
-          {r.projectName}
-        </Link>
-      </TableCell>
+      <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>{r.projectName}</TableCell>
       <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>{r.workTypeName}</TableCell>
       <TableCell className={cn(compactCell, "text-right tabular-nums font-semibold")}>{formatMoney(r.amount)}</TableCell>
       <TableCell className={compactCell}>
@@ -301,7 +285,7 @@ export function IssuedWorksClient() {
       if (stored.sort) setSort(stored.sort);
     }
   );
-  usePersistedScroll(scrollRef, "issued-works-table");
+  usePersistedScroll(scrollRef, "issued-works-table", !isLoading && !!data);
 
   function compareRows(a: Row, b: Row): number {
     for (const s of sort) {

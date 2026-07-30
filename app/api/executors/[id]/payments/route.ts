@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import { canViewExecutorEstimate, isAdmin, isExecutor } from "@/lib/permissions";
+import { canViewExecutorEstimate, isAdmin } from "@/lib/permissions";
 import { createManualPayment } from "@/lib/services/payments";
-import { prisma } from "@/lib/db";
+import {
+  dataSourcePrismaAdapter,
+  resolveDataSource,
+  SnapshotSourceError,
+} from "@/lib/snapshots/data-source";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -17,7 +21,7 @@ const createSchema = z.object({
 });
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: executorId } = await params;
@@ -27,7 +31,20 @@ export async function GET(
   const allowed = await canViewExecutorEstimate(user, executorId);
   if (!allowed) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const payments = await prisma.payment.findMany({
+  let source;
+  try {
+    source = await resolveDataSource(
+      req.nextUrl.searchParams.get("source") ?? req.nextUrl.searchParams.get("snapshot")
+    );
+  } catch (error) {
+    if (error instanceof SnapshotSourceError) {
+      return NextResponse.json({ error: error.message }, { status: 404 });
+    }
+    throw error;
+  }
+  const db = dataSourcePrismaAdapter(source);
+
+  const payments = await db.payment.findMany({
     where: { executorId },
     include: {
       bankAccount: { select: { id: true, name: true } },

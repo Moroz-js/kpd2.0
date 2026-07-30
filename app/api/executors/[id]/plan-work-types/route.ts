@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { canViewExecutorEstimate } from "@/lib/permissions";
-import { prisma } from "@/lib/db";
+import {
+  dataSourcePrismaAdapter,
+  resolveDataSource,
+  SnapshotSourceError,
+} from "@/lib/snapshots/data-source";
 
 export async function GET(
   req: NextRequest,
@@ -17,19 +21,38 @@ export async function GET(
   if (!projectId)
     return NextResponse.json({ error: "projectId is required" }, { status: 400 });
 
-  const lines = await prisma.spendingPlanLine.findMany({
+  let source;
+  try {
+    source = await resolveDataSource(
+      req.nextUrl.searchParams.get("source") ?? req.nextUrl.searchParams.get("snapshot")
+    );
+  } catch (error) {
+    if (error instanceof SnapshotSourceError) {
+      return NextResponse.json({ error: error.message }, { status: 404 });
+    }
+    throw error;
+  }
+  const db = dataSourcePrismaAdapter(source);
+
+  const lines = await db.spendingPlanLine.findMany({
     where: { executorId, projectId },
     select: {
       workType: {
         select: { id: true, name: true },
       },
     },
-    distinct: ["workTypeId"],
   });
 
   const workTypes = lines
-    .filter((l) => l.workType)
-    .map((l) => ({ id: l.workType!.id, name: l.workType!.name }));
+    .filter((l: { workType?: { id: string; name: string } | null }) => l.workType)
+    .map((l: { workType: { id: string; name: string } }) => ({ id: l.workType.id, name: l.workType.name }));
 
-  return NextResponse.json(workTypes);
+  const seen = new Set<string>();
+  const unique = workTypes.filter((wt: { id: string }) => {
+    if (seen.has(wt.id)) return false;
+    seen.add(wt.id);
+    return true;
+  });
+
+  return NextResponse.json(unique);
 }

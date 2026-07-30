@@ -69,6 +69,7 @@ const RELATIONS: Partial<Record<SnapshotModel, Record<string, Relation>>> = {
     orders: { model: "Order", local: "id", foreign: "projectId", many: true },
   },
   Executor: {
+    user: { model: "User", local: "userId", foreign: "id" },
     responsibleUser: { model: "User", local: "responsibleUserId", foreign: "id" },
     defaultBankAccount: { model: "BankAccount", local: "defaultBankAccountId", foreign: "id" },
     executorWorkTypes: { model: "ExecutorWorkType", local: "id", foreign: "executorId", many: true },
@@ -94,6 +95,7 @@ const RELATIONS: Partial<Record<SnapshotModel, Record<string, Relation>>> = {
     project: { model: "Project", local: "projectId", foreign: "id" },
     workType: { model: "WorkType", local: "workTypeId", foreign: "id" },
     responsibleExecutor: { model: "Executor", local: "responsibleExecutorId", foreign: "id" },
+    payment: { model: "Payment", local: "paymentId", foreign: "id" },
   },
   OtherExpense: {
     executor: { model: "Executor", local: "executorId", foreign: "id" },
@@ -105,6 +107,7 @@ const RELATIONS: Partial<Record<SnapshotModel, Record<string, Relation>>> = {
   Payment: {
     executor: { model: "Executor", local: "executorId", foreign: "id" },
     bankAccount: { model: "BankAccount", local: "bankAccountId", foreign: "id" },
+    works: { model: "Work", local: "id", foreign: "paymentId", many: true },
   },
   SpendingPlanLine: {
     project: { model: "Project", local: "projectId", foreign: "id" },
@@ -122,6 +125,13 @@ const RELATIONS: Partial<Record<SnapshotModel, Record<string, Relation>>> = {
   },
   ProjectVerificationResult: {
     project: { model: "Project", local: "projectId", foreign: "id" },
+  },
+  Task: {
+    executor: { model: "Executor", local: "executorId", foreign: "id" },
+  },
+  VacationEntry: {
+    executor: { model: "Executor", local: "executorId", foreign: "id" },
+    approvedBy: { model: "User", local: "approvedById", foreign: "id" },
   },
 };
 

@@ -2,7 +2,8 @@
  * Единая точка форматирования денег/дат для UI.
  *
  * Правила (см. TZ-DORABOTKI.md §Глобальные правила):
- * - Деньги: разряды через неразрывный пробел, без знака валюты. Пример: "1 234 567".
+ * - Деньги: разряды через неразрывный пробел, без знака валюты.
+ *   Целые без копеек («1 234 567»), дробные до 2 знаков («0,75»).
  * - Дата:   dd.MM.yyyy (28.05.2026), отображение в Europe/Moscow.
  * - Время:  dd.MM.yyyy HH:mm.
  * - Неделя: "Неделя NN" (zero-pad).
@@ -14,7 +15,7 @@ const LOCALE = "ru-RU";
 const moneyFormatter = new Intl.NumberFormat(LOCALE, {
   style: "decimal",
   minimumFractionDigits: 0,
-  maximumFractionDigits: 0,
+  maximumFractionDigits: 2,
   useGrouping: true,
 });
 

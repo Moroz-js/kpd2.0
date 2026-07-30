@@ -13,8 +13,11 @@ const FK_RESOLVERS = {
   projectId: "project",
   clientId: "client",
   executorId: "executor",
+  responsibleExecutorId: "executor",
   workTypeId: "workType",
   responsibleUserId: "user",
+  createdById: "user",
+  userId: "user",
   orderId: "order",
 } as const;
 
@@ -102,7 +105,7 @@ async function buildLabelMaps(
       select: { id: true, orderNumber: true },
     });
     maps.order = Object.fromEntries(
-      rows.map((r) => [r.id, String(r.orderNumber)])
+      rows.map((r) => [r.id, `№${r.orderNumber}`])
     );
   }
 

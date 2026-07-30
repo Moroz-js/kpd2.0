@@ -117,11 +117,13 @@ export function usePersistedState<T>(
  */
 export function usePersistedScroll(
   ref: React.RefObject<HTMLElement | null>,
-  key: string
+  key: string,
+  enabled = true
 ) {
   const storageKey = useStorageKey(`scroll:${key}`);
 
   React.useEffect(() => {
+    if (!enabled) return;
     let element: HTMLElement | null = null;
     let bindTimeout: ReturnType<typeof setTimeout> | undefined;
     let saveTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -130,6 +132,7 @@ export function usePersistedScroll(
     let disposed = false;
     let restoring = false;
     let userTookOver = false;
+    let ignoreScroll = false;
     const bindDeadline = Date.now() + 10_000;
     const restoreDeadline = Date.now() + 20_000;
 
@@ -200,7 +203,11 @@ export function usePersistedScroll(
       }
 
       restoring = true;
+      ignoreScroll = true;
       element.scrollTo({ top, left, behavior: "auto" });
+      requestAnimationFrame(() => {
+        ignoreScroll = false;
+      });
 
       const maxTop = Math.max(0, element.scrollHeight - element.clientHeight);
       const maxLeft = Math.max(0, element.scrollWidth - element.clientWidth);
@@ -227,7 +234,12 @@ export function usePersistedScroll(
     };
 
     const onScroll = () => {
-      if (restoring) return;
+      // Программный scrollTo игнорируем; любой другой скролл (в т.ч. scrollbar) — жест пользователя
+      if (ignoreScroll) return;
+      if (restoring) {
+        userTookOver = true;
+        stopRestore();
+      }
       clearTimeout(saveTimeout);
       saveTimeout = setTimeout(() => saveFromElement("scroll"), 120);
     };
@@ -291,7 +303,7 @@ export function usePersistedScroll(
       element?.removeEventListener("keydown", onUserInteract);
       window.removeEventListener("pagehide", onPageHide);
     };
-  }, [ref, storageKey]);
+  }, [ref, storageKey, enabled]);
 }
 
 export function PersistedDashboardMain({

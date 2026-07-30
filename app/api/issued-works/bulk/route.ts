@@ -4,7 +4,7 @@ import { getSessionUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/permissions";
 import { updateIssuedWork, canReviewIssuedSource } from "@/lib/services/issuedWorks";
 import { WORK_STATUSES_SETTABLE } from "@/lib/statuses";
-import { zNullableDateString } from "@/lib/date-string";
+import { parseLocalDateInput, zNullableDateString } from "@/lib/date-string";
 
 const bulkSchema = z.object({
   ids: z.array(z.string()).min(1),
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
         ...patch,
         plannedPayAt: patch.plannedPayAt === undefined
           ? undefined
-          : patch.plannedPayAt ? new Date(patch.plannedPayAt) : null,
+          : patch.plannedPayAt ? parseLocalDateInput(patch.plannedPayAt) : null,
       };
       await updateIssuedWork(parsedId.sourceType, parsedId.sourceId, patchForService, me.id);
       updated++;

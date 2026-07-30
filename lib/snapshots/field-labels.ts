@@ -156,7 +156,7 @@ export const DATE_FIELDS = new Set([
 export const MONEY_FIELDS = new Set(["amount", "paymentAmount", "cashflowInitial"]);
 
 /** Поля-связи → какая справочная карта (id → имя) используется. */
-export const RELATION_FIELD_MAP: Record<string, "executor" | "project" | "workType" | "bankAccount" | "client" | "user"> = {
+export const RELATION_FIELD_MAP: Record<string, "executor" | "project" | "workType" | "bankAccount" | "client" | "user" | "order"> = {
   executorId: "executor",
   responsibleExecutorId: "executor",
   defaultBankAccountId: "bankAccount",
@@ -167,6 +167,7 @@ export const RELATION_FIELD_MAP: Record<string, "executor" | "project" | "workTy
   responsibleUserId: "user",
   createdById: "user",
   userId: "user",
+  orderId: "order",
 };
 
 /** Переопределения подписи для конкретных моделей (когда общий словарь неверен). */

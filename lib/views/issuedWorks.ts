@@ -72,9 +72,15 @@ function planFactWeek(plannedPayAt: Date | null, paidAt: Date | null): { week: n
   return { week: getISOWeek(d), year: d.getFullYear() };
 }
 
-export async function listIssuedWorks(filter: IssuedWorksFilter = {}): Promise<IssuedWorkRow[]> {
+export async function listIssuedWorks(
+  filter: IssuedWorksFilter = {},
+  db: {
+    work: { findMany: typeof prisma.work.findMany };
+    otherExpense: { findMany: typeof prisma.otherExpense.findMany };
+  } = prisma
+): Promise<IssuedWorkRow[]> {
   const [works, otherExpenses] = await Promise.all([
-    prisma.work.findMany({
+    db.work.findMany({
       include: {
         executor: { select: { id: true, name: true, type: true, accessEmail: true } },
         project: { select: { id: true, name: true, type: true } },
@@ -82,7 +88,7 @@ export async function listIssuedWorks(filter: IssuedWorksFilter = {}): Promise<I
         responsibleExecutor: { select: { id: true, name: true } },
       },
     }),
-    prisma.otherExpense.findMany({
+    db.otherExpense.findMany({
       include: {
         executor: { select: { id: true, name: true, type: true, accessEmail: true } },
         project: { select: { id: true, name: true, type: true } },

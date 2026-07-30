@@ -41,6 +41,7 @@ import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner } from "@/lib/table-styles";
 import { RowSelectCheckbox } from "@/components/ui-custom/RowSelectCheckbox";
 import { useTableRowSelection } from "@/lib/useTableRowSelection";
+import { useComparison } from "@/components/ComparisonProvider";
 
 type WorkType = { id: string; name: string };
 type Project = { id: string; name: string };
@@ -153,10 +154,47 @@ function worksCountLabel(n: number): string {
 const PAID_STATUSES_WORK = new Set(["paid"]);
 const PAID_STATUSES_PAYMENT = new Set(["paid"]);
 
+function workCompareKey(w: WorkRow): string {
+  return JSON.stringify({
+    projectId: w.projectId,
+    workTypeId: w.workTypeId,
+    executionYear: w.executionYear,
+    executionMonth: w.executionMonth,
+    techTask: w.techTask,
+    report: w.report,
+    link: w.link,
+    volume: w.volume,
+    rate: w.rate,
+    amount: w.amount,
+    plannedPayAt: w.plannedPayAt,
+    paidAt: w.paidAt,
+    workStatus: w.workStatus,
+    paymentId: w.paymentId,
+    responsibleExecutorId: w.responsibleExecutorId,
+    comment: w.comment,
+  });
+}
+
+function paymentCompareKey(p: AllPaymentRow): string {
+  return JSON.stringify({
+    amount: p.amount,
+    paymentStatus: p.paymentStatus,
+    plannedPayAt: p.plannedPayAt,
+    paidAt: p.paidAt,
+    bankAccountId: p.bankAccountId,
+    periodYear: p.periodYear,
+    periodMonth: p.periodMonth,
+    comment: p.comment,
+  });
+}
+
 export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccountsProp }: Props) {
+  const { onlyChanges, panel, sourceA, sourceB } = useComparison();
   const bankAccounts = React.useMemo(() => sortByNameRu(bankAccountsProp), [bankAccountsProp]);
   const [works, setWorks] = useState<WorkRow[]>([]);
   const [allPayments, setAllPayments] = useState<AllPaymentRow[]>([]);
+  const [compareWorkKeys, setCompareWorkKeys] = useState<Map<string, string> | null>(null);
+  const [comparePaymentKeys, setComparePaymentKeys] = useState<Map<string, string> | null>(null);
   const [permanentExecutors, setPermanentExecutors] = useState<ExecutorRef[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -209,6 +247,37 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
+    if (!onlyChanges || !panel) {
+      setCompareWorkKeys(null);
+      setComparePaymentKeys(null);
+      return;
+    }
+    const otherSource = panel === "A" ? sourceB : sourceA;
+    const controller = new AbortController();
+    const otherQs = `?source=${encodeURIComponent(otherSource || "live")}`;
+    Promise.all([
+      fetch(`/api/executors/${executorId}/works${otherQs}`, { signal: controller.signal }),
+      fetch(`/api/executors/${executorId}/payments${otherQs}`, { signal: controller.signal }),
+    ])
+      .then(async ([worksRes, paymentsRes]) => {
+        if (!worksRes.ok || !paymentsRes.ok) throw new Error();
+        const [worksData, paymentsData] = (await Promise.all([
+          worksRes.json(),
+          paymentsRes.json(),
+        ])) as [WorkRow[], AllPaymentRow[]];
+        setCompareWorkKeys(new Map(worksData.map((w) => [w.id, workCompareKey(w)])));
+        setComparePaymentKeys(new Map(paymentsData.map((p) => [p.id, paymentCompareKey(p)])));
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setCompareWorkKeys(null);
+        setComparePaymentKeys(null);
+        console.error(err);
+      });
+    return () => controller.abort();
+  }, [onlyChanges, panel, sourceA, sourceB, executorId]);
+
+  useEffect(() => {
     fetch("/api/executors/active-permanent")
       .then((r) => r.json())
       .then((d: ExecutorRef[]) => setPermanentExecutors(d))
@@ -239,6 +308,24 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
   const workOnlyFilterActive = !!(filterYear || filterMonth || filterProject);
   const paymentOnlyFilterActive = !!filterBank;
 
+  const workChanged = useCallback(
+    (w: WorkRow): boolean => {
+      if (!onlyChanges || !panel || !compareWorkKeys) return true;
+      const other = compareWorkKeys.get(w.id);
+      return other === undefined || other !== workCompareKey(w);
+    },
+    [onlyChanges, panel, compareWorkKeys]
+  );
+
+  const paymentChanged = useCallback(
+    (p: AllPaymentRow): boolean => {
+      if (!onlyChanges || !panel || !comparePaymentKeys) return true;
+      const other = comparePaymentKeys.get(p.id);
+      return other === undefined || other !== paymentCompareKey(p);
+    },
+    [onlyChanges, panel, comparePaymentKeys]
+  );
+
   const workPasses = useCallback(
     (w: WorkRow): boolean => {
       if (filterYear && String(w.executionYear) !== filterYear) return false;
@@ -247,9 +334,13 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
       if (filterWeek && payWeekText(w.paidAt ?? w.plannedPayAt) !== filterWeek) return false;
       if (filterStatus === "unpaid" && PAID_STATUSES_WORK.has(w.workStatus)) return false;
       if (filterStatus === "paid" && !PAID_STATUSES_WORK.has(w.workStatus)) return false;
+      if (!workChanged(w)) {
+        const parent = w.paymentId ? allPayments.find((p) => p.id === w.paymentId) : null;
+        if (!parent || !paymentChanged(parent)) return false;
+      }
       return true;
     },
-    [filterYear, filterMonth, filterProject, filterWeek, filterStatus]
+    [filterYear, filterMonth, filterProject, filterWeek, filterStatus, workChanged, paymentChanged, allPayments]
   );
 
   const paymentPasses = useCallback(
@@ -258,9 +349,14 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
       if (filterStatus === "unpaid" && PAID_STATUSES_PAYMENT.has(p.paymentStatus)) return false;
       if (filterStatus === "paid" && !PAID_STATUSES_PAYMENT.has(p.paymentStatus)) return false;
       if (filterBank && p.bankAccountId !== filterBank) return false;
+      if (!paymentChanged(p)) {
+        // Показать выплату, если изменилась хотя бы одна её работа
+        const linked = works.filter((w) => w.paymentId === p.id);
+        if (!linked.some((w) => workChanged(w))) return false;
+      }
       return true;
     },
-    [filterWeek, filterStatus, filterBank]
+    [filterWeek, filterStatus, filterBank, paymentChanged, workChanged, works]
   );
 
   // ── Группировка (§6) ────────────────────────────────────────────────────────
@@ -1043,7 +1139,18 @@ function MoneyInput({ value, onChange, placeholder, disabled, className }: {
   );
 }
 
-function DateInput({ value, onChange, className }: { value: string; onChange: (v: string) => void; className?: string }) {
+function DateInput({
+  value,
+  onChange,
+  className,
+  onEmptyFocus,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  className?: string;
+  /** Предзаполнение при первом фокусе на пустом поле */
+  onEmptyFocus?: () => void;
+}) {
   const ref = useRef<HTMLInputElement>(null);
   return (
     <div
@@ -1055,6 +1162,9 @@ function DateInput({ value, onChange, className }: { value: string; onChange: (v
         type="date"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onFocus={() => {
+          if (!value && onEmptyFocus) onEmptyFocus();
+        }}
         className={`w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer ${className ?? ""}`}
       />
     </div>
@@ -1142,7 +1252,15 @@ function InlineDateInput({ value, disabled, onSave }: { value: string; disabled?
   }
 
   return (
-    <button className="text-[10px] text-left w-full hover:text-blue-600 hover:underline cursor-pointer" onClick={() => { setLocalVal(value); setEditing(true); }}>
+    <button
+      type="button"
+      className="text-[10px] text-left w-full hover:text-blue-600 hover:underline cursor-pointer"
+      onClick={() => {
+        const next = value || toLocalDateString(nearestPaymentDate());
+        setLocalVal(next);
+        setEditing(true);
+      }}
+    >
       {value ? <span className="text-neutral-600">{formatDate(value)}</span> : <span className="text-neutral-300 hover:text-blue-400">поставить дату</span>}
     </button>
   );
@@ -1160,7 +1278,7 @@ function CreateWorkDialog({ executorId, onClose, onCreated }: { executorId: stri
   const [volume, setVolume] = useState("");
   const [rate, setRate] = useState("");
   const [amount, setAmount] = useState("");
-  const [plannedPayAt, setPlannedPayAt] = useState(toLocalDateString(nearestPaymentDate()));
+  const [plannedPayAt, setPlannedPayAt] = useState("");
   const [link, setLink] = useState("");
   const [report, setReport] = useState("");
   const [comment, setComment] = useState("");
@@ -1266,7 +1384,7 @@ function CreateWorkDialog({ executorId, onClose, onCreated }: { executorId: stri
             <div className="space-y-1.5"><Label>Ставка</Label><MoneyInput value={rate} onChange={setRate} placeholder="0" /></div>
             <div className="space-y-1.5"><Label>Сумма *</Label><MoneyInput value={amount} onChange={setAmount} placeholder="0" /></div>
           </div>
-          <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} /></div>
+          <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => setPlannedPayAt(toLocalDateString(nearestPaymentDate()))} /></div>
           <div className="space-y-1.5"><Label>Ссылка</Label><Input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://..." /></div>
           <div className="space-y-1.5"><Label>Отчёт</Label><Textarea value={report} onChange={(e) => setReport(e.target.value)} placeholder="Текст отчёта" rows={3} className="field-sizing-fixed min-w-0 resize-y break-words text-xs" /></div>
           <div className="space-y-1.5"><Label>Комментарий</Label><Input value={comment} onChange={(e) => setComment(e.target.value)} /></div>
@@ -1412,7 +1530,7 @@ function EditWorkDialog({
             <div className="space-y-1.5"><Label>Сумма</Label><MoneyInput value={amount} onChange={setAmount} /></div>
           </div>
           {!isLinked && (
-            <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} /></div>
+            <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => setPlannedPayAt(toLocalDateString(nearestPaymentDate()))} /></div>
           )}
           {isAdmin && !isLinked && (
             <div className="space-y-1.5">
@@ -1444,7 +1562,7 @@ function CreatePaymentDialog({ executorId, bankAccounts, onClose, onCreated }: {
   const [month, setMonth] = useState(String(now.getMonth() + 1));
   const [amount, setAmount] = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
-  const [plannedPayAt, setPlannedPayAt] = useState(toLocalDateString(nearestPaymentDate()));
+  const [plannedPayAt, setPlannedPayAt] = useState("");
   const [comment, setComment] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -1508,7 +1626,7 @@ function CreatePaymentDialog({ executorId, bankAccounts, onClose, onCreated }: {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} /></div>
+          <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => setPlannedPayAt(toLocalDateString(nearestPaymentDate()))} /></div>
           <div className="space-y-1.5"><Label>Комментарий</Label><Input value={comment} onChange={(e) => setComment(e.target.value)} /></div>
         </div>
         <DialogFooter>
@@ -1648,7 +1766,7 @@ function EditPaymentDialog({
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} /></div>
+          <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => setPlannedPayAt(toLocalDateString(nearestPaymentDate()))} /></div>
           <div className="space-y-1.5"><Label>Комментарий</Label><Input value={comment} onChange={(e) => setComment(e.target.value)} /></div>
           <div className="space-y-1.5"><Label>Заполненное ТЗ (URL)</Label><Input value={filledTechTask} onChange={(e) => setFilledTechTask(e.target.value)} placeholder="https://..." /></div>
           <div className="space-y-1.5"><Label>Заполненный акт (URL)</Label><Input value={filledAct} onChange={(e) => setFilledAct(e.target.value)} placeholder="https://..." /></div>

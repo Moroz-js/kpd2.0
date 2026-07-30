@@ -375,27 +375,34 @@ export function SettingsTab({
       )}
 
       <div className="border rounded-lg p-4 space-y-3">
-        <h3 className="text-sm font-semibold text-neutral-800">Контакт email и доступ</h3>
-        <div className="space-y-1.5">
-          <Label>Контакт email</Label>
-          <Input
-            type="email"
-            value={contactEmail}
-            onChange={(e) => setContactEmail(e.target.value)}
-            disabled={!canEdit}
-            placeholder="contact@example.com"
-          />
-        </div>
+        <h3 className="text-sm font-semibold text-neutral-800">Доступ в систему</h3>
         {isAdmin && (
           <>
             <div className="space-y-1.5">
-              <Label>Email для доступа</Label>
-              <Input
-                value={executor.accessEmail ?? ""}
-                readOnly
-                placeholder="Доступ не выдан"
-                className="bg-neutral-50"
-              />
+              <Label htmlFor="accessEmailField">Email для доступа</Label>
+              {hasAccess ? (
+                <Input
+                  id="accessEmailField"
+                  value={executor.accessEmail ?? ""}
+                  readOnly
+                  className="bg-neutral-50"
+                />
+              ) : (
+                <Input
+                  id="accessEmailField"
+                  type="email"
+                  value={grantAccessEmail}
+                  onChange={(e) => setGrantAccessEmail(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      setAccessDialogOpen(true);
+                    }
+                  }}
+                  placeholder="email@example.com"
+                  disabled={executorArchived || togglingAccess}
+                />
+              )}
             </div>
             <div className="flex items-center justify-between">
               <div>
@@ -409,7 +416,7 @@ export function SettingsTab({
                 variant="outline"
                 size="sm"
                 onClick={handleToggleAccess}
-                disabled={togglingAccess || executorArchived}
+                disabled={togglingAccess || executorArchived || (!hasAccess && !grantAccessEmail.trim())}
                 className={
                   hasAccess
                     ? "border-red-300 text-red-600 hover:bg-red-50"
@@ -420,6 +427,9 @@ export function SettingsTab({
               </Button>
             </div>
           </>
+        )}
+        {!isAdmin && (
+          <p className="text-xs text-neutral-500">Управление доступом доступно администратору.</p>
         )}
       </div>
 
@@ -473,6 +483,16 @@ export function SettingsTab({
             onChange={(e) => setContacts(e.target.value)}
             placeholder="Телеграм, телефон и т.д."
             disabled={!canEdit}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Контакт email</Label>
+          <Input
+            type="email"
+            value={contactEmail}
+            onChange={(e) => setContactEmail(e.target.value)}
+            disabled={!canEdit}
+            placeholder="contact@example.com"
           />
         </div>
         {isAdmin && canBeResponsible(executorType) && (

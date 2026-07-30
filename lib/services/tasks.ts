@@ -75,8 +75,11 @@ const ONBOARDING_TASKS: { title: string; comment: string }[] = [
   },
 ];
 
-export async function listTasksForExecutor(executorId: string) {
-  return prisma.task.findMany({
+export async function listTasksForExecutor(
+  executorId: string,
+  db: { task: { findMany: typeof prisma.task.findMany } } = prisma
+) {
+  return db.task.findMany({
     where: { executorId },
     orderBy: { createdAt: "asc" },
   });

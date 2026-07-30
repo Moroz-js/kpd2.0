@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { canViewExecutorEstimate, isAdmin } from "@/lib/permissions";
 import { createTask, listTasksForExecutor } from "@/lib/services/tasks";
+import {
+  dataSourcePrismaAdapter,
+  resolveDataSource,
+  SnapshotSourceError,
+} from "@/lib/snapshots/data-source";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -13,7 +18,7 @@ const createSchema = z.object({
 });
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: executorId } = await params;
@@ -23,7 +28,20 @@ export async function GET(
   const allowed = await canViewExecutorEstimate(user, executorId);
   if (!allowed) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const tasks = await listTasksForExecutor(executorId);
+  let source;
+  try {
+    source = await resolveDataSource(
+      req.nextUrl.searchParams.get("source") ?? req.nextUrl.searchParams.get("snapshot")
+    );
+  } catch (error) {
+    if (error instanceof SnapshotSourceError) {
+      return NextResponse.json({ error: error.message }, { status: 404 });
+    }
+    throw error;
+  }
+  const db = dataSourcePrismaAdapter(source);
+
+  const tasks = await listTasksForExecutor(executorId, db);
   return NextResponse.json(tasks);
 }
 

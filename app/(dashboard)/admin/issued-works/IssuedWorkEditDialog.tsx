@@ -88,14 +88,12 @@ export function IssuedWorkEditDialog({
     };
     if (!statusLocked) payload.workStatus = workStatus;
     if (isPersonal) {
-      payload.plannedPayAt = plannedPayAt ? new Date(plannedPayAt).toISOString() : null;
+      payload.plannedPayAt = plannedPayAt || null;
     } else {
       payload.executionMonth = Number(executionMonth);
       payload.executionYear = Number(executionYear);
       payload.executorId = executorId;
-      if (plannedPayAt) {
-        payload.plannedPayAt = new Date(plannedPayAt).toISOString();
-      }
+      payload.plannedPayAt = plannedPayAt || null;
     }
 
     setSubmitting(true);
@@ -263,16 +261,14 @@ export function IssuedWorkEditDialog({
                   </SelectContent>
                 </Select>
               </div>
-              {row.plannedPayAt && (
-                <div className="space-y-2 min-w-0">
-                  <Label htmlFor="plannedPayAt">Дата оплаты — план</Label>
-                  <DateInput
-                    id="plannedPayAt"
-                    value={plannedPayAt}
-                    onChange={(e) => setPlannedPayAt(e.target.value)}
-                  />
-                </div>
-              )}
+              <div className="space-y-2">
+                <Label htmlFor="plannedPayAt">Дата оплаты — план</Label>
+                <DateInput
+                  id="plannedPayAt"
+                  value={plannedPayAt}
+                  onChange={(e) => setPlannedPayAt(e.target.value)}
+                />
+              </div>
             </>
           )}
 

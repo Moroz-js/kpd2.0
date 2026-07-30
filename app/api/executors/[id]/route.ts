@@ -10,6 +10,11 @@ import {
 } from "@/lib/permissions";
 import { updateExecutor } from "@/lib/services/executors";
 import { prisma } from "@/lib/db";
+import {
+  dataSourcePrismaAdapter,
+  resolveDataSource,
+  SnapshotSourceError,
+} from "@/lib/snapshots/data-source";
 
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const me = await getSessionUser();
@@ -22,7 +27,19 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const allowed = canViewExecutorsList(me) || (await canViewExecutorEstimate(me, id));
   if (!allowed) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const executor = await prisma.executor.findUnique({
+  const url = new URL(req.url);
+  let source;
+  try {
+    source = await resolveDataSource(url.searchParams.get("source") ?? url.searchParams.get("snapshot"));
+  } catch (error) {
+    if (error instanceof SnapshotSourceError) {
+      return NextResponse.json({ error: error.message }, { status: 404 });
+    }
+    throw error;
+  }
+  const db = dataSourcePrismaAdapter(source);
+
+  const executor = await db.executor.findUnique({
     where: { id },
     include: {
       user: { select: { id: true, email: true, fullName: true, role: true, isActive: true } },
@@ -31,12 +48,18 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       executorWorkTypes: { include: { workType: { select: { id: true, name: true, segment: true } } } },
       projectExecutors: {
         include: { project: { select: { id: true, name: true, status: true } } },
-        orderBy: { project: { name: "asc" } },
       },
     },
   });
 
   if (!executor) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Snapshot adapter не умеет nested orderBy — сортируем в JS
+  if (Array.isArray(executor.projectExecutors)) {
+    executor.projectExecutors.sort((a: { project?: { name?: string } | null }, b: { project?: { name?: string } | null }) =>
+      (a.project?.name ?? "").localeCompare(b.project?.name ?? "", "ru")
+    );
+  }
 
   return NextResponse.json(executor);
 }

@@ -4,6 +4,11 @@ import { isAdmin } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { getISOWeek, getISOWeekYear, getISOWeeksInYear, isoWeekStart } from "@/lib/iso-weeks";
 import { hasPersonalSmeta } from "@/lib/executor-personal-estimate";
+import {
+  dataSourcePrismaAdapter,
+  resolveDataSource,
+  SnapshotSourceError,
+} from "@/lib/snapshots/data-source";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -24,7 +29,20 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const project = await prisma.project.findUnique({
+  let source;
+  try {
+    source = await resolveDataSource(
+      req.nextUrl.searchParams.get("source") ?? req.nextUrl.searchParams.get("snapshot")
+    );
+  } catch (error) {
+    if (error instanceof SnapshotSourceError) {
+      return NextResponse.json({ error: error.message }, { status: 404 });
+    }
+    throw error;
+  }
+  const db = dataSourcePrismaAdapter(source);
+
+  const project = await db.project.findUnique({
     where: { id },
     include: {
       client: { select: { name: true } },
@@ -33,8 +51,15 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   });
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  if (!isAdmin(user) && project.responsibleUserId !== user.id) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // Права всегда по live-проекту (ответственный мог смениться)
+  if (!isAdmin(user)) {
+    const liveProject = await prisma.project.findUnique({
+      where: { id },
+      select: { responsibleUserId: true },
+    });
+    if (!liveProject || liveProject.responsibleUserId !== user.id) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   const yearParam = req.nextUrl.searchParams.get("year");
@@ -43,8 +68,8 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   const weeks = Array.from({ length: weeksInYear }, (_, i) => i + 1);
 
   // Fetch all data for this project + year
-  const [works, otherExpenses, charges, planLines, executors, workTypes] = await Promise.all([
-    prisma.work.findMany({
+  const [works, otherExpenses, allCharges, planLines, executors, workTypes] = await Promise.all([
+    db.work.findMany({
       where: { projectId: id },
       include: {
         executor: { select: { id: true, name: true } },
@@ -52,7 +77,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
       },
       orderBy: { plannedPayAt: "desc" },
     }),
-    prisma.otherExpense.findMany({
+    db.otherExpense.findMany({
       where: { projectId: id },
       include: {
         executor: { select: { id: true, name: true } },
@@ -60,21 +85,27 @@ export async function GET(req: NextRequest, { params }: Ctx) {
       },
       orderBy: { plannedPayAt: "desc" },
     }),
-    prisma.charge.findMany({
-      where: { order: { projectId: id } },
-      include: { order: { select: { description: true, orderNumber: true } } },
+    db.charge.findMany({
+      include: { order: { select: { projectId: true, description: true, orderNumber: true } } },
       orderBy: { paidPlanAt: "desc" },
     }),
-    prisma.spendingPlanLine.findMany({
+    db.spendingPlanLine.findMany({
       where: { projectId: id, year },
       include: {
         executor: { select: { id: true, name: true, accessEmail: true } },
         workType: { select: { id: true, name: true } },
       },
     }),
-    prisma.executor.findMany({ where: { status: "active" }, select: { id: true, name: true, executorWorkTypes: { select: { workTypeId: true } } } }),
-    prisma.workType.findMany({ where: { status: "active" }, select: { id: true, name: true } }),
+    db.executor.findMany({
+      where: { status: "active" },
+      select: { id: true, name: true, executorWorkTypes: { select: { workTypeId: true } } },
+    }),
+    db.workType.findMany({ where: { status: "active" }, select: { id: true, name: true } }),
   ]);
+
+  const charges = allCharges.filter(
+    (c: { order?: { projectId?: string } | null }) => c.order?.projectId === id
+  );
 
   // IssuedWork aggregates per week for this project/year
   const issuedWorksByWeek = new Map<number, { total: number; paid: number }>();
