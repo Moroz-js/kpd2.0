@@ -583,7 +583,6 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
         <ExecutorWizard
           bankAccounts={bankAccounts ?? []}
           responsibles={responsibles ?? []}
-          canGrantAccess={!isManage}
           onClose={() => setWizardOpen(false)}
           onCreated={() => {
             setWizardOpen(false);

@@ -12,7 +12,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RefreshCw } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -26,24 +25,17 @@ import { CompanyStatusPicker } from "@/components/ui-custom/CompanyStatusPicker"
 import type { ExecutorType } from "@/lib/statuses";
 import { sortByNameRu, sortByRu } from "@/lib/sort";
 
-function generatePassword(): string {
-  const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#$%";
-  return Array.from({ length: 12 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-}
-
 type BankOption = { id: string; name: string; status: string };
 type ResponsibleOption = { id: string; fullName: string; isActive: boolean };
 
 export function ExecutorWizard({
   bankAccounts: bankAccountsProp,
   responsibles: responsiblesProp,
-  canGrantAccess = false,
   onClose,
   onCreated,
 }: {
   bankAccounts: BankOption[];
   responsibles: ResponsibleOption[];
-  canGrantAccess?: boolean;
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -56,7 +48,6 @@ export function ExecutorWizard({
   const [lastName, setLastName] = React.useState("");
   const [contactEmail, setContactEmail] = React.useState("");
   const [companyStatuses, setCompanyStatuses] = React.useState<string[]>([]);
-  const [password, setPassword] = React.useState(() => generatePassword());
   const [name, setName] = React.useState("");
 
   const [responsibleUserId, setResponsibleUserId] = React.useState("");
@@ -91,11 +82,6 @@ export function ExecutorWizard({
     }
     const normalizedContactEmail = contactEmail.trim().toLowerCase();
     if (normalizedContactEmail) payload.contactEmail = normalizedContactEmail;
-    if (canGrantAccess && normalizedContactEmail) {
-      if (password.length < 6) return toast.error("Пароль не короче 6 символов");
-      payload.accessEmail = normalizedContactEmail;
-      payload.password = password;
-    }
 
     if (responsibleUserId) payload.responsibleUserId = responsibleUserId;
     if (defaultBankAccountId) payload.defaultBankAccountId = defaultBankAccountId;
@@ -215,31 +201,6 @@ export function ExecutorWizard({
                 onChange={(e) => setContactEmail(e.target.value)}
               />
             </div>
-
-            {canGrantAccess && contactEmail.trim() && (
-              <div className="rounded-lg border p-3 space-y-3">
-                <div className="space-y-1.5 min-w-0">
-                  <Label htmlFor="password">Пароль</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="font-mono"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={() => setPassword(generatePassword())}
-                      title="Сгенерировать"
-                    >
-                      <RefreshCw className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            )}
 
             <div className="space-y-1.5 min-w-0">
               <Label htmlFor="responsible">Ответственный</Label>
