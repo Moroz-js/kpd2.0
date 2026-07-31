@@ -1178,6 +1178,7 @@ export function SectionSnapshotComparison({
   sourceA,
   sourceB,
   onlyChanges,
+  syncScroll,
   labelA,
   labelB,
   filter,
@@ -1186,6 +1187,7 @@ export function SectionSnapshotComparison({
   sourceA: string;
   sourceB: string;
   onlyChanges: boolean;
+  syncScroll: boolean;
   labelA: string;
   labelB: string;
   filter?: { field: string; id: string } | null;
@@ -1229,28 +1231,65 @@ export function SectionSnapshotComparison({
   }, [sourceA, sourceB, section, config?.preferredModel, config?.rowModels]);
 
   React.useEffect(() => {
-    if (!diff) return;
+    if (!diff || !syncScroll) return;
     const a = scrollARef.current;
     const b = scrollBRef.current;
     if (!a || !b) return;
-    let syncing = false;
-    const syncTop = (from: HTMLDivElement, to: HTMLDivElement) => {
-      if (syncing) return;
-      syncing = true;
-      to.scrollTop = from.scrollTop;
-      requestAnimationFrame(() => {
-        syncing = false;
-      });
+
+    const expected = new WeakMap<
+      HTMLElement,
+      { top: number; left: number; until: number }
+    >();
+    const projectOffset = (
+      offset: number,
+      fromSize: number,
+      fromClient: number,
+      toSize: number,
+      toClient: number
+    ) => {
+      const fromMax = Math.max(0, fromSize - fromClient);
+      const toMax = Math.max(0, toSize - toClient);
+      if (fromMax <= 1 || toMax <= 1) return Math.min(offset, toMax);
+      if (Math.abs(fromMax - toMax) <= 2) return Math.min(offset, toMax);
+      return (offset / fromMax) * toMax;
     };
-    const onA = () => syncTop(a, b);
-    const onB = () => syncTop(b, a);
+    const syncBothAxes = (from: HTMLDivElement, to: HTMLDivElement) => {
+      const pending = expected.get(from);
+      if (
+        pending &&
+        performance.now() <= pending.until &&
+        Math.abs(from.scrollTop - pending.top) <= 2 &&
+        Math.abs(from.scrollLeft - pending.left) <= 2
+      ) {
+        expected.delete(from);
+        return;
+      }
+      const top = projectOffset(
+        from.scrollTop,
+        from.scrollHeight,
+        from.clientHeight,
+        to.scrollHeight,
+        to.clientHeight
+      );
+      const left = projectOffset(
+        from.scrollLeft,
+        from.scrollWidth,
+        from.clientWidth,
+        to.scrollWidth,
+        to.clientWidth
+      );
+      expected.set(to, { top, left, until: performance.now() + 1_000 });
+      to.scrollTo({ top, left, behavior: "auto" });
+    };
+    const onA = () => syncBothAxes(a, b);
+    const onB = () => syncBothAxes(b, a);
     a.addEventListener("scroll", onA, { passive: true });
     b.addEventListener("scroll", onB, { passive: true });
     return () => {
       a.removeEventListener("scroll", onA);
       b.removeEventListener("scroll", onB);
     };
-  }, [diff, model, onlyChanges, showAll, filter?.field, filter?.id]);
+  }, [diff, model, onlyChanges, syncScroll, showAll, filter?.field, filter?.id]);
 
   if (error) {
     return <div className="m-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>;

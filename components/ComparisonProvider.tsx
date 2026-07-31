@@ -204,23 +204,64 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
     const a = frameA.current?.contentDocument;
     const b = frameB.current?.contentDocument;
     if (!a || !b) return;
-    let syncing = false;
+    const expected = new WeakMap<
+      HTMLElement,
+      { top: number; left: number; until: number }
+    >();
     const scrollables = (document: Document) =>
       [...document.querySelectorAll<HTMLElement>("*")].filter(
         (element) => element.scrollHeight > element.clientHeight || element.scrollWidth > element.clientWidth
       );
+    const projectOffset = (
+      offset: number,
+      fromSize: number,
+      fromClient: number,
+      toSize: number,
+      toClient: number
+    ) => {
+      const fromMax = Math.max(0, fromSize - fromClient);
+      const toMax = Math.max(0, toSize - toClient);
+      if (fromMax <= 1 || toMax <= 1) return Math.min(offset, toMax);
+      if (Math.abs(fromMax - toMax) <= 2) return Math.min(offset, toMax);
+      return (offset / fromMax) * toMax;
+    };
     const wire = (from: Document, to: Document) => {
       const handler = (event: Event) => {
-        if (syncing || !(event.target instanceof from.defaultView!.HTMLElement)) return;
+        if (!(event.target instanceof from.defaultView!.HTMLElement)) return;
+        const pending = expected.get(event.target);
+        if (
+          pending &&
+          performance.now() <= pending.until &&
+          Math.abs(event.target.scrollTop - pending.top) <= 2 &&
+          Math.abs(event.target.scrollLeft - pending.left) <= 2
+        ) {
+          expected.delete(event.target);
+          return;
+        }
         const fromItems = scrollables(from);
         const index = fromItems.indexOf(event.target);
         const target = scrollables(to)[index];
         if (!target) return;
-        syncing = true;
-        target.scrollTop = event.target.scrollTop;
-        requestAnimationFrame(() => {
-          syncing = false;
+        const top = projectOffset(
+          event.target.scrollTop,
+          event.target.scrollHeight,
+          event.target.clientHeight,
+          target.scrollHeight,
+          target.clientHeight
+        );
+        const left = projectOffset(
+          event.target.scrollLeft,
+          event.target.scrollWidth,
+          event.target.clientWidth,
+          target.scrollWidth,
+          target.clientWidth
+        );
+        expected.set(target, {
+          top,
+          left,
+          until: performance.now() + 1_000,
         });
+        target.scrollTo({ top, left, behavior: "auto" });
       };
       from.addEventListener("scroll", handler, true);
       return () => from.removeEventListener("scroll", handler, true);
@@ -372,18 +413,17 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
             />
             Только изменения
           </label>
-          {isDetailUiCompare && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => replaceParams({ syncScroll: syncScroll ? "0" : null })}
-            >
-              {syncScroll ? <Link2 className="mr-1.5 h-4 w-4" /> : <Link2Off className="mr-1.5 h-4 w-4" />}
-              Скролл
-            </Button>
-          )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs"
+            title={syncScroll ? "Отключить синхронизацию скролла" : "Включить синхронизацию скролла"}
+            onClick={() => replaceParams({ syncScroll: syncScroll ? "0" : null })}
+          >
+            {syncScroll ? <Link2 className="mr-1.5 h-4 w-4" /> : <Link2Off className="mr-1.5 h-4 w-4" />}
+            {syncScroll ? "Скролл связан" : "Скролл раздельный"}
+          </Button>
           <Button
             type="button"
             variant="ghost"
@@ -435,6 +475,7 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
               sourceA={sourceA}
               sourceB={sourceB}
               onlyChanges={onlyChanges}
+              syncScroll={syncScroll}
               labelA={snapshotSourceLabel(sourceA, snapshots)}
               labelB={snapshotSourceLabel(sourceB, snapshots)}
             />

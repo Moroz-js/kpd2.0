@@ -55,7 +55,6 @@ export function ExecutorWizard({
   const [firstName, setFirstName] = React.useState("");
   const [lastName, setLastName] = React.useState("");
   const [contactEmail, setContactEmail] = React.useState("");
-  const [accessEmail, setAccessEmail] = React.useState("");
   const [companyStatuses, setCompanyStatuses] = React.useState<string[]>([]);
   const [password, setPassword] = React.useState(() => generatePassword());
   const [name, setName] = React.useState("");
@@ -90,10 +89,11 @@ export function ExecutorWizard({
       if (!name.trim()) return toast.error("Введите название");
       payload.name = name.trim();
     }
-    if (contactEmail.trim()) payload.contactEmail = contactEmail.trim().toLowerCase();
-    if (canGrantAccess && accessEmail.trim()) {
+    const normalizedContactEmail = contactEmail.trim().toLowerCase();
+    if (normalizedContactEmail) payload.contactEmail = normalizedContactEmail;
+    if (canGrantAccess && normalizedContactEmail) {
       if (password.length < 6) return toast.error("Пароль не короче 6 символов");
-      payload.accessEmail = accessEmail.trim().toLowerCase();
+      payload.accessEmail = normalizedContactEmail;
       payload.password = password;
     }
 
@@ -216,48 +216,28 @@ export function ExecutorWizard({
               />
             </div>
 
-            {canGrantAccess && (
+            {canGrantAccess && contactEmail.trim() && (
               <div className="rounded-lg border p-3 space-y-3">
                 <div className="space-y-1.5 min-w-0">
-                  <Label htmlFor="accessEmail">Email для доступа</Label>
-                  <Input
-                    id="accessEmail"
-                    type="email"
-                    value={accessEmail}
-                    onChange={(e) => setAccessEmail(e.target.value)}
-                  />
-                  {accessEmail.trim() &&
-                    accessEmail.trim().toLowerCase() !== contactEmail.trim().toLowerCase() && (
-                      <p className="text-xs text-amber-700">
-                        Поле &quot;Контакт email&quot; не перезаписывается автоматически. При
-                        необходимости исправьте его вручную.
-                      </p>
-                    )}
+                  <Label htmlFor="password">Пароль</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="font-mono"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => setPassword(generatePassword())}
+                      title="Сгенерировать"
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
-                {accessEmail.trim() && (
-                  <>
-                    <div className="space-y-1.5 min-w-0">
-                      <Label htmlFor="password">Пароль</Label>
-                      <div className="flex gap-2">
-                        <Input
-                          id="password"
-                          value={password}
-                          onChange={(e) => setPassword(e.target.value)}
-                          className="font-mono"
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          onClick={() => setPassword(generatePassword())}
-                          title="Сгенерировать"
-                        >
-                          <RefreshCw className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </>
-                )}
               </div>
             )}
 
