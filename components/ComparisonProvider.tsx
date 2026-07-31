@@ -2,8 +2,7 @@
 
 import * as React from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Columns2, DatabaseBackup, Link2, Link2Off, Loader2, X } from "lucide-react";
-import { toast } from "sonner";
+import { Columns2, Link2, Link2Off, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -54,7 +53,6 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
   const activeSource = panel === "B" ? sourceB : panel === "A" ? sourceA : "live";
   const isAdminInterface = pathname === "/admin" || pathname.startsWith("/admin/");
   const [snapshots, setSnapshots] = React.useState<SnapshotOption[]>([]);
-  const [creatingSnapshot, setCreatingSnapshot] = React.useState(false);
   const frameA = React.useRef<HTMLIFrameElement>(null);
   const frameB = React.useRef<HTMLIFrameElement>(null);
   const [framesLoaded, setFramesLoaded] = React.useState(0);
@@ -81,27 +79,6 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     loadSnapshots().then(setSnapshots, () => setSnapshots([]));
-  }, [loadSnapshots]);
-
-  const createManualSnapshot = React.useCallback(async () => {
-    setCreatingSnapshot(true);
-    try {
-      const response = await fetch("/api/snapshots", { method: "POST" });
-      const payload = (await response.json()) as {
-        snapshot?: SnapshotOption;
-        error?: string;
-      };
-      if (!response.ok || !payload.snapshot) {
-        throw new Error(payload.error ?? "Не удалось создать снимок");
-      }
-      const options = await loadSnapshots();
-      setSnapshots(options);
-      toast.success(`Снимок создан: ${snapshotLabel(payload.snapshot)}`);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Не удалось создать снимок");
-    } finally {
-      setCreatingSnapshot(false);
-    }
   }, [loadSnapshots]);
 
   const replaceParams = React.useCallback(
@@ -311,21 +288,6 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
                 variant="outline"
                 size="sm"
                 className="h-8 bg-white"
-                onClick={createManualSnapshot}
-                disabled={creatingSnapshot}
-              >
-                {creatingSnapshot ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <DatabaseBackup className="mr-2 h-4 w-4" />
-                )}
-                Создать снимок
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 bg-white"
                 onClick={() => {
                   const fallbackB = snapshots[0]?.id;
                   if (!fallbackB) return;
@@ -336,7 +298,7 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
                     onlyChanges: "1",
                   });
                 }}
-                disabled={!snapshots.length || creatingSnapshot}
+                disabled={!snapshots.length}
               >
                 <Columns2 className="mr-2 h-4 w-4" />
                 Сравнить даты
