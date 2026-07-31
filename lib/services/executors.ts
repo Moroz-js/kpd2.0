@@ -161,6 +161,7 @@ export type CreateExecutorInput =
       firstName: string;
       lastName: string;
       contactEmail?: string | null;
+      contacts?: string | null;
       accessEmail?: string | null;
       password?: string;
       companyStatus?: string | null;
@@ -174,6 +175,7 @@ export type CreateExecutorInput =
       type: "external" | "service" | "bank";
       name: string;
       contactEmail?: string | null;
+      contacts?: string | null;
       accessEmail?: string | null;
       password?: string;
       responsibleUserId?: string | null;
@@ -232,6 +234,7 @@ export async function createExecutor(input: CreateExecutorInput, userId: string)
         type: input.type,
         userId: userIdToLink,
         contactEmail,
+        contacts: input.contacts?.trim() || null,
         accessEmail,
         accessRevokedAt: accessEmail ? null : new Date(),
         companyStatus: input.type === "permanent" ? input.companyStatus ?? null : null,

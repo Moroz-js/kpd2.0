@@ -47,6 +47,7 @@ export function ExecutorWizard({
   const [firstName, setFirstName] = React.useState("");
   const [lastName, setLastName] = React.useState("");
   const [contactEmail, setContactEmail] = React.useState("");
+  const [contacts, setContacts] = React.useState("");
   const [companyStatuses, setCompanyStatuses] = React.useState<string[]>([]);
   const [name, setName] = React.useState("");
 
@@ -82,6 +83,7 @@ export function ExecutorWizard({
     }
     const normalizedContactEmail = contactEmail.trim().toLowerCase();
     if (normalizedContactEmail) payload.contactEmail = normalizedContactEmail;
+    if (contacts.trim()) payload.contacts = contacts.trim();
 
     if (responsibleUserId) payload.responsibleUserId = responsibleUserId;
     if (defaultBankAccountId) payload.defaultBankAccountId = defaultBankAccountId;
@@ -199,6 +201,16 @@ export function ExecutorWizard({
                 type="email"
                 value={contactEmail}
                 onChange={(e) => setContactEmail(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-1.5 min-w-0">
+              <Label htmlFor="contacts">Контакт общее</Label>
+              <Input
+                id="contacts"
+                value={contacts}
+                onChange={(e) => setContacts(e.target.value)}
+                placeholder="Телеграм, телефон и т.д."
               />
             </div>
 
