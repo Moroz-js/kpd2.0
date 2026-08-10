@@ -117,9 +117,9 @@ const SUMMARY_DEFS: SummaryDef[] = [
   { key: "balanceStart", label: "Баланс на начало", isEditable: true, balanceStartRow: true, labelAlign: "left", borderAfter: true },
   { key: "incomeFact", label: "Приход (факт)", labelAlign: "center" },
   { key: "incomePlanOnly", label: "Приход (план)", labelAlign: "center" },
-  { key: "incomePlanFact", label: "Приход (план+факт)", labelAlign: "center", borderAfter: true },
+  { key: "incomePlanFact", label: "Приход (план+факт)", labelAlign: "center" },
   { key: "expensePlanDP", label: "Расход (план-факт) из ДП", labelAlign: "center", borderAfter: true },
-  { key: "balanceEndDP", label: "Баланс (сметы/ДП)", signed: true, labelAlign: "right", borderAfter: true },
+  { key: "balanceEndDP", label: "Баланс (сметы/ДП)", signed: true, labelAlign: "right" },
   // Далее — balanceInAccounts, discrepancy (рендерятся отдельно)
   { key: "paidFromBudget", label: "Оплачено из смет", labelAlign: "right" },
   { key: "unpaidFromBudget", label: "Неоплачено из смет", labelAlign: "right", borderAfter: true },

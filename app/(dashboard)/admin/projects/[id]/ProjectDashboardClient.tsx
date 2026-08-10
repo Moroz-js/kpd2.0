@@ -670,8 +670,8 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
   const planLines = [...rawPlanLines].sort((a, b) =>
     a.workTypeName.localeCompare(b.workTypeName, "ru")
   );
-  const factWeeksByWorkType = new Map(
-    workTypes.map((workType) => [workType.id, workType.factWeeks ?? []])
+  const expenseWeeksByWorkType = new Map(
+    workTypes.map((workType) => [workType.id, workType.weeks ?? []])
   );
 
   // Группировка строк плана по видам работ
@@ -919,11 +919,11 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
   const tdCls = "px-2 py-1 text-right text-xs tabular-nums whitespace-nowrap border-r border-neutral-100 last:border-0";
   const thCls = "px-2 py-1 text-right text-xs font-medium text-neutral-600 border-r border-neutral-100 last:border-0 bg-neutral-50 whitespace-nowrap";
   const stickyLbl = "sticky left-0 z-10 bg-white px-3 py-1 text-xs font-medium text-neutral-700 border-r border-neutral-200 whitespace-nowrap w-[200px] min-w-[200px] max-w-[200px] overflow-hidden shadow-[1px_0_0_0_#e5e7eb]";
-  const stickyHdr = "sticky left-0 z-[45] bg-neutral-50 border-r border-neutral-200 shadow-[1px_0_0_0_#e5e7eb] px-3 py-1 text-xs font-semibold text-neutral-500 tracking-wide uppercase whitespace-nowrap w-[200px] min-w-[200px] max-w-[200px]";
+  const stickyHdr = "sticky left-0 z-[35] bg-neutral-50 border-r border-neutral-200 shadow-[1px_0_0_0_#e5e7eb] px-3 py-1 text-xs font-semibold text-neutral-500 tracking-wide uppercase whitespace-nowrap w-[200px] min-w-[200px] max-w-[200px]";
   const stickyTotal = "sticky left-[200px] z-10 bg-neutral-50 px-2 py-1 text-right text-xs tabular-nums whitespace-nowrap font-medium border-r border-neutral-200 min-w-[104px] shadow-[1px_0_0_0_#e5e7eb]";
-  const stickyTotalHdr = "sticky left-[200px] top-12 z-[55] bg-neutral-100 px-2 py-1 text-right text-xs font-semibold text-neutral-600 whitespace-nowrap min-w-[104px] border-r border-neutral-200 shadow-[1px_0_0_0_#e5e7eb]";
-  const stickySectionCell = "sticky top-[104px] z-40 bg-neutral-50";
-  const stickyWorkTypeCell = "sticky top-[132px] z-30 bg-white";
+  const stickyTotalHdr = "sticky left-[200px] top-12 z-[44] bg-neutral-100 px-2 py-1 text-right text-xs font-semibold text-neutral-600 whitespace-nowrap min-w-[104px] border-r border-neutral-200 shadow-[1px_0_0_0_#e5e7eb]";
+  const stickySectionCell = "sticky top-[104px] z-30 bg-neutral-50";
+  const stickyWorkTypeCell = "sticky top-[132px] z-20 bg-white";
 
   return (
     <div className="space-y-6">
@@ -1025,7 +1025,7 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
         <div ref={gridScrollRef} className="min-h-0 flex-1 overflow-auto">
           <div
             data-dashboard-sticky-project-header
-            className="sticky left-0 top-0 z-[70] flex h-12 min-w-[304px] items-center border-b border-neutral-200 bg-white px-3 shadow-sm"
+            className="sticky left-0 top-0 z-[45] flex h-12 min-w-[304px] items-center border-b border-neutral-200 bg-white px-3 shadow-sm"
             style={{ position: "sticky", top: 0, left: 0 }}
           >
             <div className="min-w-0">
@@ -1041,10 +1041,10 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
             <thead>
               {/* Month row */}
               <tr className="h-7 bg-neutral-50 border-b border-neutral-100">
-                <th className={cn(stickyLbl, "top-12 z-[60] font-semibold text-neutral-600 bg-neutral-50")} rowSpan={2}>Показатель</th>
+                <th className={cn(stickyLbl, "top-12 z-[44] font-semibold text-neutral-600 bg-neutral-50")} rowSpan={2}>Показатель</th>
                 <th className={stickyTotalHdr} rowSpan={2}>Итого</th>
                 {monthGroups.map((mg, i) => (
-                  <th key={i} colSpan={mg.count} className="sticky top-12 z-50 bg-neutral-50 px-2 py-1 text-center text-xs font-medium text-neutral-500 border-r border-neutral-100">
+                  <th key={i} colSpan={mg.count} className="sticky top-12 z-40 bg-neutral-50 px-2 py-1 text-center text-xs font-medium text-neutral-500 border-r border-neutral-100">
                     {mg.label}
                   </th>
                 ))}
@@ -1052,7 +1052,7 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
               {/* Week row */}
               <tr className="h-7 bg-neutral-50 border-b border-neutral-200">
                 {visibleWeeks.map(wh => (
-                  <th key={wh.week} className={cn(thCls, "sticky top-[76px] z-50 bg-neutral-50", wh.week === currentISOWeek && year === currentYear ? "!bg-blue-50 font-semibold" : wh.week < currentISOWeek && year === currentYear ? "text-neutral-400" : "")}>
+                  <th key={wh.week} className={cn(thCls, "sticky top-[76px] z-40 bg-neutral-50", wh.week === currentISOWeek && year === currentYear ? "!bg-blue-50 font-semibold" : wh.week < currentISOWeek && year === currentYear ? "text-neutral-400" : "")}>
                     <TooltipProvider delay={200}>
                       <Tooltip>
                         <TooltipTrigger className="cursor-help underline decoration-dotted underline-offset-2">
@@ -1458,7 +1458,7 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                             const wh = visibleWeeks[vi];
                             const v = group.weekTotals[idx] ?? 0;
                             const fact =
-                              factWeeksByWorkType.get(group.workTypeId)?.[idx] ?? 0;
+                              expenseWeeksByWorkType.get(group.workTypeId)?.[idx] ?? 0;
                             const mismatchTone = planMismatchTone(v, fact, wh.week);
                             return (
                               <td key={idx} className={cn(
