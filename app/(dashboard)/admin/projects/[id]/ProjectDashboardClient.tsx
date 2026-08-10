@@ -571,7 +571,7 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
     const updateStickyState = () => {
       frame = null;
       const scrollRect = scrollElement.getBoundingClientRect();
-      const sectionTop = scrollRect.top + 104;
+      const sectionTop = scrollRect.top + 56;
 
       let nextSection: "summary" | "expenses" | "plan" | null = null;
       for (const row of scrollElement.querySelectorAll<HTMLElement>(
@@ -903,23 +903,23 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
   const stickyLbl = "sticky left-0 z-10 bg-white px-3 py-1 text-xs font-medium text-neutral-700 border-r border-neutral-200 whitespace-nowrap w-[200px] min-w-[200px] max-w-[200px] overflow-hidden shadow-[1px_0_0_0_#e5e7eb]";
   const stickyHdr = "sticky left-0 z-[35] bg-neutral-50 border-r border-neutral-200 shadow-[1px_0_0_0_#e5e7eb] px-3 py-1 text-xs font-semibold text-neutral-500 tracking-wide uppercase whitespace-nowrap w-[200px] min-w-[200px] max-w-[200px]";
   const stickyTotal = "sticky left-[200px] z-10 bg-neutral-50 px-2 py-1 text-right text-xs tabular-nums whitespace-nowrap font-medium border-r border-neutral-200 min-w-[104px] shadow-[1px_0_0_0_#e5e7eb]";
-  const stickyTotalHdr = "sticky left-[200px] top-12 z-[44] bg-neutral-100 px-2 py-1 text-right text-xs font-semibold text-neutral-600 whitespace-nowrap min-w-[104px] border-r border-neutral-200 shadow-[1px_0_0_0_#e5e7eb]";
-  const stickySectionCell = "sticky top-[104px] z-30 bg-neutral-50";
+  const stickyTotalHdr = "sticky left-[200px] top-0 z-[44] bg-neutral-100 px-2 py-1 text-right text-xs font-semibold text-neutral-600 whitespace-nowrap min-w-[104px] border-r border-neutral-200 shadow-[1px_0_0_0_#e5e7eb]";
+  const stickySectionCell = "sticky top-14 z-30 bg-neutral-50";
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
+      <div className="sticky top-0 z-[45] -mx-2 flex min-h-14 items-center justify-between gap-4 bg-neutral-50 px-2 py-2">
+        <div className="flex min-w-0 items-center gap-3">
           <Link
             href={isAdmin ? "/admin/projects" : "/responsible/projects"}
-            className={buttonVariants({ variant: "ghost", size: "sm" })}
+            className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "shrink-0")}
           >
             <ChevronLeft className="h-4 w-4 mr-1" /> К списку
           </Link>
-          <div>
-            <h1 className="text-xl font-semibold text-neutral-900">{project.name}</h1>
-            <p className="text-sm text-neutral-500">
+          <div className="min-w-0">
+            <h1 className="truncate text-xl font-semibold text-neutral-900">{project.name}</h1>
+            <p className="truncate text-sm text-neutral-500">
               {project.responsible ?? "Без ответственного"}
             </p>
           </div>
@@ -990,7 +990,7 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
       </CollapsibleSection>
 
       {/* Main grid */}
-      <div className="flex max-h-[90dvh] min-h-0 flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white">
+      <div className="flex max-h-[calc(90dvh-56px)] min-h-0 flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white">
         {year === currentYear && (
           <div className="shrink-0 px-3 pt-2 pb-0">
             <button
@@ -1004,28 +1004,14 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
           </div>
         )}
         <div ref={gridScrollRef} className="min-h-0 flex-1 overflow-auto">
-          <div
-            data-dashboard-sticky-project-header
-            className="sticky left-0 top-0 z-[45] flex h-12 min-w-[304px] items-center border-b border-neutral-200 bg-white px-3 shadow-sm"
-            style={{ position: "sticky", top: 0, left: 0 }}
-          >
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-neutral-900">
-                {project.name}
-              </p>
-              <p className="truncate text-xs text-neutral-500">
-                РП: {project.responsible ?? "Без ответственного"}
-              </p>
-            </div>
-          </div>
           <table className="min-w-max border-collapse text-sm">
             <thead>
               {/* Month row */}
               <tr className="h-7 bg-neutral-50 border-b border-neutral-100">
-                <th className={cn(stickyLbl, "top-12 z-[44] font-semibold text-neutral-600 bg-neutral-50")} rowSpan={2}>Показатель</th>
+                <th className={cn(stickyLbl, "top-0 z-[44] font-semibold text-neutral-600 bg-neutral-50")} rowSpan={2}>Показатель</th>
                 <th className={stickyTotalHdr} rowSpan={2}>Итого</th>
                 {monthGroups.map((mg, i) => (
-                  <th key={i} colSpan={mg.count} className="sticky top-12 z-40 bg-neutral-50 px-2 py-1 text-center text-xs font-medium text-neutral-500 border-r border-neutral-100">
+                  <th key={i} colSpan={mg.count} className="sticky top-0 z-40 bg-neutral-50 px-2 py-1 text-center text-xs font-medium text-neutral-500 border-r border-neutral-100">
                     {mg.label}
                   </th>
                 ))}
@@ -1033,7 +1019,7 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
               {/* Week row */}
               <tr className="h-7 bg-neutral-50 border-b border-neutral-200">
                 {visibleWeeks.map(wh => (
-                  <th key={wh.week} className={cn(thCls, "sticky top-[76px] z-40 bg-neutral-50", wh.week === currentISOWeek && year === currentYear ? "!bg-blue-50 font-semibold" : wh.week < currentISOWeek && year === currentYear ? "text-neutral-400" : "")}>
+                  <th key={wh.week} className={cn(thCls, "sticky top-7 z-40 bg-neutral-50", wh.week === currentISOWeek && year === currentYear ? "!bg-blue-50 font-semibold" : wh.week < currentISOWeek && year === currentYear ? "text-neutral-400" : "")}>
                     <TooltipProvider delay={200}>
                       <Tooltip>
                         <TooltipTrigger className="cursor-help underline decoration-dotted underline-offset-2">
