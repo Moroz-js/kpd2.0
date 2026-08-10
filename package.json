@@ -15,6 +15,7 @@
     "db:reset": "node scripts/db-reset.mjs",
     "db:seed": "node scripts/set-prisma-provider.mjs && prisma generate && prisma db seed",
     "db:studio": "node scripts/set-prisma-provider.mjs && prisma generate && prisma studio",
+    "backfill:project-numbers": "node scripts/backfill-project-numbers.mjs",
     "migrate:other-expenses": "node scripts/migrate-other-expenses.mjs",
     "snapshot:check": "node scripts/snapshot-worker.mjs --check",
     "snapshot:run": "node scripts/snapshot-worker.mjs --manual"
