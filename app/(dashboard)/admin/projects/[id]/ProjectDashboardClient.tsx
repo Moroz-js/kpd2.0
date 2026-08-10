@@ -428,9 +428,6 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
   const [activeStickySection, setActiveStickySection] = useState<
     "summary" | "expenses" | "plan" | null
   >(null);
-  const [activeStickyWorkType, setActiveStickyWorkType] = useState<
-    string | null
-  >(null);
 
   // Сворачиваемые секции ДП (localStorage)
   const [summaryExpanded, toggleSummary] = useSectionCollapsed("summary", true);
@@ -575,7 +572,6 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
       frame = null;
       const scrollRect = scrollElement.getBoundingClientRect();
       const sectionTop = scrollRect.top + 104;
-      const workTypeTop = scrollRect.top + 132;
 
       let nextSection: "summary" | "expenses" | "plan" | null = null;
       for (const row of scrollElement.querySelectorAll<HTMLElement>(
@@ -589,22 +585,8 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
         }
       }
 
-      let nextWorkType: string | null = null;
-      if (nextSection === "expenses" || nextSection === "plan") {
-        for (const row of scrollElement.querySelectorAll<HTMLElement>(
-          `[data-dashboard-work-type-section="${nextSection}"]`
-        )) {
-          if (row.getBoundingClientRect().top <= workTypeTop + 1) {
-            nextWorkType = row.dataset.dashboardWorkType ?? null;
-          }
-        }
-      }
-
       setActiveStickySection((current) =>
         current === nextSection ? current : nextSection
-      );
-      setActiveStickyWorkType((current) =>
-        current === nextWorkType ? current : nextWorkType
       );
     };
     const scheduleUpdate = () => {
@@ -923,7 +905,6 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
   const stickyTotal = "sticky left-[200px] z-10 bg-neutral-50 px-2 py-1 text-right text-xs tabular-nums whitespace-nowrap font-medium border-r border-neutral-200 min-w-[104px] shadow-[1px_0_0_0_#e5e7eb]";
   const stickyTotalHdr = "sticky left-[200px] top-12 z-[44] bg-neutral-100 px-2 py-1 text-right text-xs font-semibold text-neutral-600 whitespace-nowrap min-w-[104px] border-r border-neutral-200 shadow-[1px_0_0_0_#e5e7eb]";
   const stickySectionCell = "sticky top-[104px] z-30 bg-neutral-50";
-  const stickyWorkTypeCell = "sticky top-[132px] z-20 bg-white";
 
   return (
     <div className="space-y-6">
@@ -1009,7 +990,7 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
       </CollapsibleSection>
 
       {/* Main grid */}
-      <div className="flex h-[90dvh] min-h-[420px] flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white">
+      <div className="flex max-h-[90dvh] min-h-0 flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white">
         {year === currentYear && (
           <div className="shrink-0 px-3 pt-2 pb-0">
             <button
@@ -1205,8 +1186,6 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                     return (
                       <React.Fragment key={wt.id}>
                         <tr
-                          data-dashboard-work-type={`expenses:${wt.id}`}
-                          data-dashboard-work-type-section="expenses"
                           className={cn(
                             "bg-white hover:bg-neutral-50 border-b border-neutral-100 cursor-pointer select-none",
                             rowOutline(!!otherWorkType)
@@ -1215,7 +1194,6 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                         >
                           <td className={cn(
                             stickyLbl,
-                            activeStickyWorkType === `expenses:${wt.id}` && stickyWorkTypeCell,
                             "font-normal",
                             compareReady &&
                               valueChanged(wt.name, otherWorkType?.name) &&
@@ -1228,7 +1206,6 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                           </td>
                           <td className={cn(
                             stickyTotal,
-                            activeStickyWorkType === `expenses:${wt.id}` && stickyWorkTypeCell,
                             compareReady &&
                               valueChanged(
                                 fmt(rowTotal(wt.weeks)),
@@ -1242,7 +1219,6 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                             return (
                               <td key={idx} className={cn(
                                 tdCls,
-                                activeStickyWorkType === `expenses:${wt.id}` && stickyWorkTypeCell,
                                 wh?.week === currentISOWeek && year === currentYear ? "bg-blue-50 font-semibold" : wh?.week < currentISOWeek && year === currentYear ? "text-neutral-400 bg-neutral-50/40" : "",
                                 workTypeCellChanged(wt, wh.week) && CHANGED_CELL_CLASS
                               )}>
@@ -1423,8 +1399,6 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                       <React.Fragment key={group.workTypeId}>
                         {/* Строка вида работ (агрегат) */}
                         <tr
-                          data-dashboard-work-type={`plan:${group.workTypeId}`}
-                          data-dashboard-work-type-section="plan"
                           className={cn(
                             "bg-white hover:bg-neutral-50 border-b border-neutral-100 cursor-pointer select-none",
                             rowOutline(!!otherGroupWeeks)
@@ -1433,7 +1407,6 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                         >
                           <td className={cn(
                             stickyLbl,
-                            activeStickyWorkType === `plan:${group.workTypeId}` && stickyWorkTypeCell,
                             "font-normal",
                             compareReady &&
                               valueChanged(group.workTypeName, otherGroupName) &&
@@ -1446,7 +1419,6 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                           </td>
                           <td className={cn(
                             stickyTotal,
-                            activeStickyWorkType === `plan:${group.workTypeId}` && stickyWorkTypeCell,
                             compareReady &&
                               valueChanged(
                                 fmt(rowTotal(group.weekTotals)),
@@ -1463,7 +1435,6 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                             return (
                               <td key={idx} className={cn(
                                 tdCls,
-                                activeStickyWorkType === `plan:${group.workTypeId}` && stickyWorkTypeCell,
                                 wh?.week === currentISOWeek && year === currentYear ? "bg-blue-50 font-semibold" : wh?.week < currentISOWeek && year === currentYear ? "text-neutral-400 bg-neutral-50/40" : "",
                                 mismatchTone === "over" && "!text-red-600 font-semibold",
                                 mismatchTone === "saved" && "!text-green-600 font-semibold",
