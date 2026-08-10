@@ -37,7 +37,7 @@ export function DepartmentCombobox({
   const filtered = React.useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return options;
-    return options.filter((d) => d.toLowerCase().startsWith(q));
+    return options.filter((d) => d.toLowerCase().includes(q));
   }, [options, search]);
 
   const canCreate =

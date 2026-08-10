@@ -33,7 +33,7 @@ import {
 import { VerificationTab } from "./VerificationTab";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { sortByNameRu, sortByRu } from "@/lib/sort";
 import {
   usePersistedInterfaceState,
@@ -42,6 +42,8 @@ import {
 
 type Row = {
   id: string;
+  number: string | null;
+  numberSerial: number | null;
   name: string;
   shortName: string;
   type: string;
@@ -68,6 +70,7 @@ const fetcher = <T,>(url: string): Promise<T> =>
   });
 
 type SortField =
+  | "numberSerial"
   | "name"
   | "createdAt"
   | "debt"
@@ -121,6 +124,12 @@ export function ProjectsClient({ scope }: { scope: "all" | "mine" }) {
     if (typeFilter.length) list = list.filter((r) => typeFilter.includes(r.type));
 
     list = [...list].sort((a, b) => {
+      if (sort.field === "numberSerial") {
+        if (a.numberSerial === null) return b.numberSerial === null ? 0 : 1;
+        if (b.numberSerial === null) return -1;
+        const cmp = a.numberSerial - b.numberSerial;
+        return sort.dir === "asc" ? cmp : -cmp;
+      }
       const av = a[sort.field];
       const bv = b[sort.field];
       const cmp =
@@ -280,9 +289,22 @@ export function ProjectsClient({ scope }: { scope: "all" | "mine" }) {
         />
       </div>
 
-      <Table containerRef={scrollRef} containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto">
+      <Table
+        className="min-w-[1040px]"
+        containerRef={scrollRef}
+        containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto"
+      >
           <TableHeader>
             <TableRow>
+              <SortableHead
+                field="numberSerial"
+                sortBy={sort.field}
+                sortDir={sort.dir}
+                onSort={handleSort}
+                className="w-[1%] min-w-[76px]"
+              >
+                Номер
+              </SortableHead>
               <SortableHead field="name" sortBy={sort.field} sortDir={sort.dir} onSort={handleSort}>
                 Проект
               </SortableHead>
@@ -344,13 +366,13 @@ export function ProjectsClient({ scope }: { scope: "all" | "mine" }) {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={isAdmin ? 9 : 8} className="text-center text-neutral-500 py-8">
+                <TableCell colSpan={isAdmin ? 10 : 9} className="text-center text-neutral-500 py-8">
                   Загрузка...
                 </TableCell>
               </TableRow>
             ) : rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={isAdmin ? 9 : 8} className="text-center text-neutral-500 py-8">
+                <TableCell colSpan={isAdmin ? 10 : 9} className="text-center text-neutral-500 py-8">
                   {scope === "mine"
                     ? "Вы пока не назначены руководителем ни на один проект."
                     : "Нет проектов"}
@@ -359,6 +381,9 @@ export function ProjectsClient({ scope }: { scope: "all" | "mine" }) {
             ) : (
               rows.map((r) => (
                 <TableRow key={r.id} className={r.status === "archived" ? "bg-neutral-100 text-neutral-400" : ""}>
+                  <TableCell className="w-[1%] min-w-[76px] tabular-nums font-medium">
+                    {r.number ?? <span className="text-neutral-400">—</span>}
+                  </TableCell>
                   <TableCell className="font-medium">
                     <Link
                       href={detailHref(r.id)}
@@ -555,23 +580,16 @@ function ProjectEditDialog({
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="clientId">Клиент</Label>
-              <Select value={clientId} onValueChange={(v) => setClientId(v ?? "")}>
-                <SelectTrigger id="clientId">
-                  <SelectValue placeholder="Выберите клиента">
-                    {clientId
-                      ? (activeClients.find((c) => c.id === clientId)?.name ?? clientId)
-                      : undefined}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {activeClients.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                      {c.status === "archived" && " (архив)"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                id="clientId"
+                value={clientId}
+                onValueChange={setClientId}
+                options={activeClients.map((client) => ({
+                  value: client.id,
+                  label: `${client.name}${client.status === "archived" ? " (архив)" : ""}`,
+                }))}
+                placeholder={clientId || "Выберите клиента"}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="shortName">Название проекта</Label>
@@ -586,27 +604,19 @@ function ProjectEditDialog({
             </div>
             <div className="space-y-2">
               <Label htmlFor="responsibleUserId">Руководитель проекта</Label>
-              <Select
+              <SearchableSelect
+                id="responsibleUserId"
                 value={responsibleUserId || "__none__"}
-                onValueChange={(v) => setResponsibleUserId(v === "__none__" ? "" : (v ?? ""))}
-              >
-                <SelectTrigger id="responsibleUserId">
-                  <SelectValue>
-                    {responsibleUserId
-                      ? (activeResponsibles.find((r) => r.id === responsibleUserId)?.fullName ?? row?.responsibleName ?? "— Выберите руководителя —")
-                      : "— Выберите руководителя —"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— Выберите руководителя —</SelectItem>
-                  {activeResponsibles.map((r) => (
-                    <SelectItem key={r.id} value={r.id}>
-                      {r.fullName}
-                      {!r.isActive && " (архив)"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onValueChange={(v) => setResponsibleUserId(v === "__none__" ? "" : v)}
+                options={[
+                  { value: "__none__", label: "— Выберите руководителя —" },
+                  ...activeResponsibles.map((responsible) => ({
+                    value: responsible.id,
+                    label: `${responsible.fullName}${!responsible.isActive ? " (архив)" : ""}`,
+                  })),
+                ]}
+                placeholder={row?.responsibleName ?? "— Выберите руководителя —"}
+              />
             </div>
             {previewName && (
               <div className="rounded-md bg-neutral-50 border border-neutral-200 px-3 py-2 text-sm space-y-1">

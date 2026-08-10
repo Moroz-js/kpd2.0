@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { MONTHS, formatDate } from "@/lib/format";
 import { nearestPaymentDate, toLocalDateString } from "@/lib/iso-weeks";
 import { sortByNameRu } from "@/lib/sort";
@@ -168,40 +169,30 @@ export function IssuedWorkEditDialog({
 
           <div className="space-y-2">
             <Label htmlFor="projectId">Проект</Label>
-            <Select value={projectId} onValueChange={(v) => setProjectId(v ?? "")}>
-              <SelectTrigger id="projectId">
-                <SelectValue>
-                  {projectId ? (activeProjects.find((p) => p.id === projectId)?.name ?? projectId) : undefined}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {activeProjects.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                    {p.status === "archived" && " (архив)"}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              id="projectId"
+              value={projectId}
+              onValueChange={setProjectId}
+              options={activeProjects.map((project) => ({
+                value: project.id,
+                label: `${project.name}${project.status === "archived" ? " (архив)" : ""}`,
+              }))}
+              placeholder={projectId || "Выберите проект"}
+            />
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="workTypeId">Вид работ</Label>
-            <Select value={workTypeId} onValueChange={(v) => setWorkTypeId(v ?? "")}>
-              <SelectTrigger id="workTypeId">
-                <SelectValue>
-                  {workTypeId ? (activeWorkTypes.find((w) => w.id === workTypeId)?.name ?? workTypeId) : undefined}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {activeWorkTypes.map((w) => (
-                  <SelectItem key={w.id} value={w.id}>
-                    {w.name}
-                    {w.status === "archived" && " (архив)"}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              id="workTypeId"
+              value={workTypeId}
+              onValueChange={setWorkTypeId}
+              options={activeWorkTypes.map((workType) => ({
+                value: workType.id,
+                label: `${workType.name}${workType.status === "archived" ? " (архив)" : ""}`,
+              }))}
+              placeholder={workTypeId || "Выберите вид работ"}
+            />
           </div>
 
           {isPersonal ? (
@@ -249,21 +240,16 @@ export function IssuedWorkEditDialog({
               </div>
               <div className="space-y-2">
                 <Label htmlFor="executorId">Исполнитель</Label>
-                <Select value={executorId} onValueChange={(v) => setExecutorId(v ?? "")}>
-                  <SelectTrigger id="executorId">
-                    <SelectValue>
-                      {executorId ? (activeExecutors.find((e) => e.id === executorId)?.name ?? executorId) : undefined}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {activeExecutors.map((e) => (
-                      <SelectItem key={e.id} value={e.id}>
-                        {e.name}
-                        {e.status === "archived" && " (архив)"}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableSelect
+                  id="executorId"
+                  value={executorId}
+                  onValueChange={setExecutorId}
+                  options={activeExecutors.map((executor) => ({
+                    value: executor.id,
+                    label: `${executor.name}${executor.status === "archived" ? " (архив)" : ""}`,
+                  }))}
+                  placeholder={executorId || "Выберите исполнителя"}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="plannedPayAt">Дата оплаты — план</Label>

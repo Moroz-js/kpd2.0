@@ -29,7 +29,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner } from "@/lib/table-styles";
 import { sortByNameRu } from "@/lib/sort";
@@ -425,23 +425,16 @@ function OrderEditDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor="projectId">Проект</Label>
-            <Select value={projectId} onValueChange={(v) => setProjectId(v ?? "")}>
-              <SelectTrigger id="projectId">
-                <SelectValue placeholder="Выберите проект">
-                  {projectId
-                    ? (activeProjects.find((p) => p.id === projectId)?.name ?? projectId)
-                    : undefined}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {activeProjects.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                    {p.status === "archived" && " (архив)"}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              id="projectId"
+              value={projectId}
+              onValueChange={setProjectId}
+              options={activeProjects.map((project) => ({
+                value: project.id,
+                label: `${project.name}${project.status === "archived" ? " (архив)" : ""}`,
+              }))}
+              placeholder={projectId || "Выберите проект"}
+            />
           </div>
           <div className="space-y-2">
             <Label htmlFor="contractNumber">Номер договора / допсоглашения (опционально)</Label>

@@ -1,9 +1,10 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 
-export type NumberScope = "payout" | "issued-work" | "other-expense";
+export type EntityNumberScope = "payout" | "issued-work" | "other-expense";
+export type NumberScope = EntityNumberScope | "project";
 
-const PREFIX: Record<NumberScope, string> = {
+const PREFIX: Record<EntityNumberScope, string> = {
   payout: "В",
   "issued-work": "ВР",
   "other-expense": "ПТ",
@@ -15,20 +16,20 @@ export type AllocatedEntityNumber = {
   serial: number;
 };
 
-export function formatEntityNumber(scope: NumberScope, year: number, serial: number): string {
+export function formatEntityNumber(scope: EntityNumberScope, year: number, serial: number): string {
   const shortYear = String(Math.abs(year) % 100).padStart(2, "0");
   return `${PREFIX[scope]}${shortYear}.${String(serial).padStart(3, "0")}`;
 }
 
 /**
- * Выделяет следующий номер атомарным increment/upsert внутри транзакции.
- * Важно: сущность с этим номером должна быть создана в той же транзакции.
+ * Выделяет следующий serial атомарным increment/upsert внутри транзакции.
+ * Важно: сущность с этим serial должна быть создана в той же транзакции.
  */
-export async function allocateEntityNumber(
+export async function allocateEntitySerial(
   tx: Prisma.TransactionClient,
   scope: NumberScope,
   year: number
-): Promise<AllocatedEntityNumber> {
+): Promise<Omit<AllocatedEntityNumber, "number">> {
   if (!Number.isInteger(year)) throw new Error("Год номера должен быть целым числом");
 
   const counter = await tx.numberCounter.upsert({
@@ -38,9 +39,24 @@ export async function allocateEntityNumber(
   });
 
   return {
-    number: formatEntityNumber(scope, year, counter.lastValue),
     year,
     serial: counter.lastValue,
+  };
+}
+
+/**
+ * Выделяет следующий номер атомарным increment/upsert внутри транзакции.
+ * Важно: сущность с этим номером должна быть создана в той же транзакции.
+ */
+export async function allocateEntityNumber(
+  tx: Prisma.TransactionClient,
+  scope: EntityNumberScope,
+  year: number
+): Promise<AllocatedEntityNumber> {
+  const allocated = await allocateEntitySerial(tx, scope, year);
+  return {
+    ...allocated,
+    number: formatEntityNumber(scope, year, allocated.serial),
   };
 }
 
@@ -51,7 +67,7 @@ function isRetryableTransactionError(error: unknown): boolean {
 }
 
 /** Serializable-транзакция с ограниченным retry для PostgreSQL и SQLite. */
-export async function withNumberedTransaction<T>(
+export async function withSerializableTransaction<T>(
   operation: (tx: Prisma.TransactionClient) => Promise<T>,
   maxAttempts = 4
 ): Promise<T> {
@@ -70,4 +86,11 @@ export async function withNumberedTransaction<T>(
     }
   }
   throw lastError;
+}
+
+export function withNumberedTransaction<T>(
+  operation: (tx: Prisma.TransactionClient) => Promise<T>,
+  maxAttempts = 4
+): Promise<T> {
+  return withSerializableTransaction(operation, maxAttempts);
 }

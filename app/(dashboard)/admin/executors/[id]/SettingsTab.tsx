@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { WorkTypesMultiSelect } from "@/components/ui-custom/WorkTypesMultiSelect";
 import { RecipientTypesPicker } from "@/components/ui-custom/RecipientTypesPicker";
 import { EXECUTOR_TYPES, WORK_TYPE_SEGMENTS, parseCompanyStatus, serializeCompanyStatus } from "@/lib/statuses";
@@ -576,23 +577,15 @@ export function SettingsTab({
         </div>
         <div className="space-y-1.5">
           <Label>Источник оплаты по умолчанию</Label>
-          <Select value={defaultBankAccountId} onValueChange={(v) => setDefaultBankAccountId(v ?? "")} disabled={!canEdit}>
-            <SelectTrigger>
-              <SelectValue>
-                {defaultBankAccountId
-                  ? (bankAccounts.find((b) => b.id === defaultBankAccountId)?.name ?? "—")
-                  : "— Не задан —"}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="">— Не задан —</SelectItem>
-              {bankAccounts.map((b) => (
-                <SelectItem key={b.id} value={b.id}>
-                  {b.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            value={defaultBankAccountId}
+            onValueChange={setDefaultBankAccountId}
+            options={[
+              { value: "", label: "— Не задан —" },
+              ...bankAccounts.map((bankAccount) => ({ value: bankAccount.id, label: bankAccount.name })),
+            ]}
+            disabled={!canEdit}
+          />
         </div>
         <div className="space-y-1.5">
           <Label>Тип получателя</Label>

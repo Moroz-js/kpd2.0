@@ -19,6 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { formatMoney, formatMoneyRub } from "@/lib/format";
 import { getISOWeek, getISOWeekYear, weekLabel, toLocalDateString } from "@/lib/iso-weeks";
 import { CHARGE_STATUSES, BADGE_TONE_CLASS } from "@/lib/statuses";
@@ -1248,8 +1249,6 @@ function ChargeFormDialog({
     }
   }
 
-  const selectedOrder = orders.find(o => o.id === orderId);
-
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
@@ -1259,33 +1258,44 @@ function ChargeFormDialog({
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5 min-w-0">
             <Label>Счёт получения</Label>
-            <Select value={bankAccountId} onValueChange={(v) => setBankAccountId(v ?? "")}>
-              <SelectTrigger>
-                <SelectValue>{bankAccounts.find(b => b.id === bankAccountId)?.name ?? "Выберите"}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">—</SelectItem>
-                {bankAccounts.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={bankAccountId}
+              onValueChange={setBankAccountId}
+              options={[
+                { value: "", label: "—" },
+                ...bankAccounts.map((bankAccount) => ({ value: bankAccount.id, label: bankAccount.name })),
+              ]}
+              placeholder="Выберите"
+            />
           </div>
           <div className="space-y-1.5 col-span-2 min-w-0">
             <Label>Заказ</Label>
-            <Select value={orderId} onValueChange={(v) => setOrderId(v ?? "")}>
-              <SelectTrigger>
-                <SelectValue>
-                  {selectedOrder ? <OrderSelectLabel order={selectedOrder} /> : "Выберите заказ"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">—</SelectItem>
-                {orders.map((o) => (
-                  <SelectItem key={o.id} value={o.id}>
-                    <OrderSelectLabel order={o} />
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={orderId}
+              onValueChange={setOrderId}
+              options={[
+                { value: "", label: "—" },
+                ...orders.map((order) => ({
+                  value: order.id,
+                  label: orderPrimaryLabel(order),
+                  searchText: [
+                    order.orderNumber,
+                    order.project.name,
+                    order.project.client?.name,
+                    order.description,
+                  ].filter(Boolean).join(" "),
+                })),
+              ]}
+              placeholder="Выберите заказ"
+              renderOption={(option) => {
+                const order = orders.find((item) => item.id === option.value);
+                return order ? <OrderSelectLabel order={order} /> : option.label;
+              }}
+              renderValue={(option) => {
+                const order = orders.find((item) => item.id === option.value);
+                return order ? <OrderSelectLabel order={order} /> : option.label;
+              }}
+            />
           </div>
           <div className="space-y-1.5 min-w-0">
             <Label>Сумма</Label>

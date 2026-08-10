@@ -213,16 +213,23 @@ export class SnapshotDataSource implements DataSource {
   private async rows(model: SnapshotModel): Promise<SnapshotRecord[]> {
     const cached = this.cache.get(model);
     if (cached) return cached;
-    const [compressed, manifest] = await Promise.all([
-      readSnapshotObject(`${this.prefix}/${snapshotModelKey(model)}`).catch((error) => {
-        throw new SnapshotSourceError(
-          `Снимок ${this.metadata.id} повреждён или недоступен: не удалось прочитать модель ${model} (${
-            error instanceof Error ? error.message : String(error)
-          })`
-        );
-      }),
-      this.manifest(),
-    ]);
+    const manifest = await this.manifest();
+    const expected = manifest.files.find((file) => file.model === model);
+    if (!expected) {
+      if (model === "CashflowManualBalance" && this.metadata.schemaVersion < 2) {
+        const rows: SnapshotRecord[] = [];
+        this.cache.set(model, rows);
+        return rows;
+      }
+      throw new SnapshotSourceError(`Snapshot повреждён: модель ${model} отсутствует в manifest`);
+    }
+    const compressed = await readSnapshotObject(`${this.prefix}/${snapshotModelKey(model)}`).catch((error) => {
+      throw new SnapshotSourceError(
+        `Снимок ${this.metadata.id} повреждён или недоступен: не удалось прочитать модель ${model} (${
+          error instanceof Error ? error.message : String(error)
+        })`
+      );
+    });
     const text = gunzipSync(compressed).toString("utf8").trim();
     const rows = text
       ? text.split("\n").map(
@@ -240,9 +247,8 @@ export class SnapshotDataSource implements DataSource {
             }) as SnapshotRecord
         )
       : [];
-    const expected = manifest.files.find((file) => file.model === model);
     const hash = createHash("sha256").update(text ? `${text}\n` : "").digest("hex");
-    if (!expected || expected.rows !== rows.length || expected.sha256 !== hash) {
+    if (expected.rows !== rows.length || expected.sha256 !== hash) {
       throw new SnapshotSourceError(`Snapshot повреждён: контрольная сумма модели ${model} не совпала`);
     }
     this.cache.set(model, rows);

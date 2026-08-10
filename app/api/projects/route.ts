@@ -26,7 +26,7 @@ const createSchema = z.object({
   clientId: z.string().min(1, "Выберите клиента"),
   shortName: z.string().min(1, "Введите название проекта"),
   responsibleUserId: z.string().nullable().optional(),
-});
+}).strict();
 
 export async function POST(req: Request) {
   const me = await getSessionUser();

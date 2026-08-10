@@ -33,6 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { formatMoney, formatDate, monthFullLabel, MONTHS } from "@/lib/format";
 import { WORK_STATUSES, PAYMENT_STATUSES, BADGE_TONE_CLASS } from "@/lib/statuses";
 import { sortByNameRu } from "@/lib/sort";
@@ -524,6 +525,13 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
     workPasses,
     workOnlyFilterActive,
   ]);
+  const visibleWorksTotal = React.useMemo(() => {
+    const amountById = new Map(works.map((work) => [work.id, work.amount]));
+    return Array.from(new Set(orderedWorkIds)).reduce(
+      (sum, id) => sum + (amountById.get(id) ?? 0),
+      0
+    );
+  }, [orderedWorkIds, works]);
 
   const { selectedIds, handleRowSelect, toggleAll, clearSelection } =
     useTableRowSelection(orderedWorkIds);
@@ -705,15 +713,14 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
 
   // ── Рендер ───────────────────────────────────────────────────────────────────
   /** table-fixed + colgroup — колонки не растягиваются от длинного ТЗ/URL */
-  const COL_COUNT = 14;
-  const COL_WIDTHS = [32, 40, 72, 140, 90, 48, 56, 120, 72, 118, 80, 140, 110, 96] as const;
+  const COL_WIDTHS = [32, 72, 90, 118, 140, 80, 110, 160, 100, 56, 64, 140, 56, 72, 96] as const;
+  const COL_COUNT = COL_WIDTHS.length;
   const TABLE_MIN_WIDTH = COL_WIDTHS.reduce((s, w) => s + w, 0);
   const cellClip = "overflow-hidden max-w-0";
   const th = "border-b border-neutral-200 px-1.5 py-1 text-left text-[10px] leading-tight font-medium text-neutral-600 bg-neutral-100 whitespace-nowrap";
   const thr = th + " text-right";
   const td = "border-b border-neutral-100 px-1.5 py-1 text-[10px] leading-tight align-middle";
   const tdr = td + " text-right tabular-nums";
-  const dim = "border-b border-neutral-100 px-1.5 py-1 text-[10px] text-neutral-300";
   const changedCell = "bg-amber-100/80 font-medium text-amber-950";
 
   function comparisonRowClass<T>(
@@ -742,8 +749,22 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
             onSelect={handleRowSelect}
           />
         </td>
-        <td className={cn(td, diff.has("executionYear") && changedCell)}>{w.executionYear}</td>
         <td className={cn(td, "whitespace-nowrap", diff.has("executionMonth") && changedCell)}>{monthFullLabel(w.executionMonth)}</td>
+        <td className={cn(tdr, diff.has("amount") && changedCell)}>
+          <InlineAmountInput value={w.amount} disabled={!canEditWork} onSave={(n) => patchWorkAmount(w.id, n)} />
+        </td>
+        <td className={cn(td, diff.has("plannedPayAt") && changedCell)}>
+          <InlineDateInput
+            value={w.plannedPayAt ? toLocalDateString(new Date(w.plannedPayAt)) : ""}
+            disabled={!dateEditable}
+            onSave={(d) => patchWorkPlannedDate(w.id, d)}
+          />
+        </td>
+        <td className={cn(td, "min-w-[140px]", diff.has("workStatus") && changedCell)}><StatusBadge status={w.workStatus} type="work" /></td>
+        <td className={cn(td, "whitespace-nowrap text-neutral-500", w.workStatus === "paid" && !w.paidAt && "bg-red-100 text-red-700", diff.has("paidAt") && changedCell)}>{formatDate(w.paidAt)}</td>
+        <td className={cn(td, cellClip, "text-neutral-600")} title={w.payment?.bankAccount?.name ?? undefined}>
+          <div className="truncate">{w.payment?.bankAccount?.name ?? "—"}</div>
+        </td>
         <td className={cn(td, cellClip, diff.has("projectTask") && changedCell)}>
           <div className="truncate" title={w.project.name}>{w.project.name}</div>
           {w.techTask ? (
@@ -768,31 +789,19 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
         <td className={cn(tdr, diff.has("rate") && changedCell)}>{w.rate != null ? w.rate.toLocaleString("ru-RU") : "—"}</td>
         <td className={cn(td, "min-w-[120px]", diff.has("responsible") && changedCell)}>
           {respEditable ? (
-            <Select value={w.responsibleExecutorId ?? ""} onValueChange={(v) => v && patchWorkResponsible(w.id, v)}>
-              <SelectTrigger className="h-6 text-[10px] px-1.5">
-                <SelectValue>{w.responsibleExecutor?.name ?? "—"}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {permanentExecutors.map((e) => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={w.responsibleExecutorId ?? ""}
+              onValueChange={(value) => patchWorkResponsible(w.id, value)}
+              options={permanentExecutors.map((executor) => ({ value: executor.id, label: executor.name }))}
+              placeholder={w.responsibleExecutor?.name ?? "—"}
+              triggerClassName="h-6 px-1.5 text-[10px]"
+            />
           ) : (
             <span className="text-neutral-600">{w.responsibleExecutor?.name ?? "—"}</span>
           )}
         </td>
-        <td className={cn(tdr, diff.has("amount") && changedCell)}>
-          <InlineAmountInput value={w.amount} disabled={!canEditWork} onSave={(n) => patchWorkAmount(w.id, n)} />
-        </td>
-        <td className={cn(td, diff.has("plannedPayAt") && changedCell)}>
-          <InlineDateInput
-            value={w.plannedPayAt ? toLocalDateString(new Date(w.plannedPayAt)) : ""}
-            disabled={!dateEditable}
-            onSave={(d) => patchWorkPlannedDate(w.id, d)}
-          />
-        </td>
-        <td className={cn(td, "whitespace-nowrap text-neutral-500", w.workStatus === "paid" && !w.paidAt && "bg-red-100 text-red-700", diff.has("paidAt") && changedCell)}>{formatDate(w.paidAt)}</td>
-        <td className={cn(td, "min-w-[140px]", diff.has("workStatus") && changedCell)}><StatusBadge status={w.workStatus} type="work" /></td>
-        <td className={dim}>—</td>
+        <td className={cn(td, diff.has("executionYear") && changedCell)}>{w.executionYear}</td>
+        <td className={cn(td, "whitespace-nowrap")}>{payWeekText(w.paidAt ?? w.plannedPayAt)}</td>
         <td className={cn(td, stickyActionsCell, active && "bg-blue-100")}>
           <div className={stickyActionsInner}>
             {canCreate && (
@@ -827,7 +836,21 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
     return (
       <>
         <td className="border-b border-neutral-100 px-1 py-1 w-8" />
-        <td className={cn(td, "align-middle", diff.has("summary") && changedCell)} colSpan={7}>
+        <td className={cn(td, "whitespace-nowrap")}>{monthFullLabel(p.periodMonth)}</td>
+        <td className={cn(tdr, "font-semibold text-green-800", diff.has("amount") && changedCell)}>{formatMoney(p.amount)}</td>
+        <td className={cn(td, diff.has("plannedPayAt") && changedCell)}>
+          <InlineDateInput
+            value={p.plannedPayAt ? toLocalDateString(new Date(p.plannedPayAt)) : ""}
+            disabled={!isAdmin}
+            onSave={(d) => patchPaymentPlannedDate(p.id, d)}
+          />
+        </td>
+        <td className={cn(td, "min-w-[140px]", diff.has("paymentStatus") && changedCell)}><StatusBadge status={p.paymentStatus} type="payment" /></td>
+        <td className={cn(td, "whitespace-nowrap", diff.has("paidAt") && changedCell)}>{formatDate(p.paidAt)}</td>
+        <td className={cn(td, cellClip, "text-neutral-600", diff.has("bankAccount") && changedCell)} title={p.bankAccount?.name ?? undefined}>
+          <div className="truncate">{p.bankAccount?.name ?? "—"}</div>
+        </td>
+        <td className={cn(td, "align-middle", diff.has("summary") && changedCell)} colSpan={5}>
           <div className="flex items-center gap-2 min-w-0">
             <span className="inline-flex items-center gap-1 font-semibold text-green-800 shrink-0">
               <CircleDollarSign className="h-3.5 w-3.5" /> Выплата
@@ -837,19 +860,8 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
             </span>
           </div>
         </td>
-        <td className={cn(tdr, "font-semibold text-green-800", diff.has("amount") && changedCell)}>{formatMoney(p.amount)}</td>
-        <td className={cn(td, diff.has("plannedPayAt") && changedCell)}>
-          <InlineDateInput
-            value={p.plannedPayAt ? toLocalDateString(new Date(p.plannedPayAt)) : ""}
-            disabled={!isAdmin}
-            onSave={(d) => patchPaymentPlannedDate(p.id, d)}
-          />
-        </td>
-        <td className={cn(td, "whitespace-nowrap", diff.has("paidAt") && changedCell)}>{formatDate(p.paidAt)}</td>
-        <td className={cn(td, "min-w-[140px]", diff.has("paymentStatus") && changedCell)}><StatusBadge status={p.paymentStatus} type="payment" /></td>
-        <td className={cn(td, cellClip, "text-neutral-600", diff.has("bankAccount") && changedCell)} title={p.bankAccount?.name ?? undefined}>
-          <div className="truncate">{p.bankAccount?.name ?? "—"}</div>
-        </td>
+        <td className={td}>{p.periodYear}</td>
+        <td className={cn(td, "whitespace-nowrap")}>{payWeekText(p.paidAt ?? p.plannedPayAt)}</td>
         <td className={cn(td, stickyActionsCell, active && "bg-blue-100")}>
           {isAdmin && (
             <div className={stickyActionsInner}>
@@ -896,15 +908,6 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
 
   return (
     <div className="flex flex-col h-full min-h-0 gap-3">
-      {/* Сумма неоплаченных */}
-      {unpaidTotal > 0 && (
-        <div className="shrink-0 flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-sm">
-          <span className="text-amber-700 font-medium">К выплате:</span>
-          <span className="text-amber-900 font-semibold tabular-nums">
-            {unpaidTotal.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ₽
-          </span>
-        </div>
-      )}
       {/* Toolbar */}
       <div className="shrink-0 flex flex-wrap items-center gap-2">
         {canCreate && (
@@ -949,12 +952,28 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
             options={allYears.map((y) => ({ value: String(y), label: `${y} год` }))} />
           <FilterSelect label="Месяц" value={filterMonth} onChange={setFilterMonth} placeholder="Все месяцы"
             options={MONTHS.map((m) => ({ value: m.value, label: m.label }))} />
-          <FilterSelect label="Проект" value={filterProject} onChange={setFilterProject} placeholder="Все проекты"
-            options={projectOptions.map(([id, p]) => ({ value: id, label: p.name }))} />
+          <SearchableSelect
+            value={filterProject || "__all__"}
+            onValueChange={(value) => setFilterProject(value === "__all__" ? "" : value)}
+            options={[
+              { value: "__all__", label: "Все проекты" },
+              ...projectOptions.map(([id, project]) => ({ value: id, label: project.name })),
+            ]}
+            renderValue={(option) => option.value === "__all__" ? option.label : `Проект: ${option.label}`}
+            triggerClassName="h-8 w-36 text-xs"
+          />
           <FilterSelect label="Статус" value={filterStatus} onChange={setFilterStatus} placeholder="Любой статус"
             options={[{ value: "unpaid", label: "Неоплаченные" }, { value: "paid", label: "Оплаченные" }]} />
-          <FilterSelect label="Источник перевода" value={filterBank} onChange={setFilterBank} placeholder="Любой источник"
-            options={bankAccounts.map((b) => ({ value: b.id, label: b.name }))} />
+          <SearchableSelect
+            value={filterBank || "__all__"}
+            onValueChange={(value) => setFilterBank(value === "__all__" ? "" : value)}
+            options={[
+              { value: "__all__", label: "Любой источник" },
+              ...bankAccounts.map((bankAccount) => ({ value: bankAccount.id, label: bankAccount.name })),
+            ]}
+            renderValue={(option) => option.value === "__all__" ? option.label : `Источник перевода: ${option.label}`}
+            triggerClassName="h-8 w-36 text-xs"
+          />
         </div>
       </div>
 
@@ -1025,6 +1044,27 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
             </colgroup>
             <thead className="sticky top-0 z-10">
               <tr>
+                <th colSpan={2} className="border-b border-neutral-200 bg-neutral-50" />
+                <th className="border-b border-neutral-200 bg-neutral-50 px-1.5 py-1 text-right align-middle">
+                  <span className="block text-[9px] leading-tight font-medium text-neutral-500 whitespace-normal">
+                    Сумма на странице
+                  </span>
+                  <span className="block text-[10px] leading-tight font-semibold text-neutral-900 tabular-nums whitespace-nowrap">
+                    {formatMoney(visibleWorksTotal)} ₽
+                  </span>
+                </th>
+                <th colSpan={9} className="border-b border-neutral-200 bg-neutral-50" />
+                <th colSpan={2} className="border-b border-neutral-200 bg-neutral-50 px-1.5 py-1 text-right align-middle">
+                  <span className="text-[10px] leading-tight font-medium text-neutral-600 whitespace-nowrap">
+                    К выплате:{" "}
+                  </span>
+                  <span className="text-[10px] leading-tight font-semibold text-neutral-900 tabular-nums whitespace-nowrap">
+                    {formatMoney(unpaidTotal)} ₽
+                  </span>
+                </th>
+                <th className={cn("border-b border-neutral-200", stickyActionsHead)} />
+              </tr>
+              <tr>
                 <th className={cn(th, "w-8 text-center")}>
                   {orderedWorkIds.length > 0 && (
                     <Checkbox
@@ -1033,18 +1073,19 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
                     />
                   )}
                 </th>
-                <th className={th}>Год</th>
                 <th className={th}>Месяц</th>
+                <th className={thr}>Сумма</th>
+                <th className={th}>Дата оплаты план</th>
+                <th className={th}>Статус</th>
+                <th className={th}>Дата оплаты факт</th>
+                <th className={th}>Источник перевода</th>
                 <th className={th}>Проект / ТЗ</th>
                 <th className={th}>Вид работ</th>
                 <th className={thr}>Объём</th>
                 <th className={thr}>Ставка</th>
                 <th className={th}>Ответственный</th>
-                <th className={thr}>Сумма</th>
-                <th className={th}>Дата оплаты план</th>
-                <th className={th}>Дата оплаты</th>
-                <th className={th}>Статус</th>
-                <th className={th}>Источник перевода</th>
+                <th className={th}>Год</th>
+                <th className={th}>Неделя оплаты</th>
                 <th className={cn(th, stickyActionsHead)} />
               </tr>
             </thead>
@@ -1490,23 +1531,24 @@ function CreateWorkDialog({ executorId, onClose, onCreated }: { executorId: stri
           </div>
           <div className="space-y-1.5">
             <Label>Проект *</Label>
-            <Select value={projectId} onValueChange={(v) => setProjectId(v ?? "")}>
-              <SelectTrigger><SelectValue>{loadingProjects ? "Загрузка..." : projectId ? (planProjects.find((p) => p.id === projectId)?.name ?? "—") : "Выберите проект"}</SelectValue></SelectTrigger>
-              <SelectContent>
-                {planProjects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-                {!loadingProjects && planProjects.length === 0 && <div className="px-2 py-1.5 text-xs text-neutral-400">Нет проектов в плане расходов</div>}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={projectId}
+              onValueChange={setProjectId}
+              options={planProjects.map((project) => ({ value: project.id, label: project.name }))}
+              placeholder={loadingProjects ? "Загрузка..." : "Выберите проект"}
+              emptyMessage={loadingProjects ? "Загрузка..." : "Нет проектов в плане расходов"}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Вид работ *</Label>
-            <Select value={workTypeId} onValueChange={(v) => setWorkTypeId(v ?? "")} disabled={!projectId}>
-              <SelectTrigger><SelectValue>{!projectId ? "Сначала выберите проект" : loadingWorkTypes ? "Загрузка..." : workTypeId ? (planWorkTypes.find((w) => w.id === workTypeId)?.name ?? "—") : "Выберите вид работ"}</SelectValue></SelectTrigger>
-              <SelectContent>
-                {planWorkTypes.map((wt) => <SelectItem key={wt.id} value={wt.id}>{wt.name}</SelectItem>)}
-                {!loadingWorkTypes && projectId && planWorkTypes.length === 0 && <div className="px-2 py-1.5 text-xs text-neutral-400">Нет видов работ в плане для этого проекта</div>}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={workTypeId}
+              onValueChange={setWorkTypeId}
+              options={planWorkTypes.map((workType) => ({ value: workType.id, label: workType.name }))}
+              disabled={!projectId}
+              placeholder={!projectId ? "Сначала выберите проект" : loadingWorkTypes ? "Загрузка..." : "Выберите вид работ"}
+              emptyMessage={loadingWorkTypes ? "Загрузка..." : "Нет видов работ в плане для этого проекта"}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Техническое задание *</Label>
@@ -1638,24 +1680,30 @@ function EditWorkDialog({
           </div>
           <div className="space-y-1.5">
             <Label>Проект</Label>
-            <Select value={projectId} onValueChange={(v) => setProjectId(v ?? "")}>
-              <SelectTrigger><SelectValue>{planProjects.find((p) => p.id === projectId)?.name ?? work.project.name}</SelectValue></SelectTrigger>
-              <SelectContent>{planProjects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
-            </Select>
+            <SearchableSelect
+              value={projectId}
+              onValueChange={setProjectId}
+              options={planProjects.map((project) => ({ value: project.id, label: project.name }))}
+              placeholder={work.project.name}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Вид работ</Label>
-            <Select value={workTypeId} onValueChange={(v) => setWorkTypeId(v ?? "")}>
-              <SelectTrigger><SelectValue>{planWorkTypes.find((w) => w.id === workTypeId)?.name ?? work.workType.name}</SelectValue></SelectTrigger>
-              <SelectContent>{planWorkTypes.map((wt) => <SelectItem key={wt.id} value={wt.id}>{wt.name}</SelectItem>)}</SelectContent>
-            </Select>
+            <SearchableSelect
+              value={workTypeId}
+              onValueChange={setWorkTypeId}
+              options={planWorkTypes.map((workType) => ({ value: workType.id, label: workType.name }))}
+              placeholder={work.workType.name}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Ответственный</Label>
-            <Select value={responsibleExecutorId} onValueChange={(v) => setResponsibleExecutorId(v ?? "")}>
-              <SelectTrigger><SelectValue>{permanentExecutors.find((e) => e.id === responsibleExecutorId)?.name ?? work.responsibleExecutor?.name ?? "—"}</SelectValue></SelectTrigger>
-              <SelectContent>{permanentExecutors.map((e) => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}</SelectContent>
-            </Select>
+            <SearchableSelect
+              value={responsibleExecutorId}
+              onValueChange={setResponsibleExecutorId}
+              options={permanentExecutors.map((executor) => ({ value: executor.id, label: executor.name }))}
+              placeholder={work.responsibleExecutor?.name ?? "—"}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Техническое задание</Label>
@@ -1755,13 +1803,14 @@ function CreatePaymentDialog({ executorId, bankAccounts, onClose, onCreated }: {
           <div className="space-y-1.5"><Label>Сумма</Label><MoneyInput value={amount} onChange={setAmount} placeholder="0" /></div>
           <div className="space-y-1.5">
             <Label>Источник оплаты</Label>
-            <Select value={bankAccountId} onValueChange={(v) => setBankAccountId(v ?? "")}>
-              <SelectTrigger><SelectValue>{bankAccountId ? (bankAccounts.find((b) => b.id === bankAccountId)?.name ?? "—") : "— По умолчанию —"}</SelectValue></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">— По умолчанию —</SelectItem>
-                {bankAccounts.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={bankAccountId}
+              onValueChange={setBankAccountId}
+              options={[
+                { value: "", label: "— По умолчанию —" },
+                ...bankAccounts.map((bankAccount) => ({ value: bankAccount.id, label: bankAccount.name })),
+              ]}
+            />
           </div>
           <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => toLocalDateString(nearestPaymentDate())} /></div>
           <div className="space-y-1.5"><Label>Комментарий</Label><Input value={comment} onChange={(e) => setComment(e.target.value)} /></div>
@@ -1789,13 +1838,14 @@ function MarkPaidDialog({ payment, bankAccounts, onClose, onConfirm }: { payment
           <div className="space-y-1.5"><Label>Дата оплаты *</Label><DateInput value={paidAt} onChange={setPaidAt} /></div>
           <div className="space-y-1.5">
             <Label>Источник оплаты</Label>
-            <Select value={bankAccountId} onValueChange={(v) => setBankAccountId(v ?? "")}>
-              <SelectTrigger><SelectValue>{bankAccountId ? (bankAccounts.find((b) => b.id === bankAccountId)?.name ?? "—") : "— По умолчанию —"}</SelectValue></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">— По умолчанию —</SelectItem>
-                {bankAccounts.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={bankAccountId}
+              onValueChange={setBankAccountId}
+              options={[
+                { value: "", label: "— По умолчанию —" },
+                ...bankAccounts.map((bankAccount) => ({ value: bankAccount.id, label: bankAccount.name })),
+              ]}
+            />
           </div>
         </div>
         <DialogFooter>
@@ -1895,13 +1945,14 @@ function EditPaymentDialog({
           </div>
           <div className="space-y-1.5">
             <Label>Источник перевода</Label>
-            <Select value={bankAccountId} onValueChange={(v) => setBankAccountId(v ?? "")}>
-              <SelectTrigger><SelectValue>{bankAccountId ? (bankAccounts.find((b) => b.id === bankAccountId)?.name ?? "—") : "— По умолчанию —"}</SelectValue></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">— По умолчанию —</SelectItem>
-                {bankAccounts.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={bankAccountId}
+              onValueChange={setBankAccountId}
+              options={[
+                { value: "", label: "— По умолчанию —" },
+                ...bankAccounts.map((bankAccount) => ({ value: bankAccount.id, label: bankAccount.name })),
+              ]}
+            />
           </div>
           <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => toLocalDateString(nearestPaymentDate())} /></div>
           <div className="space-y-1.5"><Label>Комментарий</Label><Input value={comment} onChange={(e) => setComment(e.target.value)} /></div>

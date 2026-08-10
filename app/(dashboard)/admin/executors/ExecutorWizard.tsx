@@ -12,13 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { serializeCompanyStatus } from "@/lib/statuses";
 import { RecipientTypesPicker } from "@/components/ui-custom/RecipientTypesPicker";
 import { CompanyStatusPicker } from "@/components/ui-custom/CompanyStatusPicker";
@@ -216,54 +210,32 @@ export function ExecutorWizard({
 
             <div className="space-y-1.5 min-w-0">
               <Label htmlFor="responsible">Ответственный</Label>
-              <Select
+              <SearchableSelect
+                id="responsible"
                 value={responsibleUserId || "__none__"}
-                onValueChange={(v) => setResponsibleUserId(v === "__none__" ? "" : (v ?? ""))}
-              >
-                <SelectTrigger id="responsible">
-                  <SelectValue>
-                    {responsibleUserId
-                      ? (responsibles.find((r) => r.id === responsibleUserId)?.fullName ?? "— Не задан —")
-                      : "— Не задан —"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— Не задан —</SelectItem>
-                  {responsibles
-                    .filter((r) => r.isActive)
-                    .map((r) => (
-                      <SelectItem key={r.id} value={r.id}>
-                        {r.fullName}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+                onValueChange={(v) => setResponsibleUserId(v === "__none__" ? "" : v)}
+                options={[
+                  { value: "__none__", label: "— Не задан —" },
+                  ...responsibles
+                    .filter((responsible) => responsible.isActive)
+                    .map((responsible) => ({ value: responsible.id, label: responsible.fullName })),
+                ]}
+              />
             </div>
 
             <div className="space-y-1.5 min-w-0">
               <Label htmlFor="defaultBank">Источник оплаты по умолчанию</Label>
-              <Select
+              <SearchableSelect
+                id="defaultBank"
                 value={defaultBankAccountId || "__none__"}
-                onValueChange={(v) => setDefaultBankAccountId(v === "__none__" ? "" : (v ?? ""))}
-              >
-                <SelectTrigger id="defaultBank">
-                  <SelectValue>
-                    {defaultBankAccountId
-                      ? (bankAccounts.find((b) => b.id === defaultBankAccountId)?.name ?? "— Не задан —")
-                      : "— Не задан —"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— Не задан —</SelectItem>
-                  {bankAccounts
-                    .filter((b) => b.status === "active")
-                    .map((b) => (
-                      <SelectItem key={b.id} value={b.id}>
-                        {b.name}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+                onValueChange={(v) => setDefaultBankAccountId(v === "__none__" ? "" : v)}
+                options={[
+                  { value: "__none__", label: "— Не задан —" },
+                  ...bankAccounts
+                    .filter((bankAccount) => bankAccount.status === "active")
+                    .map((bankAccount) => ({ value: bankAccount.id, label: bankAccount.name })),
+                ]}
+              />
             </div>
 
             <div className="space-y-1.5 min-w-0">

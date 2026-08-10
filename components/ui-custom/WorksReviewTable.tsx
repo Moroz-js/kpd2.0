@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import useSWR from "swr";
+import Link from "next/link";
 import { toast } from "sonner";
 import { CheckCircle2, MessageSquare, ArrowUp, ArrowDown, ArrowUpDown, ExternalLink } from "lucide-react";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
@@ -19,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   Popover,
   PopoverContent,
@@ -38,6 +40,7 @@ import {
 } from "@/components/PersistedInterfaceState";
 import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner } from "@/lib/table-styles";
+import { isUnknownExecutorName } from "@/lib/executor-names";
 
 type ReviewRow = {
   sourceType: "personal" | "other-expense";
@@ -46,6 +49,7 @@ type ReviewRow = {
   executionMonth: number;
   executorId: string;
   executorName: string;
+  executorCanOpenEstimate: boolean;
   projectId: string;
   projectName: string;
   workTypeId: string;
@@ -197,12 +201,14 @@ export function WorksReviewTable({
   emptyText = "Работ пока нет.",
   showProjectColumn = true,
   showExecutorFilter = true,
+  showExecutorLinks = false,
 }: {
   fetchUrl: string;
   stateKey: string;
   emptyText?: string;
   showProjectColumn?: boolean;
   showExecutorFilter?: boolean;
+  showExecutorLinks?: boolean;
 }) {
   const { data, isLoading, mutate } = useSWR<ReviewRow[]>(fetchUrl, fetcher);
   const { data: permanentExecutors } = useSWR<ExecutorRef[]>(
@@ -532,27 +538,35 @@ export function WorksReviewTable({
                 <TableRow key={id} className={cn(isPaid && "bg-neutral-50 text-neutral-400")}>
                   <TableCell className="text-xs tabular-nums">{r.executionYear}</TableCell>
                   <TableCell className="text-xs whitespace-nowrap">{monthLabel(r.executionMonth)}</TableCell>
-                  <TableCell className="text-sm">{r.executorName}</TableCell>
+                  <TableCell className="text-sm">
+                    {showExecutorLinks &&
+                    r.executorCanOpenEstimate &&
+                    !isUnknownExecutorName(r.executorName) ? (
+                      <Link
+                        href={`/admin/executors/${r.executorId}?tab=works`}
+                        className="text-blue-600 hover:underline"
+                        title="Открыть личную смету"
+                      >
+                        {r.executorName}
+                      </Link>
+                    ) : (
+                      r.executorName
+                    )}
+                  </TableCell>
                   {showProjectColumn && <TableCell className="text-sm">{r.projectName}</TableCell>}
                   <TableCell className="text-sm">{r.workTypeName}</TableCell>
                   <TableCell className="text-xs text-neutral-500 whitespace-nowrap">
                     {SOURCE_TYPE_LABELS[r.sourceType] ?? r.sourceType}
                   </TableCell>
                   <TableCell>
-                    <Select
+                    <SearchableSelect
                       value={r.responsibleExecutorId ?? ""}
-                      onValueChange={(v) => v && patchRow(r, { responsibleExecutorId: v })}
+                      onValueChange={(v) => patchRow(r, { responsibleExecutorId: v })}
+                      options={(permanentExecutors ?? []).map((e) => ({ value: e.id, label: e.name }))}
                       disabled={busy || isPaid}
-                    >
-                      <SelectTrigger className="h-7 text-xs">
-                        <SelectValue>{r.responsibleExecutorName ?? "—"}</SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(permanentExecutors ?? []).map((e) => (
-                          <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      placeholder={r.responsibleExecutorName ?? "—"}
+                      triggerClassName="h-7 text-xs"
+                    />
                   </TableCell>
                   <TableCell className="text-xs max-w-[140px]">
                     {r.techTask ? (

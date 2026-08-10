@@ -42,6 +42,28 @@ export function isoWeekEnd(year: number, week: number): Date {
   return endOfISOWeek(isoWeekStart(year, week));
 }
 
+/** Диапазон ISO-недели по-русски: «27 июля – 2 августа». */
+export function formatISOWeekRangeRu(year: number, week: number): string {
+  const start = isoWeekStart(year, week);
+  const end = isoWeekEnd(year, week);
+  const dayMonth = (date: Date) =>
+    date.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+
+  if (start.getFullYear() !== end.getFullYear()) {
+    const withYear = (date: Date) =>
+      date.toLocaleDateString("ru-RU", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      });
+    return `${withYear(start)} – ${withYear(end)}`;
+  }
+  if (start.getMonth() === end.getMonth()) {
+    return `${start.getDate()}–${dayMonth(end)}`;
+  }
+  return `${dayMonth(start)} – ${dayMonth(end)}`;
+}
+
 /** Список номеров недель года: [1..N], где N = getISOWeeksInYear(year). */
 export function isoWeeksOfYear(year: number): number[] {
   const total = getISOWeeksInYear(year);

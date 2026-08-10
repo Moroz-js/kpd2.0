@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/permissions";
 import { getISOWeek, getISOWeeksInYear, isoWeekStart } from "@/lib/iso-weeks";
+import { calculateCashflowBalances } from "@/lib/cashflow-balance";
 import {
   dataSourcePrismaAdapter,
   resolveDataSource,
@@ -68,12 +69,13 @@ export async function GET(req: NextRequest) {
     return weekNum < currentWeek;
   }
 
-  const [charges, works, otherExpenses, planLines, openingBalance, activeProjects, reconciliations] = await Promise.all([
+  const [charges, works, otherExpenses, planLines, openingBalance, manualBalances, activeProjects, reconciliations] = await Promise.all([
     db.charge.findMany({ include: { order: { select: { projectId: true } } } }),
     db.work.findMany({ select: { projectId: true, amount: true, workStatus: true, plannedPayAt: true, paidAt: true } }),
     db.otherExpense.findMany({ select: { projectId: true, amount: true, workStatus: true, plannedPayAt: true, paidAt: true } }),
     db.spendingPlanLine.findMany({ where: { year }, select: { projectId: true, week: true, amount: true } }),
     db.cashflowOpeningBalance.findUnique({ where: { year } }),
+    db.cashflowManualBalance.findMany({ where: { year }, select: { week: true, amount: true } }),
     db.project.findMany({ where: { status: "active" }, select: { id: true, name: true, type: true } }),
     db.bankAccountReconciliation.findMany({
       where: { isoWeekYear: year },
@@ -156,13 +158,19 @@ export async function GET(req: NextRequest) {
 
   // ─── Block 1: Summary (строки × недели) ───────────────────────
   const startBalance = openingBalance?.amount ?? 0;
+  const manualBalanceArr: (number | null)[] = new Array(weeksInYear).fill(null);
+  for (const row of manualBalances) {
+    const wi = row.week - 1;
+    if (wi >= 0 && wi < weeksInYear) manualBalanceArr[wi] = row.amount;
+  }
   const summaryRows = {
-    balanceStart: [] as number[],      // Баланс на начало
+    balanceStart: [] as number[],      // Входящий баланс ДП
     incomeFact: [] as number[],        // Приход (факт)
     incomePlanOnly: [] as number[],    // Приход (план)
     incomePlanFact: [] as number[],    // Приход (план+факт)
     expensePlanDP: [] as number[],     // Расход (план-факт) из ДП — прошлые: paid works; текущие/будущие: plan
     balanceEndDP: [] as number[],      // Баланс (смета/ДП)
+    manualBalance: manualBalanceArr,   // Ручной входящий баланс для следующей недели
     paidFromBudget: [] as number[],    // Оплачено из смет
     unpaidFromBudget: [] as number[],  // Неплачено из смет
     totalExpenseBudget: [] as number[],// (не показывается, сохранено для обратной совместимости)
@@ -172,26 +180,35 @@ export async function GET(req: NextRequest) {
 
   // Discrepancy plan/fact in DP per week = iwPaid - planTotal
   const discrepancyDPFact: number[] = new Array(weeksInYear).fill(0);
+  const expensePlanDPArr = Array.from({ length: weeksInYear }, (_, index) =>
+    isWeekPast(index + 1) ? iwPaid[index] : planTotal[index]
+  );
+  const balanceChains = calculateCashflowBalances({
+    openingBalance: startBalance,
+    income: chargeTotal,
+    expenseDP: expensePlanDPArr,
+    expenseBudget: iwTotal,
+    manualBalance: manualBalanceArr,
+  });
 
   for (let i = 0; i < weeksInYear; i++) {
-    const weekNum = i + 1;
-    const balanceStart = i === 0 ? startBalance : summaryRows.balanceEndDP[i - 1];
+    const balanceStartDP = balanceChains.balanceStartDP[i];
     const incomePF = chargeTotal[i];
     const incomeFact = chargePaid[i];
     const incPlanOnly = incomePF - incomeFact;
 
     // Расход (план-факт) из ДП:
     // прошлые недели → факт оплаченных работ; текущая/будущие → план из ДП
-    const expDP = isWeekPast(weekNum) ? iwPaid[i] : planTotal[i];
+    const expDP = expensePlanDPArr[i];
 
     const expBudget = iwTotal[i];
     const paidBudget = iwPaid[i];
     const unpaidBudget = expBudget - paidBudget;
-    const balanceEndDP = balanceStart + incomePF - expDP;
-    const balanceEndBudget = balanceStart + incomePF - expBudget;
+    const balanceEndDP = balanceChains.balanceEndDP[i];
+    const balanceEndBudget = balanceChains.balanceEndBudget[i];
     const delta = expBudget - expDP;
 
-    summaryRows.balanceStart.push(balanceStart);
+    summaryRows.balanceStart.push(balanceStartDP);
     summaryRows.incomeFact.push(incomeFact);
     summaryRows.incomePlanOnly.push(incPlanOnly);
     summaryRows.incomePlanFact.push(incomePF);

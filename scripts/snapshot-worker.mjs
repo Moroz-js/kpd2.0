@@ -20,7 +20,7 @@ import {
 } from "../lib/snapshots/cashflow-projection.mjs";
 
 const TIMEZONE = "Europe/Moscow";
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const EXECUTION_LOCK = "snapshot-creation";
 const MODELS = [
   ["User", "user"],
@@ -44,6 +44,7 @@ const MODELS = [
   ["VacationEntry", "vacationEntry"],
   ["Task", "task"],
   ["CashflowOpeningBalance", "cashflowOpeningBalance"],
+  ["CashflowManualBalance", "cashflowManualBalance"],
   ["CashflowCellComment", "cashflowCellComment"],
   ["ActivityLog", "activityLog"],
   ["BankAccountReconciliation", "bankAccountReconciliation"],
@@ -446,7 +447,8 @@ export async function createSnapshot({
     const cashflow = JSON.stringify(projectAllCashflowYears(tables, runRow.cutoffAt));
     const cashflowHash = createHash("sha256").update(cashflow).digest("hex");
     const cashflowBody = gzipSync(Buffer.from(cashflow), { level: 9 });
-    await putObject(`${prefix}/projections/cashflow-v1.json.gz`, cashflowBody, "application/json", "gzip");
+    const cashflowProjectionKey = `projections/${CASHFLOW_FORMULA_VERSION}.json.gz`;
+    await putObject(`${prefix}/${cashflowProjectionKey}`, cashflowBody, "application/json", "gzip");
     byteSize += cashflowBody.byteLength;
     aggregateHash.update(`cashflow:${cashflowHash}\n`);
 
@@ -464,7 +466,7 @@ export async function createSnapshot({
       byteSize,
       contentHash,
       files,
-      projections: [{ key: "projections/cashflow-v1.json.gz", sha256: cashflowHash, formulaVersion: CASHFLOW_FORMULA_VERSION }],
+      projections: [{ key: cashflowProjectionKey, sha256: cashflowHash, formulaVersion: CASHFLOW_FORMULA_VERSION }],
     };
     const manifestBody = Buffer.from(JSON.stringify(manifest, null, 2));
     await putObject(`${prefix}/manifest.json`, manifestBody, "application/json");

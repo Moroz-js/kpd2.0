@@ -13,13 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { WorkTypesMultiSelect } from "@/components/ui-custom/WorkTypesMultiSelect";
 import { RecipientTypesPicker } from "@/components/ui-custom/RecipientTypesPicker";
 import { CompanyStatusPicker } from "@/components/ui-custom/CompanyStatusPicker";
@@ -154,57 +148,39 @@ export function ExecutorEditDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="responsible">Ответственный (account-менеджер)</Label>
-              <Select
+              <SearchableSelect
+                id="responsible"
                 value={responsibleUserId || "__none__"}
-                onValueChange={(v) => setResponsibleUserId(v === "__none__" ? "" : (v ?? ""))}
-              >
-                <SelectTrigger id="responsible">
-                  <SelectValue>
-                    {responsibleUserId
-                      ? (responsibles.find((r) => r.id === responsibleUserId)?.fullName ?? responsibleUserId)
-                      : "— Не задан —"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— Не задан —</SelectItem>
-                  {responsibles
-                    .filter((r) => r.isActive || r.id === responsibleUserId)
-                    .map((r) => (
-                      <SelectItem key={r.id} value={r.id}>
-                        {r.fullName}
-                        {!r.isActive && " (архив)"}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+                onValueChange={(v) => setResponsibleUserId(v === "__none__" ? "" : v)}
+                options={[
+                  { value: "__none__", label: "— Не задан —" },
+                  ...responsibles
+                    .filter((responsible) => responsible.isActive || responsible.id === responsibleUserId)
+                    .map((responsible) => ({
+                      value: responsible.id,
+                      label: `${responsible.fullName}${!responsible.isActive ? " (архив)" : ""}`,
+                    })),
+                ]}
+                placeholder={responsibleUserId}
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="defaultBank">Источник оплаты</Label>
-              <Select
+              <SearchableSelect
+                id="defaultBank"
                 value={defaultBankAccountId || "__none__"}
-                onValueChange={(v) =>
-                  setDefaultBankAccountId(v === "__none__" ? "" : (v ?? ""))
-                }
-              >
-                <SelectTrigger id="defaultBank">
-                  <SelectValue>
-                    {defaultBankAccountId
-                      ? (bankAccounts.find((b) => b.id === defaultBankAccountId)?.name ?? defaultBankAccountId)
-                      : "— Не задан —"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— Не задан —</SelectItem>
-                  {bankAccounts
-                    .filter((b) => b.status === "active" || b.id === defaultBankAccountId)
-                    .map((b) => (
-                      <SelectItem key={b.id} value={b.id}>
-                        {b.name}
-                        {b.status === "archived" && " (архив)"}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+                onValueChange={(v) => setDefaultBankAccountId(v === "__none__" ? "" : v)}
+                options={[
+                  { value: "__none__", label: "— Не задан —" },
+                  ...bankAccounts
+                    .filter((bankAccount) => bankAccount.status === "active" || bankAccount.id === defaultBankAccountId)
+                    .map((bankAccount) => ({
+                      value: bankAccount.id,
+                      label: `${bankAccount.name}${bankAccount.status === "archived" ? " (архив)" : ""}`,
+                    })),
+                ]}
+                placeholder={defaultBankAccountId}
+              />
             </div>
           </div>
 

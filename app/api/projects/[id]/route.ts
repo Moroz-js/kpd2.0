@@ -40,7 +40,7 @@ const patchSchema = z.object({
   responsibleUserId: z.string().nullable().optional(),
   status: z.enum(["active", "archived"]).optional(),
   cashflowInitial: z.number().int().optional(),
-});
+}).strict();
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const me = await getSessionUser();

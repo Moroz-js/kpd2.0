@@ -103,6 +103,8 @@ model Client {
 
 model Project {
   id                String   @id @default(cuid())
+  number            String?  @unique
+  numberSerial      Int?     @unique
   shortName         String // имя проекта без префикса клиента
   name              String // computed: "{client.name} – {shortName}"
   type              String // internal | client (computed по client.company)
@@ -489,6 +491,19 @@ model CashflowOpeningBalance {
   updatedAt DateTime @updatedAt
 
   @@map("cashflow_opening_balances")
+}
+
+model CashflowManualBalance {
+  id        String   @id @default(cuid())
+  year      Int
+  week      Int
+  amount    Float?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([year, week])
+  @@index([year])
+  @@map("cashflow_manual_balances")
 }
 
 model CashflowCellComment {

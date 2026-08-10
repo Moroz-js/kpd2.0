@@ -32,6 +32,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui-custom/DateInput";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { SortableHead } from "@/components/ui-custom/SortableHead";
 import { RowSelectCheckbox } from "@/components/ui-custom/RowSelectCheckbox";
 import { useTableRowSelection } from "@/lib/useTableRowSelection";
@@ -94,6 +95,9 @@ const compactPeriodHead =
 const periodYearMonthClass = "w-24 max-w-24 px-1";
 const weekColClass = "w-18 max-w-18 px-1";
 const yearColCell = "text-xs tabular-nums text-left";
+const COL_WIDTHS = [40, 96, 104, 80, 180, 110, 140, 120, 120, 160, 120, 220, 80, 128] as const;
+const COL_COUNT = COL_WIDTHS.length;
+const TABLE_MIN_WIDTH = COL_WIDTHS.reduce((sum, width) => sum + width, 0);
 
 function rowKey(r: Row) { return `${r.sourceType}:${r.sourceId}`; }
 
@@ -171,7 +175,6 @@ const PayoutRow = React.memo(function PayoutRow({
         <RowSelectCheckbox checked={checked} rowIndex={rowIndex} rowId={key} onSelect={onSelect} />
       </TableCell>
       <TableCell className="w-24 whitespace-nowrap tabular-nums">{r.number ?? "—"}</TableCell>
-      <TableCell className={cn(periodYearMonthClass, yearColCell)}>{r.periodYear}</TableCell>
       <TableCell className={cn(periodYearMonthClass, "text-xs whitespace-nowrap")}>{monthLabel(r.periodMonth)}</TableCell>
       <TableCell className={cn(weekColClass, "text-xs whitespace-nowrap")}>{r.weekPlanFact != null ? weekLabel(r.weekPlanFact) : "—"}</TableCell>
       <TableCell>
@@ -186,6 +189,7 @@ const PayoutRow = React.memo(function PayoutRow({
           r.executorName
         )}
       </TableCell>
+      <TableCell className="text-right tabular-nums font-semibold text-sm">{formatMoney(r.amount)}</TableCell>
       <TableCell>
         <Select value={r.paymentStatus} onValueChange={(v) => v && onPatchInlineStatus(r, v)}>
           <SelectTrigger className="h-6 w-auto min-w-[120px] border-0 bg-transparent shadow-none p-0 focus:ring-0 [&>svg]:hidden">
@@ -196,7 +200,6 @@ const PayoutRow = React.memo(function PayoutRow({
           </SelectContent>
         </Select>
       </TableCell>
-      <TableCell className="text-right tabular-nums font-semibold text-sm">{formatMoney(r.amount)}</TableCell>
       <TableCell
         className="cursor-pointer hover:bg-neutral-50 min-w-[100px]"
         onClick={() => inlineActive !== "plannedPayAt" && onStartInline(r, "plannedPayAt")}
@@ -246,24 +249,21 @@ const PayoutRow = React.memo(function PayoutRow({
       </TableCell>
       <TableCell className="min-w-[140px] max-w-[160px] truncate">
         {inlineActive === "bankAccountId" ? (
-          <Select
+          <SearchableSelect
             value={inlineVal || "__none__"}
             onValueChange={(v) => {
-              const val = v === "__none__" ? "" : (v ?? "");
+              const val = v === "__none__" ? "" : v;
               onInlineValChange(val);
               onPatchRow(r, { bankAccountId: val || null }).then(() => onCancelInline());
             }}
+            options={[
+              { value: "__none__", label: "— не задан —" },
+              ...activeBanks.map((bank) => ({ value: bank.id, label: bank.name })),
+            ]}
             open
             onOpenChange={(o) => !o && onCancelInline()}
-          >
-            <SelectTrigger className="h-6 text-xs">
-              <SelectValue>{inlineVal ? (activeBanks.find(b => b.id === inlineVal)?.name ?? "Счёт") : "— не задан —"}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">— не задан —</SelectItem>
-              {activeBanks.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
+            triggerClassName="h-6 text-xs"
+          />
         ) : (
           <span
             className="text-xs text-neutral-600 cursor-pointer hover:underline truncate block"
@@ -287,6 +287,10 @@ const PayoutRow = React.memo(function PayoutRow({
             : SMETA_LABEL.personal
           : SMETA_LABEL["other-expense"]}
       </TableCell>
+      <TableCell className="max-w-0 truncate text-xs text-neutral-600" title={r.comment ?? undefined}>
+        {r.comment ?? "—"}
+      </TableCell>
+      <TableCell className={cn(periodYearMonthClass, yearColCell)}>{r.periodYear}</TableCell>
       <TableCell className={cn(stickyActionsCell, checked && "bg-blue-50")}>
         <div className={stickyActionsInner}>
           {r.paymentStatus === "planned" && (
@@ -648,7 +652,7 @@ export function PayoutsClient() {
               sum={item.sum}
               collapsed={item.collapsed}
               onToggle={() => toggleGroup(item.key)}
-              colSpan={13}
+              colSpan={COL_COUNT}
             />
           );
         }
@@ -771,15 +775,15 @@ export function PayoutsClient() {
           </div>
           <div className="flex items-center gap-1">
             <span className="text-xs text-neutral-500">Источник оплаты:</span>
-            <Select value={bulkBankId || "__none__"} onValueChange={(v) => setBulkBankId(v === "__none__" ? "" : (v ?? ""))}>
-              <SelectTrigger className="h-7 w-44 text-xs">
-                <SelectValue>{bulkBankId ? (activeBanks.find(b => b.id === bulkBankId)?.name ?? "") : "— не менять —"}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">— не менять —</SelectItem>
-                {activeBanks.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={bulkBankId || "__none__"}
+              onValueChange={(v) => setBulkBankId(v === "__none__" ? "" : v)}
+              options={[
+                { value: "__none__", label: "— не менять —" },
+                ...activeBanks.map((bank) => ({ value: bank.id, label: bank.name })),
+              ]}
+              triggerClassName="h-7 w-44 text-xs"
+            />
           </div>
           <Button size="sm" className="h-7 text-xs" onClick={handleBulkApply} disabled={bulkSaving}>
             {bulkSaving ? "..." : "Применить"}
@@ -811,10 +815,16 @@ export function PayoutsClient() {
       )}
 
       <Table
-        className="min-w-[1516px]"
+        className="table-fixed w-full"
+        style={{ minWidth: TABLE_MIN_WIDTH }}
         containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto"
         containerRef={scrollRef}
       >
+          <colgroup>
+            {COL_WIDTHS.map((width, index) => (
+              <col key={index} style={{ width }} />
+            ))}
+          </colgroup>
           <TableHeader>
             <TableRow>
               <TableHead className="w-8">
@@ -831,19 +841,6 @@ export function PayoutsClient() {
                 className="w-24 text-[10px]"
               >
                 Номер
-              </SortableHead>
-              <SortableHead
-                field="periodYear"
-                sortBy={activeSortField()}
-                sortDir={activeSortDir()}
-                onSort={handleSort}
-                className={cn(periodYearMonthClass, "!whitespace-normal")}
-              >
-                <span className="block text-[10px] leading-tight font-medium tracking-tight normal-case text-left">
-                  Год
-                  <br />
-                  выполнения
-                </span>
               </SortableHead>
               <SortableHead
                 field="periodMonth"
@@ -872,26 +869,40 @@ export function PayoutsClient() {
                 </span>
               </SortableHead>
               <SortableHead field="executorName" sortBy={activeSortField()} sortDir={activeSortDir()} onSort={handleSort}>Исполнитель</SortableHead>
-              <SortableHead field="paymentStatus" sortBy={activeSortField()} sortDir={activeSortDir()} onSort={handleSort}><span className="flex items-center gap-1">Статус <Pencil className="h-3 w-3 text-neutral-400" /></span></SortableHead>
               <SortableHead field="amount" sortBy={activeSortField()} sortDir={activeSortDir()} onSort={handleSort} className="text-right">Выплата</SortableHead>
+              <SortableHead field="paymentStatus" sortBy={activeSortField()} sortDir={activeSortDir()} onSort={handleSort}><span className="flex items-center gap-1">Статус <Pencil className="h-3 w-3 text-neutral-400" /></span></SortableHead>
               <TableHead><span className="flex items-center gap-1">Дата оплаты план <Pencil className="h-3 w-3 text-neutral-400" /></span></TableHead>
               <TableHead><span className="flex items-center gap-1">Дата оплаты факт <Pencil className="h-3 w-3 text-neutral-400" /></span></TableHead>
               <SortableHead field="bankAccountName" sortBy={activeSortField()} sortDir={activeSortDir()} onSort={handleSort}><span className="flex items-center gap-1">Источник оплаты <Pencil className="h-3 w-3 text-neutral-400" /></span></SortableHead>
               <TableHead>Тип сметы</TableHead>
+              <TableHead>Комментарий</TableHead>
+              <SortableHead
+                field="periodYear"
+                sortBy={activeSortField()}
+                sortDir={activeSortDir()}
+                onSort={handleSort}
+                className={cn(periodYearMonthClass, "!whitespace-normal")}
+              >
+                <span className="block text-[10px] leading-tight font-medium tracking-tight normal-case text-left">
+                  Год
+                  <br />
+                  выполнения
+                </span>
+              </SortableHead>
               <TableHead className={stickyActionsHead} />
             </TableRow>
           </TableHeader>
           <VirtualizedTableBody
             scrollRef={scrollRef}
             rowCount={flatItems ? flatItems.length : rows.length}
-            colSpan={13}
+            colSpan={COL_COUNT}
             isLoading={isLoading}
             loading={
-              <TableRow><TableCell colSpan={13} className="text-center text-neutral-500 py-8">Загрузка...</TableCell></TableRow>
+              <TableRow><TableCell colSpan={COL_COUNT} className="text-center text-neutral-500 py-8">Загрузка...</TableCell></TableRow>
             }
             isEmpty={rows.length === 0}
             empty={
-              <TableRow><TableCell colSpan={13} className="text-center text-neutral-500 py-12">Нет выплат.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={COL_COUNT} className="text-center text-neutral-500 py-12">Нет выплат.</TableCell></TableRow>
             }
             renderRow={renderRow}
           />
@@ -967,15 +978,14 @@ function MarkPaidDialog({
           </div>
           <div className="space-y-1.5">
             <Label>Источник оплаты</Label>
-            <Select value={bankAccountId || "__none__"} onValueChange={(v) => setBankAccountId(v === "__none__" ? "" : (v ?? ""))}>
-              <SelectTrigger>
-                <SelectValue>{bankAccountId ? (activeBanks.find((b) => b.id === bankAccountId)?.name ?? "—") : "— Не задан —"}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">— Не задан —</SelectItem>
-                {activeBanks.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={bankAccountId || "__none__"}
+              onValueChange={(v) => setBankAccountId(v === "__none__" ? "" : v)}
+              options={[
+                { value: "__none__", label: "— Не задан —" },
+                ...activeBanks.map((bank) => ({ value: bank.id, label: bank.name })),
+              ]}
+            />
           </div>
         </div>
         <DialogFooter>

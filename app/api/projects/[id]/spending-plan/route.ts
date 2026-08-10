@@ -3,6 +3,8 @@ import { getSessionUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { logActivity } from "@/lib/audit/log";
+import { withSerializableTransaction } from "@/lib/services/entity-numbering";
+import { mergeSpendingPlanValues } from "@/lib/spending-plan";
 import { z } from "zod";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -18,8 +20,11 @@ const upsertSchema = z.object({
   workTypeId: z.string().min(1),
   year: z.number().int(),
   week: z.number().int().min(1).max(53),
-  amount: z.number().min(0),
+  amount: z.number().min(0).optional(),
+  comment: z.string().max(2000).nullable().optional(),
   sourceType: z.string().nullable().optional(),
+}).refine((data) => data.amount !== undefined || data.comment !== undefined, {
+  message: "Укажите сумму или комментарий",
 });
 
 const deleteSchema = z.object({ id: z.string().min(1) });
@@ -37,33 +42,64 @@ export async function POST(req: NextRequest, { params }: Ctx) {
   const parsed = upsertSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Validation", details: parsed.error.flatten() }, { status: 422 });
 
-  const { executorId, workTypeId, year, week, amount, sourceType } = parsed.data;
+  const { executorId, workTypeId, year, week, amount, comment, sourceType } = parsed.data;
 
-  // Upsert: один line на (projectId, executorId, workTypeId, year, week)
-  const existing = await prisma.spendingPlanLine.findFirst({
-    where: { projectId, executorId, workTypeId, year, week },
+  const { line, action } = await withSerializableTransaction(async (tx) => {
+    const existingRows = await tx.spendingPlanLine.findMany({
+      where: { projectId, executorId, workTypeId, year, week },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    const existing = existingRows[0];
+
+    if (existing) {
+      const merged = mergeSpendingPlanValues(existingRows, {
+        amount,
+        comment,
+        sourceType,
+      });
+      const duplicateIds = existingRows.slice(1).map((row) => row.id);
+      if (duplicateIds.length > 0) {
+        await tx.spendingPlanLine.deleteMany({
+          where: { id: { in: duplicateIds } },
+        });
+      }
+      return {
+        line: await tx.spendingPlanLine.update({
+          where: { id: existing.id },
+          data: merged,
+        }),
+        action: "update" as const,
+      };
+    }
+
+    // Комментарий в пустой ячейке создаёт строку-якорь с amount=0.
+    return {
+      line: await tx.spendingPlanLine.create({
+        data: {
+          projectId,
+          executorId,
+          workTypeId,
+          year,
+          week,
+          amount: amount ?? 0,
+          comment: comment?.trim() || null,
+          sourceType: sourceType ?? null,
+          createdById: user.id,
+        },
+      }),
+      action: "create" as const,
+    };
   });
 
-  let line;
-  if (existing) {
-    line = await prisma.spendingPlanLine.update({ where: { id: existing.id }, data: { amount } });
-  } else {
-    // При создании новой строки разрешаем amount=0 (строка-якорь, суммы вносятся инлайн)
-    line = await prisma.spendingPlanLine.create({
-      data: { projectId, executorId, workTypeId, year, week, amount, sourceType: sourceType ?? null, createdById: user.id },
-    });
-  }
-
-  const action = !existing ? "create" : "update";
   await logActivity({
     userId: user.id,
     action,
     entityType: "SpendingPlanLine",
-    entityId: line?.id ?? existing?.id ?? "",
+    entityId: line.id,
     entityLabel: `Нед. ${week} / ${year}`,
   });
 
-  return NextResponse.json(line ?? { deleted: true });
+  return NextResponse.json(line);
 }
 
 export async function DELETE(req: NextRequest, { params }: Ctx) {

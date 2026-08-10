@@ -14,7 +14,7 @@ import {
 } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useComparison } from "@/components/ComparisonProvider";
 import {
   snapshotLabel,
@@ -34,6 +34,7 @@ type ProjectRow = {
 };
 type Props = {
   weeks: WeekHeader[];
+  manualBalance: (number | null)[];
   balanceEndDP: number[];
   balanceEndBudget: number[];
   projects: ProjectRow[];
@@ -45,6 +46,7 @@ type ChartSeries = {
   source: { id: string; businessDate?: string | null; cutoffAt?: string | null };
   data: {
     weeks: WeekHeader[];
+    manualBalance: (number | null)[];
     balanceEndDP: number[];
     balanceEndBudget: number[];
     projects: ProjectRow[];
@@ -111,6 +113,7 @@ function ChartTooltip({
 
 export function CashflowChart({
   weeks,
+  manualBalance,
   balanceEndDP,
   balanceEndBudget,
   projects,
@@ -167,7 +170,7 @@ export function CashflowChart({
 
   const liveFallback: ChartSeries = {
     source: { id: "live" },
-    data: { weeks, balanceEndDP, balanceEndBudget, projects },
+    data: { weeks, manualBalance, balanceEndDP, balanceEndBudget, projects },
   };
   const wantsComparison = mode === "compare" && !globalComparison.panel;
   const matchingRemote =
@@ -241,55 +244,49 @@ export function CashflowChart({
           )}
           <div className="flex min-w-0 items-center gap-1.5">
             <span className="shrink-0 text-xs font-medium text-neutral-600">Дата A</span>
-            <Select value={sourceA} onValueChange={(value) => value && setSourceA(value)}>
-              <SelectTrigger className="h-8 w-52 text-xs">
-                <SelectValue>{snapshotSourceLabel(sourceA, snapshots)}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="live">Актуальные данные</SelectItem>
-                {sourceA !== "live" && !snapshots.some((snapshot) => snapshot.id === sourceA) && (
-                  <SelectItem value={sourceA} disabled>
-                    {snapshotSourceLabel(sourceA, snapshots)}
-                  </SelectItem>
-                )}
-                {snapshots.map((snapshot) => <SelectItem key={snapshot.id} value={snapshot.id}>{snapshotLabel(snapshot)}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={sourceA}
+              onValueChange={setSourceA}
+              options={[
+                { value: "live", label: "Актуальные данные" },
+                ...(sourceA !== "live" && !snapshots.some((snapshot) => snapshot.id === sourceA)
+                  ? [{ value: sourceA, label: snapshotSourceLabel(sourceA, snapshots), disabled: true }]
+                  : []),
+                ...snapshots.map((snapshot) => ({ value: snapshot.id, label: snapshotLabel(snapshot) })),
+              ]}
+              triggerClassName="h-8 w-52 text-xs"
+            />
           </div>
           {mode === "compare" && !globalComparison.panel && (
             <div className="flex min-w-0 items-center gap-1.5">
               <span className="shrink-0 text-xs font-medium text-neutral-600">Дата B</span>
-              <Select value={sourceB} onValueChange={(value) => value && setSourceB(value)}>
-                <SelectTrigger className="h-8 w-52 text-xs">
-                  <SelectValue>{snapshotSourceLabel(sourceB, snapshots)}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="live" disabled={sourceA === "live"}>Актуальные данные</SelectItem>
-                  {sourceB !== "live" && !snapshots.some((snapshot) => snapshot.id === sourceB) && (
-                    <SelectItem value={sourceB} disabled>
-                      {snapshotSourceLabel(sourceB, snapshots)}
-                    </SelectItem>
-                  )}
-                  {snapshots.map((snapshot) => (
-                    <SelectItem key={snapshot.id} value={snapshot.id} disabled={sourceA === snapshot.id}>
-                      {snapshotLabel(snapshot)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={sourceB}
+                onValueChange={setSourceB}
+                options={[
+                  { value: "live", label: "Актуальные данные", disabled: sourceA === "live" },
+                  ...(sourceB !== "live" && !snapshots.some((snapshot) => snapshot.id === sourceB)
+                    ? [{ value: sourceB, label: snapshotSourceLabel(sourceB, snapshots), disabled: true }]
+                    : []),
+                  ...snapshots.map((snapshot) => ({
+                    value: snapshot.id,
+                    label: snapshotLabel(snapshot),
+                    disabled: sourceA === snapshot.id,
+                  })),
+                ]}
+                triggerClassName="h-8 w-52 text-xs"
+              />
             </div>
           )}
-          <Select value={projectId} onValueChange={(value) => value && setProjectId(value)}>
-            <SelectTrigger className="h-8 w-56 text-xs">
-              <SelectValue>
-                {projectId === ALL_PROJECTS ? "Все проекты" : allProjects.find((project) => project.id === projectId)?.name ?? "Все проекты"}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_PROJECTS}>Все проекты</SelectItem>
-              {allProjects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            value={projectId}
+            onValueChange={setProjectId}
+            options={[
+              { value: ALL_PROJECTS, label: "Все проекты" },
+              ...allProjects.map((project) => ({ value: project.id, label: project.name })),
+            ]}
+            triggerClassName="h-8 w-56 text-xs"
+          />
         </div>
       </div>
 

@@ -37,7 +37,7 @@ export function CurrencyCombobox({
 
   const filtered = React.useMemo(() => {
     if (!normalized) return options;
-    return options.filter((c) => c.toUpperCase().startsWith(normalized));
+    return options.filter((c) => c.toUpperCase().includes(normalized));
   }, [options, normalized]);
 
   const canCreate =
