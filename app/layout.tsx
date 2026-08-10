@@ -20,7 +20,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ru" className={`${geist.variable} antialiased`} style={{ height: "100%", overflow: "hidden" }}>
-      <body className="font-sans" style={{ height: "100%", overflow: "hidden", maxHeight: "100vh" }}>
+      <body
+        suppressHydrationWarning
+        className="font-sans"
+        style={{ height: "100%", overflow: "hidden", maxHeight: "100vh" }}
+      >
         {children}
         <Toaster position="top-right" />
       </body>

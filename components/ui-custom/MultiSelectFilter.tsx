@@ -63,7 +63,7 @@ export function MultiSelectFilter({
   const filtered = React.useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return options;
-    return options.filter((o) => o.label.toLowerCase().startsWith(q));
+    return options.filter((o) => o.label.toLowerCase().includes(q));
   }, [options, search]);
 
   // Group options (после фильтрации; пустые группы не попадают)

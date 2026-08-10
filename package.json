@@ -7,12 +7,15 @@
     "build": "node scripts/set-prisma-provider.mjs && prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "postinstall": "node scripts/set-prisma-provider.mjs && prisma generate",
     "db:push": "node scripts/set-prisma-provider.mjs && prisma generate && prisma db push",
     "db:migrate": "node scripts/prisma-deploy.mjs",
     "db:reset": "node scripts/db-reset.mjs",
     "db:seed": "node scripts/set-prisma-provider.mjs && prisma generate && prisma db seed",
     "db:studio": "node scripts/set-prisma-provider.mjs && prisma generate && prisma studio",
+    "backfill:project-numbers": "node scripts/backfill-project-numbers.mjs",
     "migrate:other-expenses": "node scripts/migrate-other-expenses.mjs",
     "snapshot:check": "node scripts/snapshot-worker.mjs --check",
     "snapshot:run": "node scripts/snapshot-worker.mjs --manual"
@@ -60,6 +63,7 @@
     "tailwindcss": "^4",
     "ts-node": "^10.9.2",
     "typescript": "^5",
+    "vitest": "^4.1.10",
     "xlsx": "^0.18.5"
   }
 }

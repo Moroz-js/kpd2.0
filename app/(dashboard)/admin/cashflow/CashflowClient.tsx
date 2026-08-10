@@ -40,6 +40,11 @@ function fmtNullable(n: number | null) {
   return n.toLocaleString("ru-RU", { maximumFractionDigits: 0 });
 }
 
+function fmtManualBalance(n: number | null) {
+  if (n === null) return "—";
+  return n.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+}
+
 type WeekHeader = { week: number; month: number; monthName: string };
 
 type SummaryRows = {
@@ -49,6 +54,7 @@ type SummaryRows = {
   incomePlanFact: number[];
   expensePlanDP: number[];
   balanceEndDP: number[];
+  manualBalance: (number | null)[];
   paidFromBudget: number[];
   unpaidFromBudget: number[];
   totalExpenseBudget: number[];
@@ -94,7 +100,7 @@ type CashflowData = {
 type CashflowResponse = CashflowData | { error: string };
 
 type SummaryDef = {
-  key: keyof SummaryRows;
+  key: Exclude<keyof SummaryRows, "manualBalance">;
   label: string;
   isEditable?: boolean;
   highlight?: boolean;
@@ -111,9 +117,9 @@ const SUMMARY_DEFS: SummaryDef[] = [
   { key: "balanceStart", label: "Баланс на начало", isEditable: true, balanceStartRow: true, labelAlign: "left", borderAfter: true },
   { key: "incomeFact", label: "Приход (факт)", labelAlign: "center" },
   { key: "incomePlanOnly", label: "Приход (план)", labelAlign: "center" },
-  { key: "incomePlanFact", label: "Приход (план+факт)", labelAlign: "center", borderAfter: true },
+  { key: "incomePlanFact", label: "Приход (план+факт)", labelAlign: "center" },
   { key: "expensePlanDP", label: "Расход (план-факт) из ДП", labelAlign: "center", borderAfter: true },
-  { key: "balanceEndDP", label: "Баланс (сметы/ДП)", signed: true, labelAlign: "right", borderAfter: true },
+  { key: "balanceEndDP", label: "Баланс (сметы/ДП)", signed: true, labelAlign: "right" },
   // Далее — balanceInAccounts, discrepancy (рендерятся отдельно)
   { key: "paidFromBudget", label: "Оплачено из смет", labelAlign: "right" },
   { key: "unpaidFromBudget", label: "Неоплачено из смет", labelAlign: "right", borderAfter: true },
@@ -141,6 +147,8 @@ const ROW_TOOLTIPS: Record<string, React.ReactNode> = {
   ),
   balanceEndDP:
     "Расчётный баланс: «Баланс на начало» + «Приход (план+факт)» − «Расход (план-факт) из ДП» за ту же неделю",
+  manualBalance:
+    "Ручное значение заменяет входящий баланс ДП следующей недели и действует до следующего ручного значения. На баланс из смет не влияет",
   balanceInAccounts: "Значение из колонки «Рубли» раздела «Остаток банковские счета» за соответствующую неделю",
   discrepancy:
     "Несхождение расчётного баланса и фактического остатка на счетах. «Баланс (сметы/ДП)» − «Баланс на счетах». Красный текст при значении ≠ 0",
@@ -232,6 +240,139 @@ function OpeningBalanceInput({
       onFocus={e => setTimeout(() => e.target.select(), 0)}
       onBlur={save}
       onKeyDown={e => { if (e.key === "Enter") { (e.target as HTMLInputElement).blur(); } }}
+    />
+  );
+}
+
+function ManualBalanceInput({
+  year,
+  week,
+  initial,
+  onSaved,
+}: {
+  year: number;
+  week: number;
+  initial: number | null;
+  onSaved: (value: number | null) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [display, setDisplay] = useState(initial === null ? "" : formatMoneyInput(initial));
+  const [isSaving, setIsSaving] = useState(false);
+  const lastSavedRef = useRef<number | null>(initial);
+  const draftRef = useRef(display);
+  const savingRef = useRef(false);
+
+  function parseDisplay(value: string): number | null | undefined {
+    const normalized = value.replace(/\s/g, "").replace(",", ".");
+    if (!normalized) return null;
+    if (!/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) return undefined;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  async function save() {
+    if (savingRef.current) return;
+
+    const amount = parseDisplay(draftRef.current);
+    if (amount === undefined) {
+      toast.error("Введите корректное число");
+      const rollback =
+        lastSavedRef.current === null ? "" : formatMoneyInput(lastSavedRef.current);
+      draftRef.current = rollback;
+      setDisplay(rollback);
+      return;
+    }
+    const formatted = amount === null ? "" : formatMoneyInput(amount);
+    draftRef.current = formatted;
+    setDisplay(formatted);
+    if (Object.is(amount, lastSavedRef.current)) {
+      setEditing(false);
+      return;
+    }
+
+    savingRef.current = true;
+    setIsSaving(true);
+    try {
+      const res = await fetch("/api/cashflow/manual-balance", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ year, week, amount }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(payload?.error ?? "Не удалось сохранить баланс");
+      }
+      lastSavedRef.current = amount;
+    } catch (error) {
+      const rollback =
+        lastSavedRef.current === null ? "" : formatMoneyInput(lastSavedRef.current);
+      draftRef.current = rollback;
+      setDisplay(rollback);
+      toast.error(error instanceof Error ? error.message : "Не удалось сохранить баланс");
+      savingRef.current = false;
+      setIsSaving(false);
+      return;
+    }
+
+    try {
+      await onSaved(amount);
+      setEditing(false);
+    } catch {
+      toast.error("Баланс сохранён, но данные не удалось обновить");
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        aria-label={`Изменить баланс руками, неделя ${week}`}
+        className="min-h-[22px] w-full cursor-pointer px-1 text-right text-[11px] leading-snug tabular-nums text-neutral-500 hover:bg-neutral-100/70"
+        onClick={() => {
+          const next =
+            lastSavedRef.current === null
+              ? ""
+              : formatMoneyInput(lastSavedRef.current);
+          draftRef.current = next;
+          setDisplay(next);
+          setEditing(true);
+        }}
+      >
+        {fmtManualBalance(initial)}
+      </button>
+    );
+  }
+
+  return (
+    <input
+      aria-label={`Баланс руками, неделя ${week}`}
+      className="w-20 rounded border border-neutral-300 bg-transparent px-1 py-0 text-right text-[11px] leading-snug tabular-nums outline-none focus:border-blue-400 focus:bg-white"
+      value={display}
+      disabled={isSaving}
+      aria-busy={isSaving}
+      onChange={(event) => {
+        if (savingRef.current) return;
+        draftRef.current = event.target.value;
+        setDisplay(event.target.value);
+      }}
+      onFocus={(event) => setTimeout(() => event.target.select(), 0)}
+      onBlur={() => void save()}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.currentTarget.blur();
+        }
+        if (event.key === "Escape") {
+          const rollback =
+            lastSavedRef.current === null ? "" : formatMoneyInput(lastSavedRef.current);
+          draftRef.current = rollback;
+          setDisplay(rollback);
+          setEditing(false);
+        }
+      }}
     />
   );
 }
@@ -486,6 +627,7 @@ export function CashflowClient() {
         <div className="flex-1 min-h-0 overflow-y-auto">
           <CashflowChart
             weeks={weeks}
+            manualBalance={summary.manualBalance}
             balanceEndDP={summary.balanceEndDP}
             balanceEndBudget={summary.balanceEndBudget}
             projects={chartProjects}
@@ -621,6 +763,45 @@ export function CashflowClient() {
                   </tr>
                 );
               })}
+
+              {/* Ручной баланс недели задаёт входящий баланс ДП следующей недели */}
+              <tr className={cn(ROW_BORDER_STRONG, "hover:bg-neutral-50")}>
+                <td className={cn(compactLbl, "text-right font-normal italic text-neutral-500")}>
+                  <RowLabelTooltip label="Баланс руками" tooltip={ROW_TOOLTIPS.manualBalance} />
+                </td>
+                <td className={stickyTotal}>—</td>
+                {visibleWeekIndices.map((idx) => {
+                  const week = weeks[idx]?.week;
+                  if (week == null) return null;
+                  const value = summary.manualBalance[idx] ?? null;
+                  const rowKey = "summary:manualBalance";
+                  const meta = getCellMeta(rowKey, week);
+                  const highlightClass = cashflowHighlightCellClass(meta?.highlight);
+                  return (
+                    <td key={idx} className={weekCellClass(idx, highlightClass, true)}>
+                      <CashflowCommentCell
+                        meta={meta}
+                        compact
+                        onSave={(payload) => saveCellMeta(rowKey, week, payload)}
+                      >
+                        {comparison.readOnly ? (
+                          <span>{fmtManualBalance(value)}</span>
+                        ) : (
+                          <ManualBalanceInput
+                            key={`${year}:${week}:${value ?? "null"}`}
+                            year={year}
+                            week={week}
+                            initial={value}
+                            onSaved={async () => {
+                              await mutate();
+                            }}
+                          />
+                        )}
+                      </CashflowCommentCell>
+                    </td>
+                  );
+                })}
+              </tr>
 
               {/* Баланс на счетах (из DB) */}
               <tr className={cn(ROW_BORDER, "hover:bg-neutral-50")}>

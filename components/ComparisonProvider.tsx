@@ -5,7 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Columns2, Link2, Link2Off, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { cn } from "@/lib/utils";
 import {
   snapshotLabel,
@@ -326,47 +326,37 @@ function ComparisonInner({ children }: { children: React.ReactNode }) {
           <span className="text-sm font-semibold text-neutral-800">Сравнение</span>
           <div className="flex min-w-0 items-center gap-1.5">
             <span className="shrink-0 text-xs font-medium text-neutral-600">Дата A</span>
-            <Select value={sourceA} onValueChange={(value) => value && replaceParams({ snapshotA: value })}>
-              <SelectTrigger className="h-8 w-52 text-xs">
-                <SelectValue>{snapshotSourceLabel(sourceA, snapshots)}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="live">Актуальные данные</SelectItem>
-                {sourceA !== "live" && !snapshots.some((snapshot) => snapshot.id === sourceA) && (
-                  <SelectItem value={sourceA} disabled>
-                    {snapshotSourceLabel(sourceA, snapshots)}
-                  </SelectItem>
-                )}
-                {snapshots.map((snapshot) => (
-                  <SelectItem key={snapshot.id} value={snapshot.id}>
-                    {snapshotLabel(snapshot)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={sourceA}
+              onValueChange={(value) => replaceParams({ snapshotA: value })}
+              options={[
+                { value: "live", label: "Актуальные данные" },
+                ...(sourceA !== "live" && !snapshots.some((snapshot) => snapshot.id === sourceA)
+                  ? [{ value: sourceA, label: snapshotSourceLabel(sourceA, snapshots), disabled: true }]
+                  : []),
+                ...snapshots.map((snapshot) => ({ value: snapshot.id, label: snapshotLabel(snapshot) })),
+              ]}
+              triggerClassName="h-8 w-52 text-xs"
+            />
           </div>
           <div className="flex min-w-0 items-center gap-1.5">
             <span className="shrink-0 text-xs font-medium text-neutral-600">Дата B</span>
-            <Select value={sourceB} onValueChange={(value) => value && replaceParams({ snapshotB: value })}>
-              <SelectTrigger className="h-8 w-52 text-xs">
-                <SelectValue>{snapshotSourceLabel(sourceB, snapshots)}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="live" disabled={sourceA === "live"}>
-                  Актуальные данные
-                </SelectItem>
-                {sourceB !== "live" && !snapshots.some((snapshot) => snapshot.id === sourceB) && (
-                  <SelectItem value={sourceB} disabled>
-                    {snapshotSourceLabel(sourceB, snapshots)}
-                  </SelectItem>
-                )}
-                {snapshots.map((snapshot) => (
-                  <SelectItem key={snapshot.id} value={snapshot.id} disabled={snapshot.id === sourceA}>
-                    {snapshotLabel(snapshot)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={sourceB}
+              onValueChange={(value) => replaceParams({ snapshotB: value })}
+              options={[
+                { value: "live", label: "Актуальные данные", disabled: sourceA === "live" },
+                ...(sourceB !== "live" && !snapshots.some((snapshot) => snapshot.id === sourceB)
+                  ? [{ value: sourceB, label: snapshotSourceLabel(sourceB, snapshots), disabled: true }]
+                  : []),
+                ...snapshots.map((snapshot) => ({
+                  value: snapshot.id,
+                  label: snapshotLabel(snapshot),
+                  disabled: snapshot.id === sourceA,
+                })),
+              ]}
+              triggerClassName="h-8 w-52 text-xs"
+            />
           </div>
           <label className="ml-1 flex items-center gap-1.5 text-xs text-neutral-700">
             <Checkbox

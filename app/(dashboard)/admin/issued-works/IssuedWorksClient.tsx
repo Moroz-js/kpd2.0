@@ -36,6 +36,7 @@ import { useTableRowSelection } from "@/lib/useTableRowSelection";
 import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner, compactTable, compactHead, compactPeriodHead, compactCell, compactCellClip } from "@/lib/table-styles";
 import { IssuedWorkEditDialog, type SmetaType } from "./IssuedWorkEditDialog";
+import { isUnknownExecutorName } from "@/lib/executor-names";
 import {
   usePersistedInterfaceState,
   usePersistedScroll,
@@ -43,6 +44,9 @@ import {
 
 const periodYearMonthClass = "w-20 max-w-20 px-1";
 const weekPayClass = "w-20 max-w-20 px-1";
+const COL_WIDTHS = [40, 96, 104, 80, 160, 110, 130, 112, 112, 112, 180, 150, 220, 150, 120, 84, 128] as const;
+const COL_COUNT = COL_WIDTHS.length;
+const TABLE_MIN_WIDTH = COL_WIDTHS.reduce((sum, width) => sum + width, 0);
 
 type Row = {
   sourceType: "personal" | "other-expense";
@@ -58,6 +62,7 @@ type Row = {
   executorName: string;
   executorType: string;
   executorAccessEmail: string | null;
+  executorCanOpenEstimate: boolean;
   projectId: string;
   projectName: string;
   projectType: string;
@@ -67,6 +72,7 @@ type Row = {
   responsibleExecutorId: string | null;
   responsibleExecutorName: string | null;
   amount: number;
+  description: string | null;
   workStatus: string;
   checkedAt: string | null;
   paidAt: string | null;
@@ -89,6 +95,7 @@ type SortField =
   | "weekPlanFact"
   | "projectName"
   | "executorName"
+  | "responsibleExecutorName"
   | "executionMonth"
   | "executionYear"
   | "workTypeName"
@@ -102,7 +109,23 @@ const SMETA_LABEL: Record<SmetaType, string> = {
 };
 
 function smetaTypeCell(row: Row) {
-  if (row.sourceType === "personal") return SMETA_LABEL.personal;
+  if (row.sourceType === "personal") {
+    if (
+      row.executorCanOpenEstimate &&
+      !isUnknownExecutorName(row.executorName)
+    ) {
+      return (
+        <Link
+          href={`/admin/executors/${row.executorId}?tab=works`}
+          className="text-blue-600 hover:underline"
+          title="Открыть личную смету"
+        >
+          {SMETA_LABEL.personal}
+        </Link>
+      );
+    }
+    return SMETA_LABEL.personal;
+  }
   return SMETA_LABEL["other-expense"];
 }
 
@@ -160,9 +183,6 @@ const IssuedWorkRow = React.memo(function IssuedWorkRow({
       <TableCell className={cn(compactCell, "w-24 whitespace-nowrap tabular-nums")}>
         {r.number ?? "—"}
       </TableCell>
-      <TableCell className={cn(compactCell, "tabular-nums text-left", periodYearMonthClass)}>
-        {r.executionYear}
-      </TableCell>
       <TableCell className={cn(compactCell, "whitespace-nowrap", periodYearMonthClass)}>
         {monthLabel(r.executionMonth)}
       </TableCell>
@@ -170,19 +190,8 @@ const IssuedWorkRow = React.memo(function IssuedWorkRow({
         {r.weekPlanFact != null ? weekLabel(r.weekPlanFact) : "—"}
       </TableCell>
       <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>
-        {r.executorAccessEmail ? (
-          <Link href={`/admin/executors/${r.executorId}`} className="hover:underline text-neutral-900">
-            {r.executorName}
-          </Link>
-        ) : (
-          r.executorName
-        )}
+        {r.executorName}
       </TableCell>
-      <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>
-        {r.responsibleExecutorName ?? "—"}
-      </TableCell>
-      <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>{r.projectName}</TableCell>
-      <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>{r.workTypeName}</TableCell>
       <TableCell className={cn(compactCell, "text-right tabular-nums font-semibold")}>{formatMoney(r.amount)}</TableCell>
       <TableCell className={compactCell}>
         <StatusBadge dict={WORK_STATUSES} value={r.workStatus} />
@@ -192,7 +201,18 @@ const IssuedWorkRow = React.memo(function IssuedWorkRow({
       <TableCell className={cn(compactCell, r.workStatus === "paid" && !r.paidAt && "bg-red-100 text-red-700")}>
         {formatDateShort(r.paidAt)}
       </TableCell>
+      <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>{r.projectName}</TableCell>
+      <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>{r.workTypeName}</TableCell>
+      <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")} title={r.description ?? undefined}>
+        <div className="truncate">{r.description ?? "—"}</div>
+      </TableCell>
+      <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>
+        {r.responsibleExecutorName ?? "—"}
+      </TableCell>
       <TableCell className={compactCell}>{smetaTypeCell(r)}</TableCell>
+      <TableCell className={cn(compactCell, "tabular-nums text-left", periodYearMonthClass)}>
+        {r.executionYear}
+      </TableCell>
       <TableCell
         className={cn(
           stickyActionsCell,
@@ -231,6 +251,7 @@ export function IssuedWorksClient() {
   const [executionMonthFilter, setExecutionMonthFilter] = React.useState<string[]>([]);
   const [weekFilter, setWeekFilter] = React.useState<string[]>([]);
   const [executorFilter, setExecutorFilter] = React.useState<string[]>([]);
+  const [responsibleExecutorFilter, setResponsibleExecutorFilter] = React.useState<string[]>([]);
   const [projectFilter, setProjectFilter] = React.useState<string[]>([]);
   const [workTypeFilter, setWorkTypeFilter] = React.useState<string[]>([]);
   const [statusFilter, setStatusFilter] = React.useState<string[]>([]);
@@ -262,6 +283,7 @@ export function IssuedWorksClient() {
       executionMonthFilter,
       weekFilter,
       executorFilter,
+      responsibleExecutorFilter,
       projectFilter,
       workTypeFilter,
       statusFilter,
@@ -276,6 +298,7 @@ export function IssuedWorksClient() {
       if (stored.executionMonthFilter) setExecutionMonthFilter(stored.executionMonthFilter);
       if (stored.weekFilter) setWeekFilter(stored.weekFilter);
       if (stored.executorFilter) setExecutorFilter(stored.executorFilter);
+      if (stored.responsibleExecutorFilter) setResponsibleExecutorFilter(stored.responsibleExecutorFilter);
       if (stored.projectFilter) setProjectFilter(stored.projectFilter);
       if (stored.workTypeFilter) setWorkTypeFilter(stored.workTypeFilter);
       if (stored.statusFilter) setStatusFilter(stored.statusFilter);
@@ -293,6 +316,7 @@ export function IssuedWorksClient() {
       executionMonthFilter,
       weekFilter,
       executorFilter,
+      responsibleExecutorFilter,
       projectFilter,
       workTypeFilter,
       statusFilter,
@@ -359,6 +383,24 @@ export function IssuedWorksClient() {
         .map(([value, label]) => ({ value, label })),
     [allRows]
   );
+  const responsibleExecutorOptions = React.useMemo(() => {
+    const optionsById = new Map<string, string>();
+    let hasEmpty = false;
+    for (const row of allRows) {
+      if (!row.responsibleExecutorId) {
+        hasEmpty = true;
+      } else if (!optionsById.has(row.responsibleExecutorId)) {
+        optionsById.set(
+          row.responsibleExecutorId,
+          row.responsibleExecutorName ?? row.responsibleExecutorId
+        );
+      }
+    }
+    const options = Array.from(optionsById.entries())
+      .sort((a, b) => a[1].localeCompare(b[1], "ru"))
+      .map(([value, label]) => ({ value, label }));
+    return hasEmpty ? [{ value: "__empty__", label: "Не указано" }, ...options] : options;
+  }, [allRows]);
   const projectOptions = React.useMemo(
     () =>
       Array.from(new Map(allRows.map((r) => [r.projectId, r.projectName])).entries())
@@ -391,6 +433,10 @@ export function IssuedWorksClient() {
       list = list.filter((r) => executionMonthFilter.includes(String(r.executionMonth)));
     if (weekFilter.length) list = list.filter((r) => weekFilter.includes(r.weekPlanFact === null ? "__empty__" : String(r.weekPlanFact)));
     if (executorFilter.length) list = list.filter((r) => executorFilter.includes(r.executorId));
+    if (responsibleExecutorFilter.length)
+      list = list.filter((r) =>
+        responsibleExecutorFilter.includes(r.responsibleExecutorId ?? "__empty__")
+      );
     if (projectFilter.length) list = list.filter((r) => projectFilter.includes(r.projectId));
     if (workTypeFilter.length) list = list.filter((r) => workTypeFilter.includes(r.workTypeId));
     if (statusFilter.length) list = list.filter((r) => statusFilter.includes(r.workStatus));
@@ -403,6 +449,7 @@ export function IssuedWorksClient() {
     executionMonthFilter,
     weekFilter,
     executorFilter,
+    responsibleExecutorFilter,
     projectFilter,
     workTypeFilter,
     statusFilter,
@@ -510,7 +557,7 @@ export function IssuedWorksClient() {
               sum={item.sum}
               collapsed={item.collapsed}
               onToggle={() => toggleGroup(item.key)}
-              colSpan={16}
+              colSpan={COL_COUNT}
             />
           );
         }
@@ -618,6 +665,12 @@ export function IssuedWorksClient() {
           onChange={setExecutorFilter}
         />
         <MultiSelectFilter
+          label="Ответственный"
+          options={responsibleExecutorOptions}
+          value={responsibleExecutorFilter}
+          onChange={setResponsibleExecutorFilter}
+        />
+        <MultiSelectFilter
           label="Проект"
           options={projectOptions}
           value={projectFilter}
@@ -683,10 +736,16 @@ export function IssuedWorksClient() {
       )}
 
       <Table
-        className={cn(compactTable, "min-w-[1776px]")}
+        className={cn(compactTable, "table-fixed w-full")}
+        style={{ minWidth: TABLE_MIN_WIDTH }}
         containerClassName="rounded-md border bg-white flex-1 min-h-0 overflow-auto"
         containerRef={scrollRef}
       >
+          <colgroup>
+            {COL_WIDTHS.map((width, index) => (
+              <col key={index} style={{ width }} />
+            ))}
+          </colgroup>
           <TableHeader>
             <TableRow>
               <TableHead className="w-8">
@@ -700,19 +759,6 @@ export function IssuedWorksClient() {
                 className={cn(compactHead, "w-24 text-[10px]")}
               >
                 Номер
-              </SortableHead>
-              <SortableHead
-                field="executionYear"
-                sortBy={activeSortField()}
-                sortDir={activeSortDir()}
-                onSort={handleSort}
-                className={cn(periodYearMonthClass, compactPeriodHead, "text-left")}
-              >
-                <span className="block text-left">
-                  Год
-                  <br />
-                  выполнения
-                </span>
               </SortableHead>
               <SortableHead
                 field="executionMonth"
@@ -749,25 +795,6 @@ export function IssuedWorksClient() {
               >
                 Исполнитель
               </SortableHead>
-              <TableHead className={cn(compactHead, "w-32 max-w-32")}>Ответственный</TableHead>
-              <SortableHead
-                field="projectName"
-                sortBy={activeSortField()}
-                sortDir={activeSortDir()}
-                onSort={handleSort}
-                className={cn(compactHead, "w-44 max-w-44")}
-              >
-                Проект
-              </SortableHead>
-              <SortableHead
-                field="workTypeName"
-                sortBy={activeSortField()}
-                sortDir={activeSortDir()}
-                onSort={handleSort}
-                className={cn(compactHead, "w-32 max-w-32")}
-              >
-                Вид работ
-              </SortableHead>
               <SortableHead
                 field="amount"
                 sortBy={activeSortField()}
@@ -789,18 +816,59 @@ export function IssuedWorksClient() {
               <TableHead className={cn(compactHead, "w-28")}>Дата проверки</TableHead>
               <TableHead className={cn(compactHead, "w-28")}>Дата оплаты план</TableHead>
               <TableHead className={cn(compactHead, "w-28")}>Дата оплаты факт</TableHead>
+              <SortableHead
+                field="projectName"
+                sortBy={activeSortField()}
+                sortDir={activeSortDir()}
+                onSort={handleSort}
+                className={cn(compactHead, "w-44 max-w-44")}
+              >
+                Проект
+              </SortableHead>
+              <SortableHead
+                field="workTypeName"
+                sortBy={activeSortField()}
+                sortDir={activeSortDir()}
+                onSort={handleSort}
+                className={cn(compactHead, "w-32 max-w-32")}
+              >
+                Вид работ
+              </SortableHead>
+              <TableHead className={cn(compactHead, "w-48 max-w-48")}>Описание</TableHead>
+              <SortableHead
+                field="responsibleExecutorName"
+                sortBy={activeSortField()}
+                sortDir={activeSortDir()}
+                onSort={handleSort}
+                className={cn(compactHead, "w-32 max-w-32")}
+              >
+                Ответственный
+              </SortableHead>
               <TableHead className={cn(compactHead, "w-32")}>Тип сметы</TableHead>
+              <SortableHead
+                field="executionYear"
+                sortBy={activeSortField()}
+                sortDir={activeSortDir()}
+                onSort={handleSort}
+                className={cn(periodYearMonthClass, compactPeriodHead, "text-left")}
+              >
+                <span className="block text-left">
+                  Год
+                  <br />
+                  выполнения
+                </span>
+              </SortableHead>
               <TableHead className={stickyActionsHead} />
             </TableRow>
           </TableHeader>
           <VirtualizedTableBody
             scrollRef={scrollRef}
             rowCount={flatItems ? flatItems.length : rows.length}
-            colSpan={16}
+            colSpan={COL_COUNT}
             isLoading={isLoading}
             loading={
               <TableRow>
-                <TableCell colSpan={16} className="text-center text-neutral-500 py-8">
+                <TableCell colSpan={COL_COUNT} className="text-center text-neutral-500 py-8">
                   Загрузка...
                 </TableCell>
               </TableRow>
@@ -808,7 +876,7 @@ export function IssuedWorksClient() {
             isEmpty={rows.length === 0}
             empty={
               <TableRow>
-                <TableCell colSpan={16} className="text-center text-neutral-500 py-12">
+                <TableCell colSpan={COL_COUNT} className="text-center text-neutral-500 py-12">
                   Пока нет ни одной работы. Они появятся после создания строк в Личных сметах
                   и Прочих тратах (Phase 3).
                 </TableCell>

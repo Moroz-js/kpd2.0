@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   Table, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -44,8 +45,9 @@ import {
 /** Ширины колонок (19) — table-fixed, иначе правые колонки сжимаются и наезжают друг на друга */
 const ACTIONS_COL_WIDTH = 128;
 const COL_WIDTHS = [
-  40, 96, 84, 112, 72, 192, 148, 208, 116, 124, 104, 100, 92, 124, 140, 92, 120, 140, ACTIONS_COL_WIDTH,
+  40, 96, 112, 72, 192, 116, 124, 104, 100, 124, 104, 192, 148, 208, 140, 140, 124, 84, ACTIONS_COL_WIDTH,
 ] as const;
+const COL_COUNT = COL_WIDTHS.length;
 const TABLE_MIN_WIDTH = COL_WIDTHS.reduce((s, w) => s + w, 0);
 const cellClip = "overflow-hidden max-w-0";
 
@@ -287,22 +289,8 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
         />
       </TableCell>
       <TableCell className="whitespace-nowrap tabular-nums">{row.otherExpenseNumber ?? "—"}</TableCell>
-      <TableCell>{row.executionYear}</TableCell>
       <TableCell className="whitespace-nowrap">{MONTHS.find(m => m.value === String(row.executionMonth))?.label ?? row.executionMonth}</TableCell>
       <TableCell>{payWeek(row.plannedPayAt, row.paidAt)}</TableCell>
-      <TableCell className={cn(cellClip, "whitespace-normal")}>
-        <ExpandableListCell
-          items={[row.project.name]}
-          renderItem={() => (
-            <Link
-              href={isAdmin ? `/admin/projects/${row.projectId}` : `/responsible/projects/${row.projectId}`}
-              className="hover:underline text-neutral-900"
-            >
-              {row.project.name}
-            </Link>
-          )}
-        />
-      </TableCell>
       <TableCell className={cn(cellClip, "whitespace-normal")}>
         <ExpandableListCell
           items={[row.executor.name]}
@@ -320,21 +308,11 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
           }
         />
       </TableCell>
-      <TableCell className={cn(cellClip, "whitespace-normal")}>
-        <ExpandableListCell items={row.description ? [row.description] : []} />
+      <TableCell className={cn(cellClip, "text-right tabular-nums font-semibold whitespace-nowrap")}>
+        {formatMoney(row.amount)}
       </TableCell>
-      <TableCell className={cn(cellClip, "whitespace-normal")}>
-        <ExpandableListCell items={[row.workType.name]} />
-      </TableCell>
-      <TableCell className={cn(cellClip, "whitespace-normal")}>
-        <ExpandableListCell items={row.responsibleExecutor ? [row.responsibleExecutor.name] : []} />
-      </TableCell>
-      <TableCell className={cn(cellClip, "whitespace-normal")}>
-        {row.preferredPayMethod ? (
-          <ExpandableListCell items={[row.preferredPayMethod]} />
-        ) : (
-          <span className="text-neutral-400">—</span>
-        )}
+      <TableCell className={cn(cellClip, "whitespace-nowrap")}>
+        <StatusBadge dict={WORK_STATUSES} value={row.workStatus} />
       </TableCell>
       <TableCell className={cn(cellClip, "whitespace-nowrap")}>
         {inlineActive === "plannedPayAt" ? (
@@ -365,11 +343,8 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
           </span>
         )}
       </TableCell>
-      <TableCell className={cn(cellClip, "text-right tabular-nums font-semibold whitespace-nowrap")}>
-        {formatMoney(row.amount)}
-      </TableCell>
-      <TableCell className={cn(cellClip, "whitespace-nowrap")}>
-        <StatusBadge dict={WORK_STATUSES} value={row.workStatus} />
+      <TableCell className={cn(cellClip, "text-right tabular-nums whitespace-nowrap")}>
+        {row.paymentAmount != null ? formatMoney(row.paymentAmount) : "—"}
       </TableCell>
       <TableCell className={cn(cellClip, "whitespace-nowrap")}>
         {row.paymentStatus ? (
@@ -377,9 +352,6 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
         ) : (
           <span className="text-neutral-300">—</span>
         )}
-      </TableCell>
-      <TableCell className={cn(cellClip, "text-right tabular-nums whitespace-nowrap")}>
-        {row.paymentAmount != null ? formatMoney(row.paymentAmount) : "—"}
       </TableCell>
       <TableCell className={cn(cellClip, "whitespace-nowrap")}>
         {inlineActive === "paidAt" ? (
@@ -411,9 +383,39 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
           </span>
         )}
       </TableCell>
+      <TableCell className={cn(cellClip, "whitespace-normal")}>
+        <ExpandableListCell
+          items={[row.project.name]}
+          renderItem={() => (
+            <Link
+              href={isAdmin ? `/admin/projects/${row.projectId}` : `/responsible/projects/${row.projectId}`}
+              className="hover:underline text-neutral-900"
+            >
+              {row.project.name}
+            </Link>
+          )}
+        />
+      </TableCell>
+      <TableCell className={cn(cellClip, "whitespace-normal")}>
+        <ExpandableListCell items={[row.workType.name]} />
+      </TableCell>
+      <TableCell className={cn(cellClip, "whitespace-normal")}>
+        <ExpandableListCell items={row.description ? [row.description] : []} />
+      </TableCell>
+      <TableCell className={cn(cellClip, "whitespace-normal")}>
+        <ExpandableListCell items={row.responsibleExecutor ? [row.responsibleExecutor.name] : []} />
+      </TableCell>
       <TableCell className={cn(cellClip, "whitespace-normal pr-1")}>
         <ExpandableListCell items={row.bankAccount?.name ? [row.bankAccount.name] : []} />
       </TableCell>
+      <TableCell className={cn(cellClip, "whitespace-normal")}>
+        {row.preferredPayMethod ? (
+          <ExpandableListCell items={[row.preferredPayMethod]} />
+        ) : (
+          <span className="text-neutral-400">—</span>
+        )}
+      </TableCell>
+      <TableCell>{row.executionYear}</TableCell>
       <TableCell
         className={cn(
           stickyActionsCell,
@@ -994,15 +996,15 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
           </div>
           <div className="flex items-center gap-1">
             <span className="text-xs text-neutral-500">Источник перевода:</span>
-            <Select value={bulkBankId || "__none__"} onValueChange={(v) => setBulkBankId(v === "__none__" ? "" : (v ?? ""))}>
-              <SelectTrigger className="h-7 w-44 text-xs">
-                <SelectValue>{bulkBankId ? (bankAccounts.find(b => b.id === bulkBankId)?.name ?? "") : "— не менять —"}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">— не менять —</SelectItem>
-                {bankAccounts.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={bulkBankId || "__none__"}
+              onValueChange={(v) => setBulkBankId(v === "__none__" ? "" : v)}
+              options={[
+                { value: "__none__", label: "— не менять —" },
+                ...bankAccounts.map((bankAccount) => ({ value: bankAccount.id, label: bankAccount.name })),
+              ]}
+              triggerClassName="h-7 w-44 text-xs"
+            />
           </div>
           <Button size="sm" className="h-7 text-xs" onClick={handleBulkApply} disabled={bulkSaving}>
             {bulkSaving ? "..." : "Применить"}
@@ -1041,31 +1043,14 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
               <SortableHead field="number" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={cn(compactHead, "text-[10px]")}>
                 Номер
               </SortableHead>
-              <TableHead className={compactPeriodHead}>Год выполнения</TableHead>
               <SortableHead field="executionMonth" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactPeriodHead}>
                 Месяц выполнения
               </SortableHead>
               <SortableHead field="payWeek" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactPeriodHead}>
                 Неделя оплаты
               </SortableHead>
-              <SortableHead field="project" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
-                Проект
-              </SortableHead>
               <SortableHead field="executor" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
                 Исполнитель
-              </SortableHead>
-              <TableHead className={compactHead}>Описание работы</TableHead>
-              <SortableHead field="workType" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
-                Вид работ
-              </SortableHead>
-              <SortableHead field="responsible" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
-                Ответственный
-              </SortableHead>
-              <SortableHead field="preferredPayMethod" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
-                Способ оплаты
-              </SortableHead>
-              <SortableHead field="plannedPayAt" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
-                Дата оплаты план
               </SortableHead>
               <SortableHead field="amount" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={cn(compactHead, "text-right")}>
                 Сумма работы
@@ -1073,36 +1058,53 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
               <SortableHead field="workStatus" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
                 Статус работы
               </SortableHead>
+              <SortableHead field="plannedPayAt" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
+                Дата оплаты план
+              </SortableHead>
+              <TableHead className={cn(compactHead, "text-right")}>Сумма выплаты</TableHead>
               <SortableHead field="paymentStatus" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
                 Статус выплаты
               </SortableHead>
-              <TableHead className={cn(compactHead, "text-right")}>Сумма выплаты</TableHead>
               <SortableHead field="paidAt" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
                 <span className="inline-flex items-center gap-1">
                   Дата оплаты факт
                   {isAdmin && <Pencil className="h-3 w-3 shrink-0 text-neutral-400" aria-hidden />}
                 </span>
               </SortableHead>
+              <SortableHead field="project" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
+                Проект
+              </SortableHead>
+              <SortableHead field="workType" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
+                Вид работ
+              </SortableHead>
+              <TableHead className={compactHead}>Описание работы</TableHead>
+              <SortableHead field="responsible" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
+                Ответственный
+              </SortableHead>
               <SortableHead field="bankAccount" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
                 Источник перевода
               </SortableHead>
+              <SortableHead field="preferredPayMethod" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
+                Способ оплаты
+              </SortableHead>
+              <TableHead className={compactPeriodHead}>Год выполнения</TableHead>
               <TableHead className={cn(stickyActionsHead, "w-[128px] min-w-[128px] max-w-[128px]")} />
             </TableRow>
           </TableHeader>
           <VirtualizedTableBody
             scrollRef={scrollRef}
             rowCount={filtered.length}
-            colSpan={19}
+            colSpan={COL_COUNT}
             isLoading={loading}
             loading={
               <TableRow>
-                <TableCell colSpan={19} className="text-center text-neutral-500 py-8">Загрузка...</TableCell>
+                <TableCell colSpan={COL_COUNT} className="text-center text-neutral-500 py-8">Загрузка...</TableCell>
               </TableRow>
             }
             isEmpty={filtered.length === 0}
             empty={
               <TableRow>
-                <TableCell colSpan={19} className="text-center text-neutral-500 py-8">Нет данных</TableCell>
+                <TableCell colSpan={COL_COUNT} className="text-center text-neutral-500 py-8">Нет данных</TableCell>
               </TableRow>
             }
             renderRow={renderRow}
@@ -1443,10 +1445,10 @@ function OtherExpenseFormDialog({
           </div>
           <div className="space-y-1.5 col-span-2 min-w-0">
             <Label>Проект *</Label>
-            <Select
+            <SearchableSelect
               value={projectId}
               onValueChange={(v) => {
-                const next = v ?? "";
+                const next = v;
                 setProjectId(next);
                 // Автозаполнение «Ответственного» только в новой строке.
                 if (!isEdit) {
@@ -1454,53 +1456,35 @@ function OtherExpenseFormDialog({
                   if (pmId) setResponsibleExecutorId(pmId);
                 }
               }}
-            >
-              <SelectTrigger><SelectValue>{projects.find(p => p.id === projectId)?.name ?? "Выберите проект"}</SelectValue></SelectTrigger>
-              <SelectContent className="max-w-lg">
-                {projects.map(p => (
-                  <SelectItem key={p.id} value={p.id} className="whitespace-normal">
-                    {p.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              options={projects.map((project) => ({ value: project.id, label: project.name }))}
+              placeholder="Выберите проект"
+              contentClassName="max-w-lg"
+              optionClassName="whitespace-normal"
+            />
           </div>
           <div className="space-y-1.5 min-w-0">
             <Label>Исполнитель *</Label>
-            <Select
+            <SearchableSelect
               value={executorId}
               onValueChange={(v) => {
-                setExecutorId(v ?? "");
+                setExecutorId(v);
                 setWorkTypeId("");
               }}
-            >
-              <SelectTrigger>
-                <SelectValue>
-                  {executors.find(e => e.id === executorId)?.name ?? "Выберите"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {executors.map(e => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+              options={executors.map((executor) => ({ value: executor.id, label: executor.name }))}
+              placeholder="Выберите"
+            />
           </div>
           <div className="space-y-1.5 min-w-0">
             <Label>Вид работ *</Label>
-            <Select value={workTypeId} onValueChange={(v) => setWorkTypeId(v ?? "")} disabled={!executorId || executorId === ""}>
-              <SelectTrigger>
-                <SelectValue>
-                  {workTypeId ? (workTypes.find(w => w.id === workTypeId)?.name ?? "Выберите") : "Выберите"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent className="w-80">
-                {filteredWorkTypes.map(w => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}
-                {filteredWorkTypes.length === 0 && (
-                  <div className="px-3 py-2 text-xs text-neutral-400">
-                    {executorId ? "Нет видов работ у исполнителя" : "Сначала выберите исполнителя"}
-                  </div>
-                )}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={workTypeId}
+              onValueChange={setWorkTypeId}
+              options={filteredWorkTypes.map((workType) => ({ value: workType.id, label: workType.name }))}
+              disabled={!executorId}
+              placeholder="Выберите"
+              emptyMessage={executorId ? "Нет видов работ у исполнителя" : "Сначала выберите исполнителя"}
+              contentClassName="w-80"
+            />
           </div>
           <div className="space-y-1.5 col-span-2 min-w-0">
             <Label>Описание работы *</Label>
@@ -1508,22 +1492,16 @@ function OtherExpenseFormDialog({
           </div>
           <div className="space-y-1.5 min-w-0">
             <Label>Ответственный *</Label>
-            <Select
+            <SearchableSelect
               value={responsibleExecutorId}
-              onValueChange={(v) => setResponsibleExecutorId(v ?? "")}
+              onValueChange={setResponsibleExecutorId}
+              options={responsibleOptions.map((responsible) => ({
+                value: responsible.id,
+                label: responsible.name,
+              }))}
               disabled={responsibleLocked}
-            >
-              <SelectTrigger>
-                <SelectValue>
-                  {responsibleOptions.find(r => r.id === responsibleExecutorId)?.name
-                    ?? initial?.responsibleExecutor?.name
-                    ?? "Выберите"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {responsibleOptions.map(r => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+              placeholder={initial?.responsibleExecutor?.name ?? "Выберите"}
+            />
           </div>
           <div className="space-y-1.5 min-w-0">
             <Label>Способ оплаты</Label>
@@ -1630,13 +1608,14 @@ function OtherExpenseFormDialog({
           {isEdit && (
             <div className="space-y-1.5 min-w-0">
               <Label>Источник перевода</Label>
-              <Select value={bankAccountId} onValueChange={(v) => setBankAccountId(v ?? "")}>
-                <SelectTrigger><SelectValue>{bankAccounts.find(b => b.id === bankAccountId)?.name ?? "—"}</SelectValue></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">—</SelectItem>
-                  {bankAccounts.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={bankAccountId}
+                onValueChange={setBankAccountId}
+                options={[
+                  { value: "", label: "—" },
+                  ...bankAccounts.map((bankAccount) => ({ value: bankAccount.id, label: bankAccount.name })),
+                ]}
+              />
             </div>
           )}
           <div className="space-y-1.5 min-w-0">

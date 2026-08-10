@@ -12,9 +12,22 @@
 import { prisma } from "@/lib/db";
 import { logActivity, diff } from "@/lib/audit/log";
 import { listIssuedWorks } from "@/lib/views/issuedWorks";
+import {
+  allocateEntitySerial,
+  withNumberedTransaction,
+  withSerializableTransaction,
+} from "@/lib/services/entity-numbering";
+import {
+  formatProjectNumber,
+  isNumberedProjectType,
+} from "@/lib/project-number";
+
+const PROJECT_NUMBER_COUNTER_YEAR = 0;
 
 export type ProjectListRow = {
   id: string;
+  number: string | null;
+  numberSerial: number | null;
   name: string; // B
   shortName: string; // J
   type: string; // K: internal | client | unknown
@@ -125,6 +138,8 @@ export async function listProjects(filter?: ListProjectsFilter): Promise<Project
     }
     return {
       id: p.id,
+      number: p.number,
+      numberSerial: p.numberSerial,
       name: p.name,
       shortName: p.shortName,
       type: p.type,
@@ -149,23 +164,38 @@ export type CreateProjectInput = {
 };
 
 export async function createProject(input: CreateProjectInput, userId: string) {
-  const client = await prisma.client.findUnique({ where: { id: input.clientId } });
-  if (!client) throw new Error("Client not found");
-  if (client.status === "archived") throw new Error("Cannot create project for archived client");
-
   const shortName = input.shortName.trim();
-  const name = projectFullName(shortName, client.name);
-  const type = projectType(client.name);
+  const created = await withNumberedTransaction(async (tx) => {
+    const client = await tx.client.findUnique({ where: { id: input.clientId } });
+    if (!client) throw new Error("Client not found");
+    if (client.status === "archived") {
+      throw new Error("Cannot create project for archived client");
+    }
 
-  const created = await prisma.project.create({
-    data: {
-      shortName,
-      name,
-      type,
-      status: "active",
-      clientId: client.id,
-      responsibleUserId: input.responsibleUserId ?? null,
-    },
+    const name = projectFullName(shortName, client.name);
+    const type = projectType(client.name);
+    if (!isNumberedProjectType(type)) {
+      throw new Error("Cannot assign a number to a project without a type");
+    }
+
+    const allocated = await allocateEntitySerial(
+      tx,
+      "project",
+      PROJECT_NUMBER_COUNTER_YEAR
+    );
+
+    return tx.project.create({
+      data: {
+        number: formatProjectNumber(type, allocated.serial),
+        numberSerial: allocated.serial,
+        shortName,
+        name,
+        type,
+        status: "active",
+        clientId: client.id,
+        responsibleUserId: input.responsibleUserId ?? null,
+      },
+    });
   });
 
   await logActivity({
@@ -188,46 +218,59 @@ export type UpdateProjectInput = {
 };
 
 export async function updateProject(id: string, patch: UpdateProjectInput, userId: string) {
-  const before = await prisma.project.findUnique({
-    where: { id },
-    include: { client: { select: { name: true } } },
-  });
-  if (!before) throw new Error("Project not found");
+  const { before, updated } = await withSerializableTransaction(async (tx) => {
+    const before = await tx.project.findUnique({
+      where: { id },
+      include: { client: { select: { name: true } } },
+    });
+    if (!before) throw new Error("Project not found");
 
-  const newClientId = patch.clientId ?? before.clientId;
-  let clientName = before.client?.name ?? null;
-  let typeVal = before.type;
-
-  if (patch.clientId !== undefined && patch.clientId !== before.clientId) {
-    if (patch.clientId) {
-      const newClient = await prisma.client.findUnique({ where: { id: patch.clientId } });
-      if (!newClient) throw new Error("Client not found");
-      clientName = newClient.name;
-    } else {
-      clientName = null;
+    const newClientId =
+      patch.clientId !== undefined ? patch.clientId : before.clientId;
+    let clientName = before.client?.name ?? null;
+    if (newClientId !== before.clientId) {
+      if (newClientId) {
+        const newClient = await tx.client.findUnique({ where: { id: newClientId } });
+        if (!newClient) throw new Error("Client not found");
+        clientName = newClient.name;
+      } else {
+        clientName = null;
+      }
     }
-    typeVal = projectType(clientName);
-  }
 
-  const newShortName = (patch.shortName ?? before.shortName).trim();
-  const newName = projectFullName(newShortName, clientName);
+    const typeVal = projectType(clientName);
+    const newShortName = (patch.shortName ?? before.shortName).trim();
+    const newName = projectFullName(newShortName, clientName);
+    const newNumber =
+      before.number !== null &&
+      before.numberSerial !== null &&
+      typeVal !== before.type &&
+      isNumberedProjectType(typeVal)
+        ? formatProjectNumber(typeVal, before.numberSerial)
+        : before.number;
 
-  const updated = await prisma.project.update({
-    where: { id },
-    data: {
-      shortName: newShortName,
-      name: newName,
-      type: typeVal,
-      ...(patch.clientId !== undefined && { clientId: newClientId }),
-      ...(patch.responsibleUserId !== undefined && { responsibleUserId: patch.responsibleUserId }),
-      ...(patch.status !== undefined && { status: patch.status }),
-      ...(patch.cashflowInitial !== undefined && { cashflowInitial: patch.cashflowInitial }),
-    },
+    const updated = await tx.project.update({
+      where: { id },
+      data: {
+        shortName: newShortName,
+        name: newName,
+        type: typeVal,
+        number: newNumber,
+        ...(patch.clientId !== undefined && { clientId: newClientId }),
+        ...(patch.responsibleUserId !== undefined && { responsibleUserId: patch.responsibleUserId }),
+        ...(patch.status !== undefined && { status: patch.status }),
+        ...(patch.cashflowInitial !== undefined && { cashflowInitial: patch.cashflowInitial }),
+      },
+    });
+
+    return { before, updated };
   });
 
   const changes = diff(
     {
       shortName: before.shortName,
+      number: before.number,
+      numberSerial: before.numberSerial,
       name: before.name,
       type: before.type,
       clientId: before.clientId,
@@ -236,6 +279,8 @@ export async function updateProject(id: string, patch: UpdateProjectInput, userI
     },
     {
       shortName: updated.shortName,
+      number: updated.number,
+      numberSerial: updated.numberSerial,
       name: updated.name,
       type: updated.type,
       clientId: updated.clientId,

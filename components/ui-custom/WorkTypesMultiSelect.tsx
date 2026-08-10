@@ -64,8 +64,8 @@ export function WorkTypesMultiSelect({
     if (!q) return sortedOptions;
     return sortedOptions.filter(
       (o) =>
-        o.name.toLowerCase().startsWith(q) ||
-        (o.segment?.toLowerCase().startsWith(q) ?? false)
+        o.name.toLowerCase().includes(q) ||
+        (o.segment?.toLowerCase().includes(q) ?? false)
     );
   }, [sortedOptions, search]);
 

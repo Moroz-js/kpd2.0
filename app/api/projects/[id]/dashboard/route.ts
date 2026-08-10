@@ -4,6 +4,7 @@ import { isAdmin } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { getISOWeek, getISOWeekYear, getISOWeeksInYear, isoWeekStart } from "@/lib/iso-weeks";
 import { hasPersonalSmeta } from "@/lib/executor-personal-estimate";
+import { compareExecutorNames } from "@/lib/executor-names";
 import {
   dataSourcePrismaAdapter,
   resolveDataSource,
@@ -72,15 +73,16 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     db.work.findMany({
       where: { projectId: id },
       include: {
-        executor: { select: { id: true, name: true } },
+        executor: { select: { id: true, name: true, accessEmail: true, isResponsible: true } },
         workType: { select: { id: true, name: true } },
+        payment: { select: { paymentStatus: true } },
       },
       orderBy: { plannedPayAt: "desc" },
     }),
     db.otherExpense.findMany({
       where: { projectId: id },
       include: {
-        executor: { select: { id: true, name: true } },
+        executor: { select: { id: true, name: true, accessEmail: true, isResponsible: true } },
         workType: { select: { id: true, name: true } },
       },
       orderBy: { plannedPayAt: "desc" },
@@ -92,7 +94,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     db.spendingPlanLine.findMany({
       where: { projectId: id, year },
       include: {
-        executor: { select: { id: true, name: true, accessEmail: true } },
+        executor: { select: { id: true, name: true, accessEmail: true, isResponsible: true } },
         workType: { select: { id: true, name: true } },
       },
     }),
@@ -202,11 +204,38 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     id: string;
     name: string;
     weeks: number[];
-    executorMap: Map<string, { id: string; name: string; weeks: number[] }>;
+    factWeeks: number[];
+    executorMap: Map<string, {
+      id: string;
+      name: string;
+      canOpenEstimate: boolean;
+      weeks: number[];
+    }>;
   }>();
   const allSources = [
-    ...works.map(w => ({ workTypeId: w.workTypeId, workTypeName: w.workType.name, executorId: w.executorId, executorName: w.executor.name, amount: w.amount, plannedPayAt: w.plannedPayAt, paidAt: w.paidAt, workStatus: w.workStatus })),
-    ...otherExpenses.map(o => ({ workTypeId: o.workTypeId, workTypeName: o.workType.name, executorId: o.executorId, executorName: o.executor.name, amount: o.amount, plannedPayAt: o.plannedPayAt, paidAt: o.paidAt, workStatus: o.workStatus })),
+    ...works.map(w => ({
+      workTypeId: w.workTypeId,
+      workTypeName: w.workType.name,
+      executorId: w.executorId,
+      executorName: w.executor.name,
+      executorCanOpenEstimate: hasPersonalSmeta(w.executor) || w.executor.isResponsible,
+      amount: w.amount,
+      plannedPayAt: w.plannedPayAt,
+      paidAt: w.paidAt,
+      isPaid:
+        w.workStatus === "paid" || w.payment?.paymentStatus === "paid",
+    })),
+    ...otherExpenses.map(o => ({
+      workTypeId: o.workTypeId,
+      workTypeName: o.workType.name,
+      executorId: o.executorId,
+      executorName: o.executor.name,
+      executorCanOpenEstimate: hasPersonalSmeta(o.executor) || o.executor.isResponsible,
+      amount: o.amount,
+      plannedPayAt: o.plannedPayAt,
+      paidAt: o.paidAt,
+      isPaid: o.workStatus === "paid" || o.paymentStatus === "paid",
+    })),
   ];
 
   for (const src of allSources) {
@@ -217,15 +246,26 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         id: src.workTypeId,
         name: src.workTypeName,
         weeks: new Array(weeksInYear).fill(0),
+        factWeeks: new Array(weeksInYear).fill(0),
         executorMap: new Map(),
       });
     }
     const entry = workTypeMap.get(src.workTypeId)!;
     entry.weeks[pf.week - 1] += src.amount;
     if (!entry.executorMap.has(src.executorId)) {
-      entry.executorMap.set(src.executorId, { id: src.executorId, name: src.executorName, weeks: new Array(weeksInYear).fill(0) });
+      entry.executorMap.set(src.executorId, {
+        id: src.executorId,
+        name: src.executorName,
+        canOpenEstimate: src.executorCanOpenEstimate,
+        weeks: new Array(weeksInYear).fill(0),
+      });
     }
     entry.executorMap.get(src.executorId)!.weeks[pf.week - 1] += src.amount;
+    if (src.isPaid && src.paidAt) {
+      const factYear = getISOWeekYear(src.paidAt);
+      const factWeek = getISOWeek(src.paidAt);
+      if (factYear === year) entry.factWeeks[factWeek - 1] += src.amount;
+    }
   }
 
   // Block 4: SpendingPlanLine grouped by (executor, workType)
@@ -233,12 +273,13 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     id: string;
     executorId: string;
     executorName: string;
-    executorHasPersonalSmeta: boolean;
+    executorCanOpenEstimate: boolean;
     workTypeId: string;
     workTypeName: string;
     sourceType: string | null;
     weeks: (string | null)[];
     lineIds: (string | null)[];
+    comments: (string | null)[];
   }>();
 
   for (const pl of planLines) {
@@ -248,18 +289,21 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         id: key,
         executorId: pl.executorId,
         executorName: pl.executor.name,
-        executorHasPersonalSmeta: hasPersonalSmeta(pl.executor),
+        executorCanOpenEstimate:
+          hasPersonalSmeta(pl.executor) || pl.executor.isResponsible,
         workTypeId: pl.workTypeId,
         workTypeName: pl.workType.name,
         sourceType: pl.sourceType,
         weeks: new Array(weeksInYear).fill(null),
         lineIds: new Array(weeksInYear).fill(null),
+        comments: new Array(weeksInYear).fill(null),
       });
     }
     const entry = planGroupMap.get(key)!;
     const prev = entry.weeks[pl.week - 1];
     entry.weeks[pl.week - 1] = String((prev !== null ? parseFloat(prev) : 0) + pl.amount);
     entry.lineIds[pl.week - 1] = pl.id;
+    entry.comments[pl.week - 1] = pl.comment;
   }
 
   // Week headers with month info
@@ -288,7 +332,10 @@ export async function GET(req: NextRequest, { params }: Ctx) {
       id: wt.id,
       name: wt.name,
       weeks: wt.weeks,
-      executors: Array.from(wt.executorMap.values()).sort((a, b) => a.name.localeCompare(b.name, "ru")),
+      factWeeks: wt.factWeeks,
+      executors: Array.from(wt.executorMap.values()).sort((a, b) =>
+        compareExecutorNames(a.name, b.name)
+      ),
     })),
     planLines: Array.from(planGroupMap.values()),
     executors: executors
@@ -297,7 +344,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         name: e.name,
         workTypeIds: e.executorWorkTypes.map(ewt => ewt.workTypeId),
       }))
-      .sort((a, b) => a.name.localeCompare(b.name, "ru")),
+      .sort((a, b) => compareExecutorNames(a.name, b.name)),
     availableWorkTypes: [...workTypes].sort((a, b) => a.name.localeCompare(b.name, "ru")),
   });
 }

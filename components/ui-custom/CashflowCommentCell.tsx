@@ -23,6 +23,7 @@ export type CashflowCommentCellProps = {
   onSave: (payload: CashflowCellSavePayload) => Promise<void>;
   className?: string;
   compact?: boolean;
+  allowHighlight?: boolean;
   children: React.ReactNode;
 };
 
@@ -31,10 +32,11 @@ export function CashflowCommentCell({
   onSave,
   className,
   compact,
+  allowHighlight = true,
   children,
 }: CashflowCommentCellProps) {
   const comment = meta?.text;
-  const highlight = meta?.highlight ?? null;
+  const highlight = allowHighlight ? (meta?.highlight ?? null) : null;
   const hasMeta = Boolean(comment || highlight);
 
   const [open, setOpen] = React.useState(false);
@@ -52,14 +54,23 @@ export function CashflowCommentCell({
   async function handleSave() {
     setSaving(true);
     try {
-      await onSave({ text: draft.trim(), highlight: draftHighlight });
+      await onSave({
+        text: draft.trim(),
+        highlight: allowHighlight ? draftHighlight : null,
+      });
       setOpen(false);
+    } catch {
+      // Ошибку показывает вызывающий код; popover остаётся открытым для повтора.
     } finally {
       setSaving(false);
     }
   }
 
-  const triggerTitle = comment || (highlight ? CASHFLOW_HIGHLIGHTS[highlight].label : "Комментарий и подсветка");
+  const triggerTitle =
+    comment ||
+    (allowHighlight && highlight
+      ? CASHFLOW_HIGHLIGHTS[highlight].label
+      : "Комментарий");
 
   return (
     <div
@@ -69,7 +80,7 @@ export function CashflowCommentCell({
         className
       )}
     >
-      <span className="min-w-0 flex-1 text-right">{children}</span>
+      <div className="min-w-0 flex-1 text-right">{children}</div>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger
           title={triggerTitle}
@@ -99,31 +110,33 @@ export function CashflowCommentCell({
         </PopoverTrigger>
         <PopoverContent className="w-72 p-3" side="top" align="end">
           <div className="space-y-3">
-            <div className="space-y-1.5">
-              <p className="text-xs font-medium text-neutral-700">Подсветка</p>
-              <div className="flex flex-wrap items-center gap-2">
-                {CASHFLOW_HIGHLIGHT_IDS.map((id) => (
+            {allowHighlight && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-neutral-700">Подсветка</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  {CASHFLOW_HIGHLIGHT_IDS.map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      title={CASHFLOW_HIGHLIGHTS[id].label}
+                      className={cn(
+                        "h-6 w-6 rounded border-2 transition-transform hover:scale-110",
+                        CASHFLOW_HIGHLIGHTS[id].swatch,
+                        draftHighlight === id && "ring-2 ring-blue-500 ring-offset-1"
+                      )}
+                      onClick={() => setDraftHighlight(draftHighlight === id ? null : id)}
+                    />
+                  ))}
                   <button
-                    key={id}
                     type="button"
-                    title={CASHFLOW_HIGHLIGHTS[id].label}
-                    className={cn(
-                      "h-6 w-6 rounded border-2 transition-transform hover:scale-110",
-                      CASHFLOW_HIGHLIGHTS[id].swatch,
-                      draftHighlight === id && "ring-2 ring-blue-500 ring-offset-1"
-                    )}
-                    onClick={() => setDraftHighlight(draftHighlight === id ? null : id)}
-                  />
-                ))}
-                <button
-                  type="button"
-                  className="text-xs text-neutral-500 hover:text-neutral-800 underline-offset-2 hover:underline"
-                  onClick={() => setDraftHighlight(null)}
-                >
-                  Сбросить
-                </button>
+                    className="text-xs text-neutral-500 hover:text-neutral-800 underline-offset-2 hover:underline"
+                    onClick={() => setDraftHighlight(null)}
+                  >
+                    Сбросить
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
             <div className="space-y-1.5">
               <p className="text-xs font-medium text-neutral-700">Комментарий</p>
               <Textarea

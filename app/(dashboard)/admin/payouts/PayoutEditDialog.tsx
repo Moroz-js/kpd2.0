@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { MONTHS } from "@/lib/format";
 import { PAYMENT_STATUSES } from "@/lib/statuses";
 import { sortByNameRu } from "@/lib/sort";
@@ -167,21 +168,16 @@ export function PayoutEditDialog({
             <>
               <div className="space-y-2 min-w-0">
                 <Label htmlFor="executorId">Исполнитель</Label>
-                <Select value={executorId} onValueChange={(v) => setExecutorId(v ?? "")}>
-                  <SelectTrigger id="executorId">
-                    <SelectValue>
-                      {executorId ? (activeExecutors.find((e) => e.id === executorId)?.name ?? executorId) : undefined}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {activeExecutors.map((e) => (
-                      <SelectItem key={e.id} value={e.id}>
-                        {e.name}
-                        {e.status === "archived" && " (архив)"}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableSelect
+                  id="executorId"
+                  value={executorId}
+                  onValueChange={setExecutorId}
+                  options={activeExecutors.map((e) => ({
+                    value: e.id,
+                    label: `${e.name}${e.status === "archived" ? " (архив)" : ""}`,
+                  }))}
+                  placeholder="Выберите исполнителя"
+                />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2 min-w-0">
@@ -305,27 +301,18 @@ export function PayoutEditDialog({
 
           <div className="space-y-2 min-w-0">
             <Label htmlFor="bankAccountId">Источник оплаты</Label>
-            <Select
+            <SearchableSelect
+              id="bankAccountId"
               value={bankAccountId || "__none__"}
-              onValueChange={(v) => setBankAccountId(v === "__none__" ? "" : (v ?? ""))}
-            >
-              <SelectTrigger id="bankAccountId">
-                <SelectValue>
-                  {bankAccountId
-                    ? (activeBanks.find((b) => b.id === bankAccountId)?.name ?? bankAccountId)
-                    : "— Не задан —"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">— Не задан —</SelectItem>
-                {activeBanks.map((b) => (
-                  <SelectItem key={b.id} value={b.id}>
-                    {b.name}
-                    {b.status === "archived" && " (архив)"}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              onValueChange={(v) => setBankAccountId(v === "__none__" ? "" : v)}
+              options={[
+                { value: "__none__", label: "— Не задан —" },
+                ...activeBanks.map((b) => ({
+                  value: b.id,
+                  label: `${b.name}${b.status === "archived" ? " (архив)" : ""}`,
+                })),
+              ]}
+            />
           </div>
 
           <div className="space-y-2 min-w-0">

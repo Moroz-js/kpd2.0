@@ -1,5 +1,5 @@
-export const SNAPSHOT_SCHEMA_VERSION = 1;
-export const CASHFLOW_FORMULA_VERSION = "cashflow-v1";
+export const SNAPSHOT_SCHEMA_VERSION = 2;
+export const CASHFLOW_FORMULA_VERSION = "cashflow-v2";
 export const SNAPSHOT_TIMEZONE = "Europe/Moscow";
 
 export const SNAPSHOT_MODELS = [
@@ -24,6 +24,7 @@ export const SNAPSHOT_MODELS = [
   "VacationEntry",
   "Task",
   "CashflowOpeningBalance",
+  "CashflowManualBalance",
   "CashflowCellComment",
   "ActivityLog",
   "BankAccountReconciliation",
@@ -57,6 +58,7 @@ export const MODEL_DELEGATES: Record<SnapshotModel, string> = {
   VacationEntry: "vacationEntry",
   Task: "task",
   CashflowOpeningBalance: "cashflowOpeningBalance",
+  CashflowManualBalance: "cashflowManualBalance",
   CashflowCellComment: "cashflowCellComment",
   ActivityLog: "activityLog",
   BankAccountReconciliation: "bankAccountReconciliation",
@@ -74,6 +76,7 @@ export const SECTION_MODELS: Record<string, SnapshotModel[]> = {
     "OtherExpense",
     "SpendingPlanLine",
     "CashflowOpeningBalance",
+    "CashflowManualBalance",
     "BankAccountReconciliation",
     "BankAccountReconciliationResult",
   ],

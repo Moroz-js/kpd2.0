@@ -8,6 +8,7 @@
 
 import { prisma } from "@/lib/db";
 import { getISOWeek } from "@/lib/iso-weeks";
+import { hasPersonalSmeta } from "@/lib/executor-personal-estimate";
 
 export type IssuedWorkSource = "personal" | "other-expense";
 
@@ -27,6 +28,7 @@ export type IssuedWorkRow = {
   executorName: string;
   executorType: string;
   executorAccessEmail: string | null;
+  executorCanOpenEstimate: boolean;
   projectId: string;
   projectName: string;
   projectType: string;
@@ -38,6 +40,7 @@ export type IssuedWorkRow = {
   responsibleExecutorName: string | null;
 
   amount: number;
+  description: string | null;
   techTask: string | null;
   rate: number | null;
   workStatus: string;
@@ -82,7 +85,15 @@ export async function listIssuedWorks(
   const [works, otherExpenses] = await Promise.all([
     db.work.findMany({
       include: {
-        executor: { select: { id: true, name: true, type: true, accessEmail: true } },
+        executor: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            accessEmail: true,
+            isResponsible: true,
+          },
+        },
         project: { select: { id: true, name: true, type: true } },
         workType: { select: { id: true, name: true, segment: true } },
         responsibleExecutor: { select: { id: true, name: true } },
@@ -90,7 +101,15 @@ export async function listIssuedWorks(
     }),
     db.otherExpense.findMany({
       include: {
-        executor: { select: { id: true, name: true, type: true, accessEmail: true } },
+        executor: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            accessEmail: true,
+            isResponsible: true,
+          },
+        },
         project: { select: { id: true, name: true, type: true } },
         workType: { select: { id: true, name: true, segment: true } },
         responsibleExecutor: { select: { id: true, name: true } },
@@ -114,6 +133,8 @@ export async function listIssuedWorks(
       executorName: w.executor.name,
       executorType: w.executor.type,
       executorAccessEmail: w.executor.accessEmail,
+      executorCanOpenEstimate:
+        hasPersonalSmeta(w.executor) || w.executor.isResponsible,
       projectId: w.projectId,
       projectName: w.project.name,
       projectType: w.project.type,
@@ -123,6 +144,7 @@ export async function listIssuedWorks(
       responsibleExecutorId: w.responsibleExecutorId,
       responsibleExecutorName: w.responsibleExecutor?.name ?? null,
       amount: w.amount,
+      description: w.techTask,
       techTask: w.techTask,
       rate: w.rate,
       workStatus: w.workStatus,
@@ -150,6 +172,8 @@ export async function listIssuedWorks(
       executorName: o.executor.name,
       executorType: o.executor.type,
       executorAccessEmail: o.executor.accessEmail,
+      executorCanOpenEstimate:
+        hasPersonalSmeta(o.executor) || o.executor.isResponsible,
       projectId: o.projectId,
       projectName: o.project.name,
       projectType: o.project.type,
@@ -159,6 +183,7 @@ export async function listIssuedWorks(
       responsibleExecutorId: o.responsibleExecutorId,
       responsibleExecutorName: o.responsibleExecutor?.name ?? null,
       amount: o.amount,
+      description: o.description,
       techTask: null,
       rate: null,
       workStatus: o.workStatus,

@@ -35,6 +35,7 @@ export type ActivityEntityType =
   | "VacationEntry"
   | "Task"
   | "SpendingPlanLine"
+  | "CashflowManualBalance"
   | "User";
 
 export type FieldDiff = Record<string, { from: unknown; to: unknown }>;

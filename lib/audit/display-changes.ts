@@ -13,6 +13,8 @@ import {
 import { formatRecipientTypes, parseRecipientTypes } from "@/lib/executor-recipient-type";
 
 const FIELD_LABELS: Record<string, string> = {
+  number: "Номер проекта",
+  numberSerial: "Серийный № проекта",
   workStatus: "Статус работы",
   paymentStatus: "Статус платежа",
   paidAt: "Дата оплаты",

@@ -4,9 +4,9 @@ import * as React from "react";
 import { toast } from "sonner";
 import { Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
-import { snapshotLabel, snapshotSourceLabel, type SnapshotOption } from "@/lib/snapshots/labels";
+import { snapshotLabel, type SnapshotOption } from "@/lib/snapshots/labels";
 
 const EXPORTED_SHEETS = [
   "Кэшфлоу проектов",
@@ -79,19 +79,14 @@ export function ExportClient() {
 
         <div className="max-w-sm space-y-1.5">
           <p className="text-sm font-medium text-neutral-700">Источник данных</p>
-          <Select value={source} onValueChange={(value) => value && setSource(value)}>
-            <SelectTrigger>
-              <SelectValue>{snapshotSourceLabel(source, snapshots)}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="live">Актуальные данные</SelectItem>
-              {snapshots.map((snapshot) => (
-                <SelectItem key={snapshot.id} value={snapshot.id}>
-                  {snapshotLabel(snapshot)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            value={source}
+            onValueChange={setSource}
+            options={[
+              { value: "live", label: "Актуальные данные" },
+              ...snapshots.map((snapshot) => ({ value: snapshot.id, label: snapshotLabel(snapshot) })),
+            ]}
+          />
         </div>
 
         <div>

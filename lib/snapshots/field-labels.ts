@@ -17,6 +17,8 @@ export const FIELD_LABELS: Record<string, string> = {
   note: "Заметка",
 
   // Номера сущностей
+  number: "Номер проекта",
+  numberSerial: "Серийный № проекта",
   issuedWorkNumber: "№ работы",
   issuedWorkNumberYear: "Год номера работы",
   issuedWorkNumberSerial: "Серийный № работы",
@@ -106,6 +108,8 @@ export const FIELD_LABELS: Record<string, string> = {
 
 /** Порядок предпочтительных полей — номер и ключевые атрибуты сначала. */
 export const PREFERRED_FIELD_ORDER = [
+  "number",
+  "numberSerial",
   "issuedWorkNumber",
   "payoutNumber",
   "otherExpenseNumber",
@@ -206,6 +210,7 @@ export const MODEL_LABELS: Record<string, string> = {
   VacationEntry: "Отпуска",
   Task: "Задачи",
   CashflowOpeningBalance: "Начальный остаток кэшфлоу",
+  CashflowManualBalance: "Ручные балансы кэшфлоу",
   CashflowCellComment: "Комментарии к кэшфлоу",
   ActivityLog: "История действий",
   BankAccountReconciliation: "Сверки счетов",
