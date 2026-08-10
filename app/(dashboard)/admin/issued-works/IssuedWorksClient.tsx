@@ -109,7 +109,23 @@ const SMETA_LABEL: Record<SmetaType, string> = {
 };
 
 function smetaTypeCell(row: Row) {
-  if (row.sourceType === "personal") return SMETA_LABEL.personal;
+  if (row.sourceType === "personal") {
+    if (
+      row.executorCanOpenEstimate &&
+      !isUnknownExecutorName(row.executorName)
+    ) {
+      return (
+        <Link
+          href={`/admin/executors/${row.executorId}?tab=works`}
+          className="text-blue-600 hover:underline"
+          title="Открыть личную смету"
+        >
+          {SMETA_LABEL.personal}
+        </Link>
+      );
+    }
+    return SMETA_LABEL.personal;
+  }
   return SMETA_LABEL["other-expense"];
 }
 
@@ -174,13 +190,7 @@ const IssuedWorkRow = React.memo(function IssuedWorkRow({
         {r.weekPlanFact != null ? weekLabel(r.weekPlanFact) : "—"}
       </TableCell>
       <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>
-        {r.executorCanOpenEstimate && !isUnknownExecutorName(r.executorName) ? (
-          <Link href={`/admin/executors/${r.executorId}`} className="hover:underline text-neutral-900">
-            {r.executorName}
-          </Link>
-        ) : (
-          r.executorName
-        )}
+        {r.executorName}
       </TableCell>
       <TableCell className={cn(compactCell, "text-right tabular-nums font-semibold")}>{formatMoney(r.amount)}</TableCell>
       <TableCell className={compactCell}>
