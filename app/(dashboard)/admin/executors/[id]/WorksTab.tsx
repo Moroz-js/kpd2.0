@@ -1924,9 +1924,9 @@ function EditPaymentDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto overflow-x-hidden">
+      <DialogContent className="max-w-lg max-h-[90vh] min-w-0 overflow-x-hidden overflow-y-auto">
         <DialogHeader><DialogTitle>Параметры выплаты</DialogTitle></DialogHeader>
-        <div className="space-y-3">
+        <div className="min-w-0 space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Статус</Label>
@@ -1960,18 +1960,18 @@ function EditPaymentDialog({
           <div className="space-y-1.5"><Label>Заполненный акт (URL)</Label><Input value={filledAct} onChange={(e) => setFilledAct(e.target.value)} placeholder="https://..." /></div>
 
           {/* Управление связями */}
-          <div className="border-t pt-3 space-y-2">
+          <div className="min-w-0 space-y-2 border-t pt-3">
             <div className="text-xs font-semibold text-neutral-700">Привязанные работы</div>
             {locked && <p className="text-xs text-amber-700">Чтобы изменить список привязанных работ, смените статус выплаты на «запланирована» (если она ещё не оплачена).</p>}
             {linkedWorks.length === 0 ? (
               <p className="text-xs text-neutral-400">Нет привязанных работ.</p>
             ) : (
-              <div className="space-y-1 min-w-0">
+              <div className="min-w-0 space-y-1 overflow-hidden">
                 {linkedWorks.map((w) => (
-                  <label key={w.id} className="flex items-start gap-2 text-xs min-w-0">
+                  <label key={w.id} className="flex min-w-0 items-start gap-2 text-xs">
                     <Checkbox className="mt-0.5 shrink-0" checked={removeIds.has(w.id)} disabled={locked} onCheckedChange={() => toggle(removeIds, w.id, setRemoveIds)} />
                     <span className="shrink-0 text-red-600">отвязать</span>
-                    <span className="min-w-0 flex-1 break-words">{w.project.name} · {w.techTask || "—"}</span>
+                    <span className="min-w-0 flex-1 break-all">{w.project.name} · {w.techTask || "—"}</span>
                     <span className="shrink-0 tabular-nums">{formatMoney(w.amount)}</span>
                   </label>
                 ))}
@@ -1979,12 +1979,12 @@ function EditPaymentDialog({
             )}
             {!locked && availableWorks.length > 0 && (
               <>
-                <div className="text-xs font-semibold text-neutral-700 pt-1">Добавить проверенные работы</div>
-                <div className="max-h-40 space-y-1 overflow-y-auto min-w-0">
+                <div className="pt-1 text-xs font-semibold text-neutral-700">Добавить проверенные работы</div>
+                <div className="max-h-40 min-w-0 space-y-1 overflow-x-hidden overflow-y-auto">
                   {availableWorks.map((w) => (
-                    <label key={w.id} className="flex items-start gap-2 text-xs min-w-0">
+                    <label key={w.id} className="flex min-w-0 items-start gap-2 text-xs">
                       <Checkbox className="mt-0.5 shrink-0" checked={addIds.has(w.id)} onCheckedChange={() => toggle(addIds, w.id, setAddIds)} />
-                      <span className="min-w-0 flex-1 break-words">{w.project.name} · {w.techTask || "—"}</span>
+                      <span className="min-w-0 flex-1 break-all">{w.project.name} · {w.techTask || "—"}</span>
                       <span className="shrink-0 tabular-nums">{formatMoney(w.amount)}</span>
                     </label>
                   ))}
@@ -1993,7 +1993,7 @@ function EditPaymentDialog({
             )}
           </div>
         </div>
-        <DialogFooter>
+        <DialogFooter className="min-w-0">
           <Button variant="outline" onClick={onClose}>Отмена</Button>
           <Button onClick={handleSave} disabled={saving}>{saving ? "Сохранение..." : "Сохранить"}</Button>
         </DialogFooter>
