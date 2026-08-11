@@ -382,6 +382,17 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
   const workOnlyFilterActive = !!(filterYear || filterMonth || filterProject);
   const paymentOnlyFilterActive = !!filterBank;
 
+  // §7: авто-включают «только работы» / «только выплаты» — синхронизируем UI селекта
+  useEffect(() => {
+    if (workOnlyFilterActive) {
+      if (filterRowType !== "works") setFilterRowType("works");
+      return;
+    }
+    if (paymentOnlyFilterActive && filterRowType !== "payments") {
+      setFilterRowType("payments");
+    }
+  }, [workOnlyFilterActive, paymentOnlyFilterActive, filterRowType]);
+
   const workDiffFields = useCallback(
     (w: WorkRow): Set<DiffField<WorkDiffField>> => {
       if (!panel || !compareWorks) return new Set();
