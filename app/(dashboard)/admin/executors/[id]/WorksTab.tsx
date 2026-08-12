@@ -1976,7 +1976,7 @@ function EditPaymentDialog({
               <Label>Дата оплаты</Label>
               <DateInput
                 value={paidAt}
-                onChange={(e) => setPaidAt(e.target.value)}
+                onChange={setPaidAt}
                 onEmptyFocus={() => toLocalDateString(new Date())}
               />
             </div>
