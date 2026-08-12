@@ -1887,6 +1887,7 @@ function EditPaymentDialog({
   const [paymentStatus, setPaymentStatus] = useState(payment.paymentStatus);
   const [bankAccountId, setBankAccountId] = useState(payment.bankAccountId ?? "");
   const [plannedPayAt, setPlannedPayAt] = useState(payment.plannedPayAt ? toLocalDateString(new Date(payment.plannedPayAt)) : "");
+  const [paidAt, setPaidAt] = useState(payment.paidAt ? toLocalDateString(new Date(payment.paidAt)) : "");
   const [comment, setComment] = useState(payment.comment ?? "");
   const [filledTechTask, setFilledTechTask] = useState(payment.filledTechTask ?? "");
   const [filledAct, setFilledAct] = useState(payment.filledAct ?? "");
@@ -1917,6 +1918,7 @@ function EditPaymentDialog({
         paymentStatus,
         bankAccountId: bankAccountId || null,
         plannedPayAt: plannedPayAt || toLocalDateString(nearestPaymentDate()),
+        paidAt: paidAt || null,
         comment: comment || null,
         filledTechTask: filledTechTask || null,
         filledAct: filledAct || null,
@@ -1965,7 +1967,20 @@ function EditPaymentDialog({
               ]}
             />
           </div>
-          <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => toLocalDateString(nearestPaymentDate())} /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Дата оплаты план</Label>
+              <DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => toLocalDateString(nearestPaymentDate())} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Дата оплаты</Label>
+              <DateInput
+                value={paidAt}
+                onChange={(e) => setPaidAt(e.target.value)}
+                onEmptyFocus={() => toLocalDateString(new Date())}
+              />
+            </div>
+          </div>
           <div className="space-y-1.5"><Label>Комментарий</Label><Input value={comment} onChange={(e) => setComment(e.target.value)} /></div>
           <div className="space-y-1.5"><Label>Заполненное ТЗ (URL)</Label><Input value={filledTechTask} onChange={(e) => setFilledTechTask(e.target.value)} placeholder="https://..." /></div>
           <div className="space-y-1.5"><Label>Заполненный акт (URL)</Label><Input value={filledAct} onChange={(e) => setFilledAct(e.target.value)} placeholder="https://..." /></div>

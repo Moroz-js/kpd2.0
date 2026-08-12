@@ -248,7 +248,11 @@ export async function updatePayment(
   // §5: каскады по смене статуса выплаты на привязанные работы
   if (toStatus && toStatus !== fromStatus) {
     if (toStatus === "paid") {
-      await markPaymentPaid(paymentId, patch.paidAt ? new Date(patch.paidAt) : new Date(), userId);
+      await markPaymentPaid(
+        paymentId,
+        patch.paidAt ? parseLocalDateInput(patch.paidAt) : new Date(),
+        userId
+      );
     } else if (toStatus === "planned") {
       // paid → planned: работы из «оплачено» возвращаются в «проверена»
       const wasPaidLike = fromStatus === "paid";
@@ -271,10 +275,11 @@ export async function updatePayment(
     await propagatePlanDate(paymentId, planDate, userId);
   }
 
-  // Правка даты оплаты без смены статуса (корректировка уже оплаченной)
-  if (patch.paidAt !== undefined && !toStatus) {
+  // Правка даты оплаты без смены статуса (корректировка уже оплаченной).
+  // Диалог «Параметры выплаты» всегда шлёт paymentStatus — учитываем и «статус не менялся».
+  if (patch.paidAt !== undefined && (!toStatus || toStatus === fromStatus)) {
     if (patch.paidAt) {
-      await markPaymentPaid(paymentId, new Date(patch.paidAt), userId);
+      await markPaymentPaid(paymentId, parseLocalDateInput(patch.paidAt), userId);
     } else {
       await prisma.payment.update({ where: { id: paymentId }, data: { paidAt: null } });
     }
