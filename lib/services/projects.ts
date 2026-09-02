@@ -11,6 +11,10 @@
 
 import { prisma } from "@/lib/db";
 import { logActivity, diff } from "@/lib/audit/log";
+import {
+  captureCashflowCommentValues,
+  logCashflowCommentValueChanges,
+} from "@/lib/cashflow-comment-activity";
 import { listIssuedWorks } from "@/lib/views/issuedWorks";
 import {
   allocateEntitySerial,
@@ -218,6 +222,7 @@ export type UpdateProjectInput = {
 };
 
 export async function updateProject(id: string, patch: UpdateProjectInput, userId: string) {
+  const cashflowCommentValues = await captureCashflowCommentValues();
   const { before, updated } = await withSerializableTransaction(async (tx) => {
     const before = await tx.project.findUnique({
       where: { id },
@@ -298,6 +303,7 @@ export async function updateProject(id: string, patch: UpdateProjectInput, userI
       changes,
     });
   }
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 
   return updated;
 }
@@ -305,6 +311,7 @@ export async function updateProject(id: string, patch: UpdateProjectInput, userI
 export async function archiveProject(id: string, userId: string) {
   const p = await prisma.project.findUnique({ where: { id } });
   if (!p) throw new Error("Project not found");
+  const cashflowCommentValues = await captureCashflowCommentValues();
   const updated = await prisma.project.update({
     where: { id },
     data: { status: "archived" },
@@ -316,12 +323,14 @@ export async function archiveProject(id: string, userId: string) {
     entityId: id,
     entityLabel: updated.name,
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
   return updated;
 }
 
 export async function unarchiveProject(id: string, userId: string) {
   const p = await prisma.project.findUnique({ where: { id } });
   if (!p) throw new Error("Project not found");
+  const cashflowCommentValues = await captureCashflowCommentValues();
   const updated = await prisma.project.update({
     where: { id },
     data: { status: "active" },
@@ -333,5 +342,6 @@ export async function unarchiveProject(id: string, userId: string) {
     entityId: id,
     entityLabel: updated.name,
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
   return updated;
 }

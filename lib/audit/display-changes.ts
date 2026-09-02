@@ -26,12 +26,16 @@ const FIELD_LABELS: Record<string, string> = {
   accessRevokedAt: "Доступ отозван",
   amount: "Сумма",
   paymentAmount: "Сумма к оплате",
+  value: "Значение",
   name: "Название",
   shortName: "Краткое название",
   fullName: "ФИО",
   email: "Email",
   description: "Описание",
   comment: "Комментарий",
+  text: "Комментарий",
+  highlight: "Подсветка",
+  duplicateRows: "Дубли строк",
   status: "Статус",
   type: "Тип",
   projectId: "Проект",
@@ -108,7 +112,7 @@ const DATE_FIELDS = new Set([
   "accessRevokedAt",
 ]);
 
-const MONEY_FIELDS = new Set(["amount", "paymentAmount"]);
+const MONEY_FIELDS = new Set(["amount", "paymentAmount", "value"]);
 
 const ROLE_LABELS: Record<string, string> = {
   admin: "Администратор",

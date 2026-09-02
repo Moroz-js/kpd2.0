@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import { Plus, Pencil, Archive, ArchiveRestore } from "lucide-react";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
+import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
+import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
 import { ConfirmDialog } from "@/components/ui-custom/ConfirmDialog";
 import { ENTITY_STATUSES } from "@/lib/statuses";
@@ -37,6 +39,8 @@ import {
   usePersistedInterfaceState,
   usePersistedScroll,
 } from "@/components/PersistedInterfaceState";
+import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
+import { useCompatibleFilterOptions } from "@/lib/useCompatibleFilterOptions";
 
 type Row = {
   id: string;
@@ -80,6 +84,21 @@ export function OrdersClient() {
     field: "orderNumber",
     dir: "desc",
   });
+  const hasActiveFilters =
+    companyFilter.length > 0 || clientFilter.length > 0 ||
+    projectFilter.length > 0 || statusFilter.length > 0;
+  const resetFilters = () => {
+    setCompanyFilter([]);
+    setClientFilter([]);
+    setProjectFilter([]);
+    setStatusFilter([]);
+  };
+  const urlFilters = useUrlSyncedFilters([
+    { stateKey: "companyFilter", param: "company", kind: "array", value: companyFilter, defaultValue: [], setValue: setCompanyFilter },
+    { stateKey: "clientFilter", param: "client", kind: "array", value: clientFilter, defaultValue: [], setValue: setClientFilter },
+    { stateKey: "projectFilter", param: "project", kind: "array", value: projectFilter, defaultValue: [], setValue: setProjectFilter },
+    { stateKey: "statusFilter", param: "status", kind: "array", value: statusFilter, defaultValue: [], setValue: setStatusFilter },
+  ]);
   const [editing, setEditing] = React.useState<Row | "new" | null>(null);
   const [archiveTarget, setArchiveTarget] = React.useState<Row | null>(null);
   const [unarchiveTarget, setUnarchiveTarget] = React.useState<Row | null>(null);
@@ -89,10 +108,7 @@ export function OrdersClient() {
     "orders",
     { companyFilter, clientFilter, projectFilter, statusFilter, sort },
     (stored) => {
-      if (stored.companyFilter) setCompanyFilter(stored.companyFilter);
-      if (stored.clientFilter) setClientFilter(stored.clientFilter);
-      if (stored.projectFilter) setProjectFilter(stored.projectFilter);
-      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
+      urlFilters.restorePersisted(stored);
       if (stored.sort) setSort(stored.sort);
     }
   );
@@ -147,6 +163,37 @@ export function OrdersClient() {
     return list;
   }, [data, companyFilter, clientFilter, projectFilter, statusFilter, sort]);
 
+  const compatibleValues = useCompatibleFilterOptions(data, [
+    {
+      key: "company",
+      value: companyFilter,
+      setValue: setCompanyFilter,
+      matches: (row, value) => !value.length || value.includes(row.company ?? "__empty__"),
+      values: (row) => [row.company ?? "__empty__"],
+    },
+    {
+      key: "client",
+      value: clientFilter,
+      setValue: setClientFilter,
+      matches: (row, value) => !value.length || value.includes(row.clientId ?? ""),
+      values: (row) => [row.clientId ?? ""],
+    },
+    {
+      key: "project",
+      value: projectFilter,
+      setValue: setProjectFilter,
+      matches: (row, value) => !value.length || value.includes(row.projectId),
+      values: (row) => [row.projectId],
+    },
+    {
+      key: "status",
+      value: statusFilter,
+      setValue: setStatusFilter,
+      matches: (row, value) => !value.length || value.includes(row.status),
+      values: (row) => [row.status],
+    },
+  ]);
+
   function handleSort(field: string, dir: SortDir) {
     setSort({ field: field as SortField, dir });
   }
@@ -176,27 +223,30 @@ export function OrdersClient() {
       />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
+        <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
         <MultiSelectFilter
           label="Компания"
-          options={companyOptions}
+          options={companyOptions.filter((option) => compatibleValues.company?.has(option.value))}
           value={companyFilter}
           onChange={setCompanyFilter}
         />
         <MultiSelectFilter
           label="Клиент"
-          options={clientOptions}
+          options={clientOptions.filter((option) => compatibleValues.client?.has(option.value))}
           value={clientFilter}
           onChange={setClientFilter}
         />
         <MultiSelectFilter
           label="Проект"
-          options={projectOptions}
+          options={projectOptions.filter((option) => compatibleValues.project?.has(option.value))}
           value={projectFilter}
           onChange={setProjectFilter}
         />
         <MultiSelectFilter
           label="Статус"
-          options={Object.entries(ENTITY_STATUSES).map(([value, { label }]) => ({ value, label }))}
+          options={Object.entries(ENTITY_STATUSES)
+            .map(([value, { label }]) => ({ value, label }))
+            .filter((option) => compatibleValues.status?.has(option.value))}
           value={statusFilter}
           onChange={setStatusFilter}
         />
@@ -383,6 +433,7 @@ function OrderEditDialog({
     e.preventDefault();
     if (!description.trim()) return toast.error("Введите описание заказа");
     if (!projectId) return toast.error("Выберите проект");
+    if (!contractNumber.trim()) return toast.error("Введите номер договора / допсоглашения");
 
     setSubmitting(true);
     const isNew = !row;
@@ -437,18 +488,22 @@ function OrderEditDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="contractNumber">Номер договора / допсоглашения (опционально)</Label>
+            <Label htmlFor="contractNumber">Номер договора / допсоглашения *</Label>
             <Input
               id="contractNumber"
               value={contractNumber}
               onChange={(e) => setContractNumber(e.target.value)}
               placeholder="Например: ДС №12 от 01.06.2026"
+              required
             />
           </div>
           {!row && (
             <div className="rounded-md bg-neutral-50 border border-neutral-200 px-3 py-2 text-sm text-neutral-600">
               Номер заказа будет назначен автоматически (следующий после максимального; стартовый — 3000).
             </div>
+          )}
+          {row && (
+            <EntityActivityHistory entityType="Order" entityId={row.id} />
           )}
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>

@@ -7,6 +7,8 @@ import { Plus, Pencil, Archive, ArchiveRestore } from "lucide-react";
 import Link from "next/link";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
+import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
+import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
 import { ConfirmDialog } from "@/components/ui-custom/ConfirmDialog";
 import { ExpandableListCell } from "@/components/ui-custom/ExpandableListCell";
@@ -25,6 +27,8 @@ import {
   usePersistedInterfaceState,
   usePersistedScroll,
 } from "@/components/PersistedInterfaceState";
+import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
+import { useCompatibleFilterOptions } from "@/lib/useCompatibleFilterOptions";
 
 type Row = {
   id: string;
@@ -64,6 +68,15 @@ export function ClientsClient() {
     field: "createdAt",
     dir: "desc",
   });
+  const hasActiveFilters = companyFilter.length > 0 || statusFilter.length > 0;
+  const resetFilters = () => {
+    setCompanyFilter([]);
+    setStatusFilter([]);
+  };
+  const urlFilters = useUrlSyncedFilters([
+    { stateKey: "companyFilter", param: "company", kind: "array", value: companyFilter, defaultValue: [], setValue: setCompanyFilter },
+    { stateKey: "statusFilter", param: "status", kind: "array", value: statusFilter, defaultValue: [], setValue: setStatusFilter },
+  ]);
   const [editing, setEditing] = React.useState<Row | "new" | null>(null);
   const [archiveTarget, setArchiveTarget] = React.useState<Row | null>(null);
   const [unarchiveTarget, setUnarchiveTarget] = React.useState<Row | null>(null);
@@ -73,8 +86,7 @@ export function ClientsClient() {
     "clients",
     { companyFilter, statusFilter, sort },
     (stored) => {
-      if (stored.companyFilter) setCompanyFilter(stored.companyFilter);
-      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
+      urlFilters.restorePersisted(stored);
       if (stored.sort) setSort(stored.sort);
     }
   );
@@ -121,6 +133,23 @@ export function ClientsClient() {
     return list;
   }, [data, companyFilter, statusFilter, sort]);
 
+  const compatibleValues = useCompatibleFilterOptions(data, [
+    {
+      key: "company",
+      value: companyFilter,
+      setValue: setCompanyFilter,
+      matches: (row, value) => !value.length || value.includes(row.company),
+      values: (row) => [row.company],
+    },
+    {
+      key: "status",
+      value: statusFilter,
+      setValue: setStatusFilter,
+      matches: (row, value) => !value.length || value.includes(row.status),
+      values: (row) => [row.status],
+    },
+  ]);
+
   const filteredRevenue = React.useMemo(
     () => rows.reduce((s, r) => s + (r.revenue ?? 0), 0),
     [rows]
@@ -155,15 +184,18 @@ export function ClientsClient() {
       />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
+        <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
         <MultiSelectFilter
           label="Компания"
-          options={companyOptions}
+          options={companyOptions.filter((option) => compatibleValues.company?.has(option.value))}
           value={companyFilter}
           onChange={setCompanyFilter}
         />
         <MultiSelectFilter
           label="Статус"
-          options={Object.entries(ENTITY_STATUSES).map(([value, { label }]) => ({ value, label }))}
+          options={Object.entries(ENTITY_STATUSES)
+            .map(([value, { label }]) => ({ value, label }))
+            .filter((option) => compatibleValues.status?.has(option.value))}
           value={statusFilter}
           onChange={setStatusFilter}
         />
@@ -410,6 +442,9 @@ function ClientEditDialog({
               <span className="text-neutral-500">Имя клиента: </span>
               <span className="font-medium">{preview}</span>
             </div>
+          )}
+          {row && (
+            <EntityActivityHistory entityType="Client" entityId={row.id} />
           )}
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>

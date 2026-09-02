@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { Plus, Pencil, Archive, ArchiveRestore } from "lucide-react";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
+import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
+import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
 import { ConfirmDialog } from "@/components/ui-custom/ConfirmDialog";
 import { ENTITY_STATUSES, WORK_TYPE_SEGMENTS, PROJECT_TYPES } from "@/lib/statuses";
@@ -22,6 +24,8 @@ import {
   usePersistedInterfaceState,
   usePersistedScroll,
 } from "@/components/PersistedInterfaceState";
+import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
+import { useCompatibleFilterOptions } from "@/lib/useCompatibleFilterOptions";
 
 type Row = {
   id: string;
@@ -58,6 +62,23 @@ export function WorkTypesClient() {
     field: "name",
     dir: "asc",
   });
+  const hasActiveFilters =
+    segmentFilter.length > 0 || projectTypeFilter.length > 0 ||
+    sourceFilter.length > 0 || statusFilter.length > 0 || usageFilter.length > 0;
+  const resetFilters = () => {
+    setSegmentFilter([]);
+    setProjectTypeFilter([]);
+    setSourceFilter([]);
+    setStatusFilter([]);
+    setUsageFilter([]);
+  };
+  const urlFilters = useUrlSyncedFilters([
+    { stateKey: "segmentFilter", param: "segment", kind: "array", value: segmentFilter, defaultValue: [], setValue: setSegmentFilter },
+    { stateKey: "projectTypeFilter", param: "projectType", kind: "array", value: projectTypeFilter, defaultValue: [], setValue: setProjectTypeFilter },
+    { stateKey: "sourceFilter", param: "source", kind: "array", value: sourceFilter, defaultValue: [], setValue: setSourceFilter },
+    { stateKey: "statusFilter", param: "status", kind: "array", value: statusFilter, defaultValue: [], setValue: setStatusFilter },
+    { stateKey: "usageFilter", param: "usage", kind: "array", value: usageFilter, defaultValue: [], setValue: setUsageFilter },
+  ]);
 
   const [editing, setEditing] = React.useState<Row | "new" | null>(null);
   const [archiveTarget, setArchiveTarget] = React.useState<Row | null>(null);
@@ -75,11 +96,7 @@ export function WorkTypesClient() {
       sort,
     },
     (stored) => {
-      if (stored.segmentFilter) setSegmentFilter(stored.segmentFilter);
-      if (stored.projectTypeFilter) setProjectTypeFilter(stored.projectTypeFilter);
-      if (stored.sourceFilter) setSourceFilter(stored.sourceFilter);
-      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
-      if (stored.usageFilter) setUsageFilter(stored.usageFilter);
+      urlFilters.restorePersisted(stored);
       if (stored.sort) setSort(stored.sort);
     }
   );
@@ -144,6 +161,44 @@ export function WorkTypesClient() {
     return list;
   }, [data, segmentFilter, statusFilter, projectTypeFilter, sourceFilter, usageFilter, sort]);
 
+  const compatibleValues = useCompatibleFilterOptions(data, [
+    {
+      key: "segment",
+      value: segmentFilter,
+      setValue: setSegmentFilter,
+      matches: (row, value) => !value.length || value.includes(row.segment),
+      values: (row) => [row.segment],
+    },
+    {
+      key: "projectType",
+      value: projectTypeFilter,
+      setValue: setProjectTypeFilter,
+      matches: (row, value) => !value.length || row.projectTypes.some((type) => value.includes(type)),
+      values: (row) => row.projectTypes,
+    },
+    {
+      key: "source",
+      value: sourceFilter,
+      setValue: setSourceFilter,
+      matches: (row, value) => !value.length || row.estimateSources.some((source) => value.includes(source)),
+      values: (row) => row.estimateSources,
+    },
+    {
+      key: "status",
+      value: statusFilter,
+      setValue: setStatusFilter,
+      matches: (row, value) => !value.length || value.includes(row.status),
+      values: (row) => [row.status],
+    },
+    {
+      key: "usage",
+      value: usageFilter,
+      setValue: setUsageFilter,
+      matches: (row, value) => !value.length || value.includes(row.isUnused ? "unused" : "used"),
+      values: (row) => [row.isUnused ? "unused" : "used"],
+    },
+  ]);
+
   function handleSort(field: string, dir: SortDir) {
     setSort({ field: field as SortField, dir });
   }
@@ -173,27 +228,34 @@ export function WorkTypesClient() {
       />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
+        <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
         <MultiSelectFilter
           label="Сегмент"
-          options={segmentFilterOptions}
+          options={segmentFilterOptions.filter((option) => compatibleValues.segment?.has(option.value))}
           value={segmentFilter}
           onChange={setSegmentFilter}
         />
         <MultiSelectFilter
           label="Типы проектов"
-          options={Object.entries(PROJECT_TYPES).map(([value, label]) => ({ value, label }))}
+          options={Object.entries(PROJECT_TYPES)
+            .map(([value, label]) => ({ value, label }))
+            .filter((option) => compatibleValues.projectType?.has(option.value))}
           value={projectTypeFilter}
           onChange={setProjectTypeFilter}
         />
         <MultiSelectFilter
           label="Типы смет"
-          options={Object.entries(SOURCE_LABEL).map(([value, label]) => ({ value, label }))}
+          options={Object.entries(SOURCE_LABEL)
+            .map(([value, label]) => ({ value, label }))
+            .filter((option) => compatibleValues.source?.has(option.value))}
           value={sourceFilter}
           onChange={setSourceFilter}
         />
         <MultiSelectFilter
           label="Статус"
-          options={Object.entries(ENTITY_STATUSES).map(([value, { label }]) => ({ value, label }))}
+          options={Object.entries(ENTITY_STATUSES)
+            .map(([value, { label }]) => ({ value, label }))
+            .filter((option) => compatibleValues.status?.has(option.value))}
           value={statusFilter}
           onChange={setStatusFilter}
         />
@@ -202,7 +264,7 @@ export function WorkTypesClient() {
           options={[
             { value: "used", label: "Использовался" },
             { value: "unused", label: "Не использовался" },
-          ]}
+          ].filter((option) => compatibleValues.usage?.has(option.value))}
           value={usageFilter}
           onChange={setUsageFilter}
         />
@@ -425,6 +487,9 @@ function WorkTypeEditDialog({
                 </div>
               )}
             </div>
+          )}
+          {row && (
+            <EntityActivityHistory entityType="WorkType" entityId={row.id} />
           )}
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>

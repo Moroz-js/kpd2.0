@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getSessionUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
+import { updateCharge } from "@/lib/services/charges";
 
 const schema = z.object({
   ids: z.array(z.string()).min(1),
@@ -23,17 +24,24 @@ export async function POST(req: Request) {
   }
 
   const { ids, patch } = parsed.data;
-  const data: Record<string, unknown> = {};
-  if (patch.status) data.status = patch.status;
-
-  if (Object.keys(data).length === 0) {
+  if (!patch.status) {
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
 
-  const result = await prisma.charge.updateMany({
+  const existing = await prisma.charge.findMany({
     where: { id: { in: ids } },
-    data,
+    select: { id: true },
   });
+  const validIds = new Set(existing.map((c) => c.id));
 
-  return NextResponse.json({ updated: result.count });
+  let updated = 0;
+  for (const id of ids) {
+    if (!validIds.has(id)) continue;
+    try {
+      await updateCharge(id, { status: patch.status }, me.id);
+      updated++;
+    } catch { /* skip */ }
+  }
+
+  return NextResponse.json({ updated });
 }

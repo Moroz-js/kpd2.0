@@ -22,6 +22,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -35,6 +36,7 @@ import { TASK_STATUSES, BADGE_TONE_CLASS } from "@/lib/statuses";
 import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner } from "@/lib/table-styles";
 import { WorksReviewTable } from "@/components/ui-custom/WorksReviewTable";
+import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
 import { usePersistedInterfaceState } from "@/components/PersistedInterfaceState";
 
 type TaskRow = {
@@ -273,6 +275,16 @@ export function TasksTab({ executorId, isAdmin, isOwner, isPermanent = true, onT
                   </td>
                   <td className={cn("px-3 py-1.5", stickyActionsCell)}>
                     <div className={stickyActionsInner}>
+                      {(isAdmin || isOwner) && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setEditTarget(task)}
+                          title="Редактировать"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
                       {isAdmin && (
                         <button
                           title="Удалить"
@@ -298,6 +310,19 @@ export function TasksTab({ executorId, isAdmin, isOwner, isPermanent = true, onT
           executorId={executorId}
           onClose={() => setCreateOpen(false)}
           onCreated={() => { setCreateOpen(false); load(); }}
+        />
+      )}
+
+      {editTarget && (
+        <EditTaskDialog
+          executorId={executorId}
+          task={editTarget}
+          isAdmin={isAdmin}
+          onClose={() => setEditTarget(null)}
+          onSaved={() => {
+            setEditTarget(null);
+            load();
+          }}
         />
       )}
 
@@ -406,6 +431,115 @@ function CreateTaskDialog({
           <Button variant="outline" onClick={onClose}>Отмена</Button>
           <Button onClick={handleSave} disabled={saving}>
             {saving ? "Создание..." : "Создать"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditTaskDialog({
+  executorId,
+  task,
+  isAdmin,
+  onClose,
+  onSaved,
+}: {
+  executorId: string;
+  task: TaskRow;
+  isAdmin: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(task.title);
+  const [status, setStatus] = useState(task.status);
+  const [plannedDoneAt, setPlannedDoneAt] = useState(
+    task.plannedDoneAt ? task.plannedDoneAt.slice(0, 10) : ""
+  );
+  const [result, setResult] = useState(task.result ?? "");
+  const [comment, setComment] = useState(task.comment ?? "");
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    if (!title.trim()) {
+      toast.error("Введите название задачи");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/executors/${executorId}/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: title.trim(),
+          status,
+          plannedDoneAt: plannedDoneAt || null,
+          result: result || null,
+          comment: comment || null,
+        }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error ?? "Не удалось обновить задачу");
+      }
+      toast.success("Задача обновлена");
+      onSaved();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось обновить задачу");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Редактировать задачу</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>Задача *</Label>
+            <Input value={title} onChange={(event) => setTitle(event.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Статус</Label>
+            <Select value={status} onValueChange={(value) => setStatus(value ?? status)}>
+              <SelectTrigger>
+                <SelectValue>{STATUS_LABELS[status] ?? status}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(STATUS_LABELS).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Срок выполнения</Label>
+            <Input
+              type="date"
+              value={plannedDoneAt}
+              onChange={(event) => setPlannedDoneAt(event.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Результат</Label>
+            <Textarea value={result} onChange={(event) => setResult(event.target.value)} rows={3} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Комментарий</Label>
+            <Textarea value={comment} onChange={(event) => setComment(event.target.value)} rows={3} />
+          </div>
+          {isAdmin && (
+            <EntityActivityHistory entityType="Task" entityId={task.id} />
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>Отмена</Button>
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? "Сохранение..." : "Сохранить"}
           </Button>
         </DialogFooter>
       </DialogContent>

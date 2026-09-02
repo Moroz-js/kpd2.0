@@ -3,6 +3,10 @@ import { z } from "zod";
 import { getSessionUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
+import {
+  captureCashflowCommentValues,
+  logCashflowCommentValueChanges,
+} from "@/lib/cashflow-comment-activity";
 
 const schema = z.object({
   foreignAmount: z.number().nullable().optional(),
@@ -61,11 +65,13 @@ export async function PATCH(
   const newForeignAmount = data.foreignAmount !== undefined ? data.foreignAmount : current.foreignAmount;
   const newExchangeRate = data.exchangeRate !== undefined ? data.exchangeRate : current.exchangeRate;
   data.amount = calcAmount(newForeignAmount, newExchangeRate, currency);
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   const result = await prisma.bankAccountReconciliationResult.update({
     where: { reconciliationId_bankAccountId: { reconciliationId, bankAccountId } },
     data,
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, user.id);
 
   return NextResponse.json({ ok: true, amount: result.amount });
 }

@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
+import { diff, logActivity } from "@/lib/audit/log";
+import {
+  CASHFLOW_COMMENT_ACTIVITY_ENTITY_TYPE,
+  cashflowCommentActivityId,
+} from "@/lib/comment-history";
 import { z } from "zod";
 import {
   cashflowCommentMapKey,
@@ -56,10 +61,29 @@ export async function PUT(req: NextRequest) {
   const { year, week, rowKey } = parsed.data;
   const text = (parsed.data.text ?? "").trim();
   const highlight = parsed.data.highlight ?? null;
+  const existing = await prisma.cashflowCellComment.findUnique({
+    where: { year_week_rowKey: { year, week, rowKey } },
+    select: { text: true, highlight: true },
+  });
+  const changes = diff(
+    { text: existing?.text ?? "", highlight: existing?.highlight ?? null },
+    { text, highlight }
+  );
+  if (Object.keys(changes).length === 0) {
+    return NextResponse.json({ ok: true });
+  }
 
   if (!text && !highlight) {
     await prisma.cashflowCellComment.deleteMany({
       where: { year, week, rowKey },
+    });
+    await logActivity({
+      userId: user.id,
+      action: "delete",
+      entityType: CASHFLOW_COMMENT_ACTIVITY_ENTITY_TYPE,
+      entityId: cashflowCommentActivityId(year, week, rowKey),
+      entityLabel: `Кэшфлоу · нед. ${week} / ${year}`,
+      changes,
     });
     return NextResponse.json({ ok: true });
   }
@@ -68,6 +92,14 @@ export async function PUT(req: NextRequest) {
     where: { year_week_rowKey: { year, week, rowKey } },
     update: { text, highlight },
     create: { year, week, rowKey, text, highlight, createdById: user.id },
+  });
+  await logActivity({
+    userId: user.id,
+    action: existing ? "update" : "create",
+    entityType: CASHFLOW_COMMENT_ACTIVITY_ENTITY_TYPE,
+    entityId: cashflowCommentActivityId(year, week, rowKey),
+    entityLabel: `Кэшфлоу · нед. ${week} / ${year}`,
+    changes,
   });
 
   return NextResponse.json({ ok: true });

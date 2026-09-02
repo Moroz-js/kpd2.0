@@ -25,6 +25,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { MONTHS } from "@/lib/format";
 import { PAYMENT_STATUSES } from "@/lib/statuses";
 import { sortByNameRu } from "@/lib/sort";
+import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
 import type { PayoutRowDTO } from "./PayoutsClient";
 
 type ExecutorOption = { id: string; name: string; status: string };
@@ -324,6 +325,11 @@ export function PayoutEditDialog({
               rows={2}
             />
           </div>
+
+          <EntityActivityHistory
+            entityType={isPersonal ? "Payment" : "OtherExpense"}
+            entityId={row.sourceId}
+          />
 
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>

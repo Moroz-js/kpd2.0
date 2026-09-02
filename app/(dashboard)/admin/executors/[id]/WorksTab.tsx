@@ -34,7 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { formatMoney, formatDate, monthFullLabel, MONTHS } from "@/lib/format";
+import { formatMoney, formatDate, monthFullLabel, monthPrepositionalLabel, MONTHS } from "@/lib/format";
 import { WORK_STATUSES, PAYMENT_STATUSES, BADGE_TONE_CLASS } from "@/lib/statuses";
 import { sortByNameRu } from "@/lib/sort";
 import { nearestPaymentDate, toLocalDateString, getISOWeek, getISOWeekYear, weekLabel } from "@/lib/iso-weeks";
@@ -43,10 +43,16 @@ import { stickyActionsHead, stickyActionsCell, stickyActionsInner } from "@/lib/
 import { RowSelectCheckbox } from "@/components/ui-custom/RowSelectCheckbox";
 import { useTableRowSelection } from "@/lib/useTableRowSelection";
 import { useComparison } from "@/components/ComparisonProvider";
+import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
 import {
   usePersistedInterfaceState,
   usePersistedScroll,
 } from "@/components/PersistedInterfaceState";
+import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
+import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
+import { useCompatibleFilterOptions } from "@/lib/useCompatibleFilterOptions";
+import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
+import { getWeekFilterMetadata, getMonthFilterMetadata } from "@/lib/period-filter-options";
 
 type WorkType = { id: string; name: string };
 type Project = { id: string; name: string };
@@ -150,6 +156,19 @@ function payWeekText(dateStr: string | null): string {
   return weekLabel(getISOWeek(new Date(dateStr)));
 }
 
+/** Ключ ISO-недели оплаты `YYYY-WW` для фильтра (в отличие от payWeekText — без года не различает недели разных лет). */
+function payWeekFilterKey(dateStr: string | null): string {
+  if (!dateStr) return "__empty__";
+  const d = new Date(dateStr);
+  return `${getISOWeekYear(d)}-${String(getISOWeek(d)).padStart(2, "0")}`;
+}
+
+function payWeekFilterLabel(dateStr: string | null): string {
+  if (!dateStr) return "Не указано";
+  const d = new Date(dateStr);
+  return `${weekLabel(getISOWeek(d))} ${getISOWeekYear(d)}`;
+}
+
 /** «по 1 работе» / «по 2 работам» / «по 11 работам» / «по 21 работе». */
 function worksCountLabel(n: number): string {
   const word = n % 10 === 1 && n % 100 !== 11 ? "работе" : "работам";
@@ -239,15 +258,42 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
   const [loading, setLoading] = useState(true);
 
   // Фильтры
-  const [filterYear, setFilterYear] = useState<string>("");
-  const [filterMonth, setFilterMonth] = useState<string>("");
-  const [filterProject, setFilterProject] = useState<string>("");
-  const [filterWeek, setFilterWeek] = useState<string>("");
-  const [filterStatus, setFilterStatus] = useState<string>(""); // "" | unpaid | paid
-  const [filterBank, setFilterBank] = useState<string>("");
-  const [filterRowType, setFilterRowType] = useState<string>(""); // "" | "works" | "payments"
+  const [filterYear, setFilterYear] = useState<string[]>([]);
+  const [filterMonth, setFilterMonth] = useState<string[]>([]);
+  const [filterProject, setFilterProject] = useState<string[]>([]);
+  const [filterWeek, setFilterWeek] = useState<string[]>([]);
+  const [filterStatus, setFilterStatus] = useState<string[]>([]);
+  const [filterBank, setFilterBank] = useState<string[]>([]);
+  const [filterRowType, setFilterRowType] = useState<string[]>([]);
   const [hidePaidGroups, setHidePaidGroups] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const hasActiveFilters =
+    filterMonth.length > 0 ||
+    filterProject.length > 0 ||
+    filterWeek.length > 0 ||
+    filterStatus.length > 0 ||
+    filterBank.length > 0 ||
+    filterRowType.length > 0 ||
+    hidePaidGroups;
+  const resetFilters = () => {
+    setFilterMonth([]);
+    setFilterProject([]);
+    setFilterWeek([]);
+    setFilterStatus([]);
+    setFilterBank([]);
+    setFilterRowType([]);
+    setHidePaidGroups(false);
+  };
+  const urlFilters = useUrlSyncedFilters([
+    { stateKey: "filterYear", param: "year", kind: "array", value: filterYear, defaultValue: [], setValue: setFilterYear },
+    { stateKey: "filterMonth", param: "month", kind: "array", value: filterMonth, defaultValue: [], setValue: setFilterMonth },
+    { stateKey: "filterProject", param: "project", kind: "array", value: filterProject, defaultValue: [], setValue: setFilterProject },
+    { stateKey: "filterWeek", param: "week", kind: "array", value: filterWeek, defaultValue: [], setValue: setFilterWeek },
+    { stateKey: "filterStatus", param: "status", kind: "array", value: filterStatus, defaultValue: [], setValue: setFilterStatus },
+    { stateKey: "filterBank", param: "bank", kind: "array", value: filterBank, defaultValue: [], setValue: setFilterBank },
+    { stateKey: "filterRowType", param: "rowType", kind: "array", value: filterRowType, defaultValue: [], setValue: setFilterRowType },
+    { stateKey: "hidePaidGroups", param: "hidePaid", kind: "boolean", value: hidePaidGroups, defaultValue: false, setValue: setHidePaidGroups },
+  ]);
 
   usePersistedInterfaceState(
     `executor:${executorId}:works`,
@@ -262,14 +308,7 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
       hidePaidGroups,
     },
     (stored) => {
-      if ("filterYear" in stored) setFilterYear(stored.filterYear ?? "");
-      if ("filterMonth" in stored) setFilterMonth(stored.filterMonth ?? "");
-      if ("filterProject" in stored) setFilterProject(stored.filterProject ?? "");
-      if ("filterWeek" in stored) setFilterWeek(stored.filterWeek ?? "");
-      if ("filterStatus" in stored) setFilterStatus(stored.filterStatus ?? "");
-      if ("filterBank" in stored) setFilterBank(stored.filterBank ?? "");
-      if ("filterRowType" in stored) setFilterRowType(stored.filterRowType ?? "");
-      if ("hidePaidGroups" in stored) setHidePaidGroups(Boolean(stored.hidePaidGroups));
+      urlFilters.restorePersisted(stored);
     }
   );
   usePersistedScroll(scrollRef, `executor:${executorId}:works`, {
@@ -309,9 +348,10 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
       fetch(`/api/executors/${executorId}/payments`),
     ]);
     if (!worksRes.ok || !paymentsRes.ok) throw new Error();
-    const [worksData, paymentsData] = await Promise.all([worksRes.json(), paymentsRes.json()]);
+    const [worksData, paymentsData] = await Promise.all([worksRes.json(), paymentsRes.json()]) as [WorkRow[], AllPaymentRow[]];
     setWorks(worksData);
     setAllPayments(paymentsData);
+    return { works: worksData, payments: paymentsData };
   }, [executorId]);
 
   const load = useCallback(async () => {
@@ -370,28 +410,112 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
   const projectOptions = Array.from(new Map(works.map((w) => [w.projectId, w.project])).entries())
     .sort((a, b) => a[1].name.localeCompare(b[1].name, "ru"));
 
-  const weekOptions = Array.from(
-    new Set([
-      ...works.map((w) => payWeekText(w.paidAt ?? w.plannedPayAt)),
-      ...allPayments.map((p) => payWeekText(p.paidAt ?? p.plannedPayAt)),
-    ])
-  ).filter((w) => w !== "—").sort((a, b) => a.localeCompare(b, "ru", { numeric: true }));
+  const weekOptions = React.useMemo(() => {
+    const map = new Map<string, string>();
+    for (const w of works) {
+      const key = payWeekFilterKey(w.paidAt ?? w.plannedPayAt);
+      if (key !== "__empty__" && !map.has(key)) map.set(key, payWeekFilterLabel(w.paidAt ?? w.plannedPayAt));
+    }
+    for (const p of allPayments) {
+      const key = payWeekFilterKey(p.paidAt ?? p.plannedPayAt);
+      if (key !== "__empty__" && !map.has(key)) map.set(key, payWeekFilterLabel(p.paidAt ?? p.plannedPayAt));
+    }
+    return Array.from(map.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([value, label]) => {
+        const [year, week] = value.split("-").map(Number);
+        return { value, label, ...getWeekFilterMetadata([{ year, week }]) };
+      });
+  }, [works, allPayments]);
+
+  const monthOptions = React.useMemo(() => {
+    // Серость месяца — в контексте выбранного года выполнения, а не всех лет вперемешку.
+    const yearScoped = filterYear.length
+      ? works.filter((w) => filterYear.includes(String(w.executionYear)))
+      : works;
+    return MONTHS
+      .filter((month) => works.some((w) => String(w.executionMonth) === month.value))
+      .map((month) => ({
+        ...month,
+        ...getMonthFilterMetadata(
+          yearScoped
+            .filter((w) => String(w.executionMonth) === month.value)
+            .map((w) => ({ year: w.executionYear, month: w.executionMonth }))
+        ),
+      }));
+  }, [works, filterYear]);
 
   // ── Фильтры (§7) ──────────────────────────────────────────────────────────
   // Месяц/Год выполнения и Проект — только для работ; Источник перевода — только выплаты.
-  const workOnlyFilterActive = !!(filterYear || filterMonth || filterProject);
-  const paymentOnlyFilterActive = !!filterBank;
-
-  // §7: авто-включают «только работы» / «только выплаты» — синхронизируем UI селекта
-  useEffect(() => {
-    if (workOnlyFilterActive) {
-      if (filterRowType !== "works") setFilterRowType("works");
-      return;
-    }
-    if (paymentOnlyFilterActive && filterRowType !== "payments") {
-      setFilterRowType("payments");
-    }
-  }, [workOnlyFilterActive, paymentOnlyFilterActive, filterRowType]);
+  const workOnlyFilterActive =
+    filterYear.length > 0 || filterMonth.length > 0 || filterProject.length > 0;
+  const paymentOnlyFilterActive = filterBank.length > 0;
+  type FilterCandidate = {
+    kind: "works" | "payments";
+    year?: string;
+    month?: string;
+    project?: string;
+    week?: string;
+    status: "paid" | "unpaid";
+    bank?: string;
+  };
+  const filterCandidates = React.useMemo<FilterCandidate[]>(
+    () => [
+      ...works.map((work) => ({
+        kind: "works" as const,
+        year: String(work.executionYear),
+        month: String(work.executionMonth),
+        project: work.projectId,
+        week: payWeekFilterKey(work.paidAt ?? work.plannedPayAt),
+        status: PAID_STATUSES_WORK.has(work.workStatus) ? "paid" as const : "unpaid" as const,
+      })),
+      ...allPayments.map((payment) => ({
+        kind: "payments" as const,
+        week: payWeekFilterKey(payment.paidAt ?? payment.plannedPayAt),
+        status: PAID_STATUSES_PAYMENT.has(payment.paymentStatus) ? "paid" as const : "unpaid" as const,
+        bank: payment.bankAccountId ?? undefined,
+      })),
+    ],
+    [works, allPayments]
+  );
+  const compatibleValues = useCompatibleFilterOptions(filterCandidates, [
+    {
+      key: "year", value: filterYear, setValue: setFilterYear,
+      matches: (row, values) => !values.length || (row.kind === "works" && values.includes(row.year ?? "")),
+      values: (row) => row.year ? [row.year] : [],
+      protectedFromAutoClear: true,
+    },
+    {
+      key: "month", value: filterMonth, setValue: setFilterMonth,
+      matches: (row, values) => !values.length || (row.kind === "works" && values.includes(row.month ?? "")),
+      values: (row) => row.month ? [row.month] : [],
+    },
+    {
+      key: "project", value: filterProject, setValue: setFilterProject,
+      matches: (row, values) => !values.length || (row.kind === "works" && values.includes(row.project ?? "")),
+      values: (row) => row.project ? [row.project] : [],
+    },
+    {
+      key: "week", value: filterWeek, setValue: setFilterWeek,
+      matches: (row, values) => !values.length || values.includes(row.week ?? "__empty__"),
+      values: (row) => row.week && row.week !== "__empty__" ? [row.week] : [],
+    },
+    {
+      key: "status", value: filterStatus, setValue: setFilterStatus,
+      matches: (row, values) => !values.length || values.includes(row.status),
+      values: (row) => [row.status],
+    },
+    {
+      key: "bank", value: filterBank, setValue: setFilterBank,
+      matches: (row, values) => !values.length || (row.kind === "payments" && values.includes(row.bank ?? "")),
+      values: (row) => row.bank ? [row.bank] : [],
+    },
+    {
+      key: "rowType", value: filterRowType, setValue: setFilterRowType,
+      matches: (row, values) => !values.length || values.includes(row.kind),
+      values: (row) => [row.kind],
+    },
+  ]);
 
   const workDiffFields = useCallback(
     (w: WorkRow): Set<DiffField<WorkDiffField>> => {
@@ -434,12 +558,12 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
 
   const workPasses = useCallback(
     (w: WorkRow): boolean => {
-      if (filterYear && String(w.executionYear) !== filterYear) return false;
-      if (filterMonth && String(w.executionMonth) !== filterMonth) return false;
-      if (filterProject && w.projectId !== filterProject) return false;
-      if (filterWeek && payWeekText(w.paidAt ?? w.plannedPayAt) !== filterWeek) return false;
-      if (filterStatus === "unpaid" && PAID_STATUSES_WORK.has(w.workStatus)) return false;
-      if (filterStatus === "paid" && !PAID_STATUSES_WORK.has(w.workStatus)) return false;
+      if (filterYear.length && !filterYear.includes(String(w.executionYear))) return false;
+      if (filterMonth.length && !filterMonth.includes(String(w.executionMonth))) return false;
+      if (filterProject.length && !filterProject.includes(w.projectId)) return false;
+      if (filterWeek.length && !filterWeek.includes(payWeekFilterKey(w.paidAt ?? w.plannedPayAt))) return false;
+      const status = PAID_STATUSES_WORK.has(w.workStatus) ? "paid" : "unpaid";
+      if (filterStatus.length && !filterStatus.includes(status)) return false;
       if (onlyChanges && !workChanged(w)) {
         const parent = w.paymentId ? allPayments.find((p) => p.id === w.paymentId) : null;
         if (!parent || !paymentChanged(parent)) return false;
@@ -451,10 +575,10 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
 
   const paymentPasses = useCallback(
     (p: AllPaymentRow): boolean => {
-      if (filterWeek && payWeekText(p.paidAt ?? p.plannedPayAt) !== filterWeek) return false;
-      if (filterStatus === "unpaid" && PAID_STATUSES_PAYMENT.has(p.paymentStatus)) return false;
-      if (filterStatus === "paid" && !PAID_STATUSES_PAYMENT.has(p.paymentStatus)) return false;
-      if (filterBank && p.bankAccountId !== filterBank) return false;
+      if (filterWeek.length && !filterWeek.includes(payWeekFilterKey(p.paidAt ?? p.plannedPayAt))) return false;
+      const status = PAID_STATUSES_PAYMENT.has(p.paymentStatus) ? "paid" : "unpaid";
+      if (filterStatus.length && !filterStatus.includes(status)) return false;
+      if (filterBank.length && !filterBank.includes(p.bankAccountId ?? "")) return false;
       if (onlyChanges && !paymentChanged(p)) {
         // Показать выплату, если изменилась хотя бы одна её работа
         const linked = works.filter((w) => w.paymentId === p.id);
@@ -509,18 +633,21 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
     })
     .reduce((sum, w) => sum + w.amount, 0);
 
-  const showWorkRows = !paymentOnlyFilterActive && filterRowType !== "payments";
-  const showPaymentRows = !workOnlyFilterActive && filterRowType !== "works";
+  const showWorkRows =
+    !paymentOnlyFilterActive &&
+    (filterRowType.length === 0 || filterRowType.includes("works"));
+  const showPaymentRows =
+    !workOnlyFilterActive &&
+    (filterRowType.length === 0 || filterRowType.includes("payments"));
 
   const orderedWorkIds = React.useMemo(() => {
     if (!showWorkRows) return [] as string[];
     const ids: string[] = [];
     const visible = groups
       .filter((g) => !(hidePaidGroups && PAID_STATUSES_PAYMENT.has(g.payment.paymentStatus)))
-      .filter((g) => filterRowType === "works" || paymentPasses(g.payment))
+      .filter((g) => !showPaymentRows || paymentPasses(g.payment))
       .map((g) => ({ payment: g.payment, works: g.works.filter(workPasses) }))
-      .filter((g) => filterRowType === "payments" || !workOnlyFilterActive || g.works.length > 0)
-      .filter((g) => filterRowType !== "works" || g.works.length > 0);
+      .filter((g) => !showWorkRows || g.works.length > 0);
     for (const g of visible) {
       for (const w of g.works) ids.push(w.id);
     }
@@ -531,10 +658,10 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
     groups,
     unlinkedWorks,
     hidePaidGroups,
-    filterRowType,
+    showPaymentRows,
+    showWorkRows,
     paymentPasses,
     workPasses,
-    workOnlyFilterActive,
   ]);
   const visibleWorksTotal = React.useMemo(() => {
     const amountById = new Map(works.map((work) => [work.id, work.amount]));
@@ -614,7 +741,7 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
     silentLoad();
   }
 
-  async function handleDuplicate(ids: string[]) {
+  async function handleDuplicate(ids: string[], openEditor: boolean) {
     if (ids.length === 0) return;
     setDuplicating(true);
     try {
@@ -627,10 +754,16 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
         const d = await res.json().catch(() => ({}));
         throw new Error((d as { error?: string }).error ?? "Не удалось дублировать");
       }
-      const data = await res.json() as { created: number };
+      const data = await res.json() as { created: number; ids: string[] };
       toast.success(data.created === 1 ? "Работа продублирована" : `Продублировано работ: ${data.created}`);
       clearSelection();
-      silentLoad();
+      if (openEditor && data.ids.length === 1) {
+        const { works: freshWorks } = await fetchData();
+        const created = freshWorks.find((w) => w.id === data.ids[0]);
+        if (created) setEditWork(created);
+      } else {
+        silentLoad();
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Не удалось дублировать");
     } finally {
@@ -797,7 +930,7 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
           <div className="truncate">{w.workType.name}</div>
         </td>
         <td className={cn(tdr, diff.has("volume") && changedCell)}>{w.volume != null ? w.volume.toLocaleString("ru-RU") : "—"}</td>
-        <td className={cn(tdr, diff.has("rate") && changedCell)}>{w.rate != null ? w.rate.toLocaleString("ru-RU") : "—"}</td>
+        <td className={cn(tdr, diff.has("rate") && changedCell)}>{w.rate != null ? formatMoney(w.rate) : "—"}</td>
         <td className={cn(td, "min-w-[120px]", diff.has("responsible") && changedCell)}>
           {respEditable ? (
             <SearchableSelect
@@ -820,7 +953,7 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
                 title="Дублировать"
                 className="p-0.5 text-neutral-500 hover:text-neutral-800"
                 disabled={duplicating}
-                onClick={() => handleDuplicate([w.id])}
+                onClick={() => handleDuplicate([w.id], true)}
               >
                 <Copy className="h-3.5 w-3.5" />
               </button>
@@ -844,10 +977,16 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
     const worksLabel = linkedCount ? worksCountLabel(linkedCount) : "без работ";
     const paymentSubtitle = p.comment ? `${worksLabel} · ${p.comment}` : worksLabel;
     const diff = paymentDiffFields(p);
+    const paymentDate = p.paidAt ?? p.plannedPayAt;
+    const paymentMonth = paymentDate
+      ? monthPrepositionalLabel(new Date(paymentDate).getMonth() + 1)
+      : null;
     return (
       <>
         <td className="border-b border-neutral-100 px-1 py-1 w-8" />
-        <td className={cn(td, "whitespace-nowrap")}>{monthFullLabel(p.periodMonth)}</td>
+        <td className={cn(td, "whitespace-nowrap")}>
+          {paymentMonth ? `Выплачено в ${paymentMonth}` : "—"}
+        </td>
         <td className={cn(tdr, "font-semibold text-green-800", diff.has("amount") && changedCell)}>{formatMoney(p.amount)}</td>
         <td className={cn(td, diff.has("plannedPayAt") && changedCell)}>
           <InlineDateInput
@@ -891,10 +1030,9 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
   // (год/месяц/проект) группа без подходящих работ скрывается целиком.
   const visibleGroups = groups
     .filter((g) => !(hidePaidGroups && PAID_STATUSES_PAYMENT.has(g.payment.paymentStatus)))
-    .filter((g) => filterRowType === "works" || paymentPasses(g.payment))
+    .filter((g) => !showPaymentRows || paymentPasses(g.payment))
     .map((g) => ({ payment: g.payment, works: g.works.filter(workPasses) }))
-    .filter((g) => filterRowType === "payments" || !workOnlyFilterActive || g.works.length > 0)
-    .filter((g) => filterRowType !== "works" || g.works.length > 0);
+    .filter((g) => !showWorkRows || g.works.length > 0);
 
   const visibleUnlinkedWorks = unlinkedWorks.filter(workPasses);
   const visibleUnlinkedPayments = unlinkedPayments.filter(paymentPasses);
@@ -955,35 +1093,65 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
             <Checkbox checked={hidePaidGroups} onCheckedChange={(v) => setHidePaidGroups(Boolean(v))} />
             Спрятать оплаченные группы
           </label>
-          <FilterSelect label="Тип строк" value={filterRowType} onChange={setFilterRowType} placeholder="Работы и выплаты"
-            options={[{ value: "works", label: "Только работы" }, { value: "payments", label: "Только выплаты" }]} />
-          <FilterSelect label="Неделя оплаты" value={filterWeek} onChange={setFilterWeek} placeholder="Все недели"
-            options={weekOptions.map((w) => ({ value: w, label: w }))} />
-          <FilterSelect label="Год" value={filterYear} onChange={setFilterYear} placeholder="Все годы"
-            options={allYears.map((y) => ({ value: String(y), label: `${y} год` }))} />
-          <FilterSelect label="Месяц" value={filterMonth} onChange={setFilterMonth} placeholder="Все месяцы"
-            options={MONTHS.map((m) => ({ value: m.value, label: m.label }))} />
-          <SearchableSelect
-            value={filterProject || "__all__"}
-            onValueChange={(value) => setFilterProject(value === "__all__" ? "" : value)}
+          <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
+          <div className="mr-2 border-r pr-2">
+            <MultiSelectFilter
+              label="Год"
+              options={allYears
+                .map((year) => ({ value: String(year), label: `${year} год` }))
+                .filter((option) => compatibleValues.year?.has(option.value))}
+              value={filterYear}
+              onChange={setFilterYear}
+            />
+          </div>
+          <MultiSelectFilter
+            label="Тип строк"
             options={[
-              { value: "__all__", label: "Все проекты" },
-              ...projectOptions.map(([id, project]) => ({ value: id, label: project.name })),
-            ]}
-            renderValue={(option) => option.value === "__all__" ? option.label : `Проект: ${option.label}`}
-            triggerClassName="h-8 w-36 text-xs"
+              { value: "works", label: "Только работы" },
+              { value: "payments", label: "Только выплаты" },
+            ].filter((option) => compatibleValues.rowType?.has(option.value))}
+            value={filterRowType}
+            onChange={setFilterRowType}
           />
-          <FilterSelect label="Статус" value={filterStatus} onChange={setFilterStatus} placeholder="Любой статус"
-            options={[{ value: "unpaid", label: "Неоплаченные" }, { value: "paid", label: "Оплаченные" }]} />
-          <SearchableSelect
-            value={filterBank || "__all__"}
-            onValueChange={(value) => setFilterBank(value === "__all__" ? "" : value)}
+          <MultiSelectFilter
+            label="Неделя оплаты"
+            options={weekOptions.filter((option) => compatibleValues.week?.has(option.value))}
+            value={filterWeek}
+            onChange={setFilterWeek}
+          />
+          <MultiSelectFilter
+            label="Месяц"
+            options={monthOptions
+              .filter((month) => compatibleValues.month?.has(month.value))}
+            value={filterMonth}
+            onChange={setFilterMonth}
+          />
+          <MultiSelectFilter
+            label="Проект"
+            options={projectOptions
+              .map(([id, project]) => ({ value: id, label: project.name }))
+              .filter((option) => compatibleValues.project?.has(option.value))}
+            value={filterProject}
+            onChange={setFilterProject}
+            popoverClassName="w-80"
+          />
+          <MultiSelectFilter
+            label="Статус"
             options={[
-              { value: "__all__", label: "Любой источник" },
-              ...bankAccounts.map((bankAccount) => ({ value: bankAccount.id, label: bankAccount.name })),
-            ]}
-            renderValue={(option) => option.value === "__all__" ? option.label : `Источник перевода: ${option.label}`}
-            triggerClassName="h-8 w-36 text-xs"
+              { value: "unpaid", label: "Неоплаченные" },
+              { value: "paid", label: "Оплаченные" },
+            ].filter((option) => compatibleValues.status?.has(option.value))}
+            value={filterStatus}
+            onChange={setFilterStatus}
+          />
+          <MultiSelectFilter
+            label="Источник перевода"
+            options={bankAccounts
+              .map((bankAccount) => ({ value: bankAccount.id, label: bankAccount.name }))
+              .filter((option) => compatibleValues.bank?.has(option.value))}
+            value={filterBank}
+            onChange={setFilterBank}
+            popoverClassName="w-80"
           />
         </div>
       </div>
@@ -1016,7 +1184,7 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
                 variant="outline"
                 className="h-7 bg-white"
                 disabled={duplicating}
-                onClick={() => handleDuplicate(selectedArray)}
+                onClick={() => handleDuplicate(selectedArray, false)}
               >
                 <Copy className="h-3.5 w-3.5 mr-1" /> Дублировать
               </Button>
@@ -1042,7 +1210,7 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
           <div className="text-sm text-neutral-400 py-8 text-center">Загрузка...</div>
         ) : isEmpty ? (
           <div className="text-sm text-neutral-400 py-8 text-center">
-            {workOnlyFilterActive || paymentOnlyFilterActive || filterWeek || filterStatus || filterRowType
+            {workOnlyFilterActive || paymentOnlyFilterActive || filterWeek.length > 0 || filterStatus.length > 0 || filterRowType.length > 0
               ? "Нет данных по фильтрам"
               : "Работ ещё нет. Создайте первую работу."}
           </div>
@@ -1284,7 +1452,7 @@ function MoneyInput({ value, onChange, placeholder, disabled, className }: {
   const [focused, setFocused] = React.useState(false);
   const numVal = parseDecimal(value);
   const display = !focused && value && !isNaN(numVal)
-    ? numVal.toLocaleString("ru-RU", { maximumFractionDigits: 6 })
+    ? numVal.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : value;
   return (
     <Input
@@ -1740,6 +1908,9 @@ function EditWorkDialog({
           <div className="space-y-1.5"><Label>Ссылка</Label><Input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://..." /></div>
           <div className="space-y-1.5"><Label>Отчёт</Label><Textarea value={report} onChange={(e) => setReport(e.target.value)} placeholder="Текст отчёта" rows={3} className="field-sizing-fixed min-w-0 resize-y break-words text-xs" /></div>
           <div className="space-y-1.5"><Label>Комментарий</Label><Input value={comment} onChange={(e) => setComment(e.target.value)} /></div>
+          {isAdmin && (
+            <EntityActivityHistory entityType="Work" entityId={work.id} />
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Отмена</Button>
@@ -2003,6 +2174,7 @@ function EditPaymentDialog({
               </>
             )}
           </div>
+          <EntityActivityHistory entityType="Payment" entityId={payment.id} />
         </div>
         <DialogFooter className="min-w-0">
           <Button variant="outline" onClick={onClose}>Отмена</Button>

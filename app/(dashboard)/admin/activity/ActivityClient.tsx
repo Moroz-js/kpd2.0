@@ -1,9 +1,11 @@
 "use client";
 
+import * as React from "react";
 import { useRef, useState } from "react";
 import useSWR from "swr";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
+import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -13,6 +15,7 @@ import {
   usePersistedInterfaceState,
   usePersistedScroll,
 } from "@/components/PersistedInterfaceState";
+import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
 
 const fetcher = (url: string) => fetch(url).then(r => r.json());
 
@@ -78,35 +81,48 @@ type LogItem = {
 };
 
 function entityTypeFilterLabel(value: string): string {
-  if (value === "_all") return "Все объекты";
+  if (!value) return "Все объекты";
   return ENTITY_LABELS[value] ?? value;
 }
 
 export function ActivityClient() {
   const [page, setPage] = useState(1);
-  const [entityType, setEntityType] = useState("_all");
+  const [entityType, setEntityType] = useState("");
   const [userFilter, setUserFilter] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
+  const hasActiveFilters = Boolean(entityType) || userFilter.length > 0;
+  const resetFilters = () => {
+    setEntityType("");
+    setUserFilter([]);
+    setPage(1);
+  };
+  const urlFilters = useUrlSyncedFilters([
+    { stateKey: "entityType", param: "entityType", kind: "string", value: entityType, defaultValue: "", setValue: setEntityType },
+    { stateKey: "userFilter", param: "userId", kind: "array", value: userFilter, defaultValue: [], setValue: setUserFilter },
+  ]);
 
   usePersistedInterfaceState(
     "activity",
-    { page, entityType, userFilter },
+    { entityType, userFilter },
     (stored) => {
-      if (stored.page !== undefined) setPage(stored.page);
-      if (stored.entityType !== undefined) setEntityType(stored.entityType);
-      if (stored.userFilter) setUserFilter(stored.userFilter);
+      urlFilters.restorePersisted(stored);
     }
   );
 
   const { data: users } = useSWR<UserOption[]>("/api/users", fetcher);
 
   const params = new URLSearchParams({ page: String(page) });
-  if (entityType !== "_all") params.set("entityType", entityType);
+  if (entityType) params.set("entityType", entityType);
   userFilter.forEach((id) => params.append("userId", id));
 
-  const { data } = useSWR<{ items: LogItem[]; total: number; pageSize: number }>(
-    `/api/activity?${params}`,
+  const { data } = useSWR<{
+    items: LogItem[];
+    total: number;
+    pageSize: number;
+    available: { entityTypes: string[]; userIds: string[] };
+  }>(
+    `/api/activity?${params.toString()}`,
     fetcher
   );
   usePersistedScroll(scrollRef, "activity-list", {
@@ -116,7 +132,24 @@ export function ActivityClient() {
 
   const userOptions = Array.from(
     new Map((users ?? []).map((u) => [u.fullName, { value: u.id, label: u.fullName }])).values()
-  ).sort((a, b) => a.label.localeCompare(b.label, "ru"));
+  )
+    .filter((option) => !data || data.available.userIds.includes(option.value))
+    .sort((a, b) => a.label.localeCompare(b.label, "ru"));
+  const entityTypeOptions = Object.entries(ENTITY_LABELS)
+    .filter(([value]) => !data || value === entityType || data.available.entityTypes.includes(value));
+
+  React.useEffect(() => {
+    setPage(1);
+  }, [entityType, userFilter]);
+
+  React.useEffect(() => {
+    if (!data) return;
+    setUserFilter((current) => {
+      const next = current.filter((id) => data.available.userIds.includes(id));
+      return next.length === current.length ? current : next;
+    });
+    if (entityType && !data.available.entityTypes.includes(entityType)) setEntityType("");
+  }, [data, entityType]);
 
   const totalPages = data ? Math.ceil(data.total / data.pageSize) : 1;
 
@@ -134,6 +167,7 @@ export function ActivityClient() {
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-xl font-semibold">История действий</h1>
         <div className="flex flex-wrap items-center gap-2">
+          <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
           <MultiSelectFilter
             label="Пользователь"
             options={userOptions}
@@ -144,8 +178,13 @@ export function ActivityClient() {
             }}
           />
           <Select
-            value={entityType}
-            onValueChange={v => { if (v) { setEntityType(v); setPage(1); } }}
+            value={entityType || "_all"}
+            onValueChange={v => {
+              if (v) {
+                setEntityType(v === "_all" ? "" : v);
+                setPage(1);
+              }
+            }}
           >
             <SelectTrigger className="w-44 h-8 text-sm">
               <SelectValue placeholder="Все объекты">
@@ -154,7 +193,7 @@ export function ActivityClient() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="_all">Все объекты</SelectItem>
-              {Object.entries(ENTITY_LABELS).map(([k, v]) => (
+              {entityTypeOptions.map(([k, v]) => (
                 <SelectItem key={k} value={k}>{v}</SelectItem>
               ))}
             </SelectContent>

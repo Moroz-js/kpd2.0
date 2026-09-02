@@ -8,9 +8,12 @@ import { Pencil, Trash2, CircleDollarSign, X } from "lucide-react";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
+import { OverduePaymentSummary } from "@/components/ui-custom/OverduePaymentSummary";
+import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
 import { ConfirmDialog } from "@/components/ui-custom/ConfirmDialog";
 import { PAYMENT_STATUSES } from "@/lib/statuses";
 import { formatMoney, formatMoneyRub, formatDateShort, weekLabel, monthLabel, monthFullLabel, MONTHS } from "@/lib/format";
+import { isOverduePayment, overduePaymentTotal } from "@/lib/overdue-payments";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -39,7 +42,13 @@ import { useTableRowSelection } from "@/lib/useTableRowSelection";
 import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner } from "@/lib/table-styles";
 import { sortByNameRu } from "@/lib/sort";
+import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
+import { useCompatibleFilterOptions } from "@/lib/useCompatibleFilterOptions";
 import { PayoutEditDialog } from "./PayoutEditDialog";
+import {
+  getMonthFilterMetadata,
+  getWeekFilterMetadata,
+} from "@/lib/period-filter-options";
 import {
   usePersistedInterfaceState,
   usePersistedScroll,
@@ -169,6 +178,11 @@ const PayoutRow = React.memo(function PayoutRow({
   onDelete,
 }: PayoutRowProps) {
   const key = rowKey(r);
+  const overdue = isOverduePayment({
+    status: r.paymentStatus,
+    paidAt: r.paidAt,
+    plannedPayAt: r.plannedPayAt,
+  });
   return (
     <TableRow key={key} className={checked ? "bg-blue-50" : undefined}>
       <TableCell className="w-8">
@@ -201,7 +215,7 @@ const PayoutRow = React.memo(function PayoutRow({
         </Select>
       </TableCell>
       <TableCell
-        className="cursor-pointer hover:bg-neutral-50 min-w-[100px]"
+        className={cn("cursor-pointer hover:bg-neutral-50 min-w-[100px]", !r.paidAt && overdue && "bg-red-100 text-red-700")}
         onClick={() => inlineActive !== "plannedPayAt" && onStartInline(r, "plannedPayAt")}
       >
         {inlineActive === "plannedPayAt" ? (
@@ -225,7 +239,7 @@ const PayoutRow = React.memo(function PayoutRow({
       <TableCell
         className={cn(
           "cursor-pointer hover:bg-neutral-50 min-w-[100px]",
-          r.paymentStatus === "paid" && !r.paidAt && "bg-red-100 text-red-700"
+          (r.paymentStatus === "paid" && !r.paidAt || (!!r.paidAt && overdue)) && "bg-red-100 text-red-700"
         )}
         onClick={() => inlineActive !== "paidAt" && onStartInline(r, "paidAt")}
       >
@@ -347,6 +361,24 @@ export function PayoutsClient() {
   // Inline edit state
   const [inlineEdit, setInlineEdit] = React.useState<{ key: string; field: "paidAt" | "plannedPayAt" | "bankAccountId" } | null>(null);
   const [inlineVal, setInlineVal] = React.useState("");
+  const hasActiveFilters =
+    periodMonthFilter.length > 0 || weekFilter.length > 0 ||
+    executorFilter.length > 0 || statusFilter.length > 0 ||
+    bankFilter.length > 0 || smetaFilter.length > 0;
+  const resetFilters = () => {
+    setPeriodMonthFilter([]); setWeekFilter([]); setExecutorFilter([]);
+    setStatusFilter([]); setBankFilter([]); setSmetaFilter([]);
+  };
+
+  const urlFilters = useUrlSyncedFilters([
+    { stateKey: "periodYearFilter", param: "year", kind: "array", value: periodYearFilter, defaultValue: [String(new Date().getFullYear())], setValue: setPeriodYearFilter },
+    { stateKey: "periodMonthFilter", param: "month", kind: "array", value: periodMonthFilter, defaultValue: [], setValue: setPeriodMonthFilter },
+    { stateKey: "weekFilter", param: "week", kind: "array", value: weekFilter, defaultValue: [], setValue: setWeekFilter },
+    { stateKey: "executorFilter", param: "executor", kind: "array", value: executorFilter, defaultValue: [], setValue: setExecutorFilter },
+    { stateKey: "statusFilter", param: "status", kind: "array", value: statusFilter, defaultValue: [], setValue: setStatusFilter },
+    { stateKey: "bankFilter", param: "bank", kind: "array", value: bankFilter, defaultValue: [], setValue: setBankFilter },
+    { stateKey: "smetaFilter", param: "smeta", kind: "array", value: smetaFilter, defaultValue: [], setValue: setSmetaFilter },
+  ]);
 
   usePersistedInterfaceState(
     "payouts",
@@ -363,13 +395,7 @@ export function PayoutsClient() {
       sort,
     },
     (stored) => {
-      if (stored.periodYearFilter) setPeriodYearFilter(stored.periodYearFilter);
-      if (stored.periodMonthFilter) setPeriodMonthFilter(stored.periodMonthFilter);
-      if (stored.weekFilter) setWeekFilter(stored.weekFilter);
-      if (stored.executorFilter) setExecutorFilter(stored.executorFilter);
-      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
-      if (stored.bankFilter) setBankFilter(stored.bankFilter);
-      if (stored.smetaFilter) setSmetaFilter(stored.smetaFilter);
+      urlFilters.restorePersisted(stored);
       if (stored.groupBy !== undefined) setGroupBy(stored.groupBy);
       if (stored.collapsedGroups instanceof Set) setCollapsedGroups(stored.collapsedGroups);
       if (stored.sort) setSort(stored.sort);
@@ -417,30 +443,117 @@ export function PayoutsClient() {
   }
 
   const allRows = data ?? [];
+  const overdueTotal = React.useMemo(
+    () => overduePaymentTotal(allRows.map((row) => ({
+      status: row.paymentStatus,
+      paidAt: row.paidAt,
+      plannedPayAt: row.plannedPayAt,
+      amount: row.amount,
+    }))),
+    [allRows]
+  );
+
+  const compatibleValues = useCompatibleFilterOptions(allRows, [
+    {
+      key: "year", value: periodYearFilter, setValue: setPeriodYearFilter,
+      matches: (row, values) => !values.length || values.includes(String(row.periodYear)),
+      values: (row) => [String(row.periodYear)],
+      protectedFromAutoClear: true,
+    },
+    {
+      key: "month", value: periodMonthFilter, setValue: setPeriodMonthFilter,
+      matches: (row, values) => !values.length || values.includes(String(row.periodMonth)),
+      values: (row) => [String(row.periodMonth)],
+    },
+    {
+      key: "week", value: weekFilter, setValue: setWeekFilter,
+      matches: (row, values) => !values.length || values.includes(row.weekPlanFact === null ? "__empty__" : String(row.weekPlanFact)),
+      values: (row) => [row.weekPlanFact === null ? "__empty__" : String(row.weekPlanFact)],
+    },
+    {
+      key: "executor", value: executorFilter, setValue: setExecutorFilter,
+      matches: (row, values) => !values.length || values.includes(row.executorId),
+      values: (row) => [row.executorId],
+    },
+    {
+      key: "status", value: statusFilter, setValue: setStatusFilter,
+      matches: (row, values) => !values.length || values.includes(row.paymentStatus),
+      values: (row) => [row.paymentStatus],
+    },
+    {
+      key: "bank", value: bankFilter, setValue: setBankFilter,
+      matches: (row, values) => !values.length || values.includes(row.bankAccountId ?? "__empty__"),
+      values: (row) => [row.bankAccountId ?? "__empty__"],
+    },
+    {
+      key: "smeta", value: smetaFilter, setValue: setSmetaFilter,
+      matches: (row, values) => !values.length || values.includes(row.sourceType),
+      values: (row) => [row.sourceType],
+    },
+  ]);
 
   const periodYearOptions = React.useMemo(
     () => Array.from(new Set(allRows.map((r) => r.periodYear))).sort((a, b) => b - a)
-      .map((y) => ({ value: String(y), label: String(y) })),
-    [allRows]
+      .map((y) => ({ value: String(y), label: String(y) }))
+      .filter((option) => compatibleValues.year?.has(option.value)),
+    [allRows, compatibleValues.year]
   );
+  const periodMonthOptions = React.useMemo(() => {
+    // Серость месяца должна определяться в контексте выбранного года (если он выбран),
+    // а не смешивать данные всех лет — иначе далёкий будущий/прошлый год «маскирует» текущий.
+    const yearScoped = periodYearFilter.length
+      ? allRows.filter((row) => periodYearFilter.includes(String(row.periodYear)))
+      : allRows;
+    return MONTHS
+      .filter((month) => allRows.some((row) => String(row.periodMonth) === month.value))
+      .filter((month) => compatibleValues.month?.has(month.value))
+      .map((month) => ({
+        ...month,
+        ...getMonthFilterMetadata(
+          yearScoped
+            .filter((row) => String(row.periodMonth) === month.value)
+            .map((row) => ({ year: row.periodYear, month: row.periodMonth })),
+        ),
+      }));
+  }, [allRows, compatibleValues.month, periodYearFilter]);
   const weekOptions = React.useMemo(() => {
-    const opts = Array.from(new Set(allRows.map((r) => r.weekPlanFact).filter((v): v is number => v != null)))
-      .sort((a, b) => a - b).map((w) => ({ value: String(w), label: weekLabel(w) }));
+    const periodsByWeek = new Map<number, { year: number; week: number }[]>();
+    for (const row of allRows) {
+      if (row.weekPlanFact == null || row.yearPlanFact == null) continue;
+      const periods = periodsByWeek.get(row.weekPlanFact) ?? [];
+      periods.push({ year: row.yearPlanFact, week: row.weekPlanFact });
+      periodsByWeek.set(row.weekPlanFact, periods);
+    }
+    const opts = Array.from(periodsByWeek.entries())
+      .filter(([week]) => compatibleValues.week?.has(String(week)))
+      .sort(([a], [b]) => a - b)
+      .map(([week, periods]) => ({
+        value: String(week),
+        label: weekLabel(week),
+        ...getWeekFilterMetadata(periods),
+      }));
     const hasEmpty = allRows.some((r) => r.weekPlanFact === null);
-    return hasEmpty ? [{ value: "__empty__", label: "Пусто" }, ...opts] : opts;
-  }, [allRows]);
+    return hasEmpty && compatibleValues.week?.has("__empty__")
+      ? [{ value: "__empty__", label: "Пусто" }, ...opts]
+      : opts;
+  }, [allRows, compatibleValues.week]);
   const executorOptions = React.useMemo(
     () => Array.from(new Map(allRows.map((r) => [r.executorId, r.executorName])).entries())
+      .filter(([value]) => compatibleValues.executor?.has(value))
       .sort((a, b) => a[1].localeCompare(b[1], "ru")).map(([value, label]) => ({ value, label })),
-    [allRows]
+    [allRows, compatibleValues.executor]
   );
   const bankOptions = React.useMemo(() => {
     const opts = Array.from(new Map(
       allRows.filter((r) => r.bankAccountId).map((r) => [r.bankAccountId as string, r.bankAccountName ?? "—"])
-    ).entries()).sort((a, b) => a[1].localeCompare(b[1], "ru")).map(([value, label]) => ({ value, label }));
+    ).entries())
+      .filter(([value]) => compatibleValues.bank?.has(value))
+      .sort((a, b) => a[1].localeCompare(b[1], "ru")).map(([value, label]) => ({ value, label }));
     const hasEmpty = allRows.some((r) => !r.bankAccountId);
-    return hasEmpty ? [{ value: "__empty__", label: "Пусто" }, ...opts] : opts;
-  }, [allRows]);
+    return hasEmpty && compatibleValues.bank?.has("__empty__")
+      ? [{ value: "__empty__", label: "Пусто" }, ...opts]
+      : opts;
+  }, [allRows, compatibleValues.bank]);
 
   const rows = React.useMemo(() => {
     let list = allRows;
@@ -735,21 +848,37 @@ export function PayoutsClient() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <PageHeader title="Выплаты" />
+      <PageHeader title="Выплаты" actions={<OverduePaymentSummary amount={overdueTotal} />} />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
+        <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
+        <div className="mr-2 border-r pr-2">
+          <MultiSelectFilter label="Год выполнения" options={periodYearOptions} value={periodYearFilter} onChange={setPeriodYearFilter} />
+        </div>
         <GroupBySelect
           value={groupBy}
           onChange={handleGroupByChange}
           options={[...PAYOUT_GROUP_OPTIONS]}
         />
-        <MultiSelectFilter label="Год выполнения" options={periodYearOptions} value={periodYearFilter} onChange={setPeriodYearFilter} />
-        <MultiSelectFilter label="Месяц выполнения" options={MONTHS} value={periodMonthFilter} onChange={setPeriodMonthFilter} />
+        <MultiSelectFilter label="Месяц выполнения" options={periodMonthOptions} value={periodMonthFilter} onChange={setPeriodMonthFilter} />
         <MultiSelectFilter label="Неделя план-факт" options={weekOptions} value={weekFilter} onChange={setWeekFilter} />
         <MultiSelectFilter label="Исполнитель" options={executorOptions} value={executorFilter} onChange={setExecutorFilter} />
-        <MultiSelectFilter label="Статус выплаты" options={Object.entries(PAYMENT_STATUSES).map(([value, { label }]) => ({ value, label }))} value={statusFilter} onChange={setStatusFilter} />
+        <MultiSelectFilter
+          label="Статус выплаты"
+          options={Object.entries(PAYMENT_STATUSES)
+            .map(([value, { label }]) => ({ value, label }))
+            .filter((option) => compatibleValues.status?.has(option.value))}
+          value={statusFilter}
+          onChange={setStatusFilter}
+        />
         <MultiSelectFilter label="Источник оплаты" options={bankOptions} value={bankFilter} onChange={setBankFilter} />
-        <MultiSelectFilter label="Тип сметы" options={[{ value: "personal", label: "Личная смета" }, { value: "other-expense", label: "Прочие траты" }]} value={smetaFilter} onChange={setSmetaFilter} />
+        <MultiSelectFilter
+          label="Тип сметы"
+          options={[{ value: "personal", label: "Личная смета" }, { value: "other-expense", label: "Прочие траты" }]
+            .filter((option) => compatibleValues.smeta?.has(option.value))}
+          value={smetaFilter}
+          onChange={setSmetaFilter}
+        />
       </div>
 
       {/* Bulk toolbar */}

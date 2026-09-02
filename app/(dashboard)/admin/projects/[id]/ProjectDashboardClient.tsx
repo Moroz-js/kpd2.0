@@ -9,6 +9,7 @@ import { CollapsibleSection, SectionChevron, useSectionCollapsed } from "@/compo
 import { buttonVariants, Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { formatMoneyWhole } from "@/lib/format";
 import {
   getISOWeeksInYear,
   getISOWeek,
@@ -35,14 +36,31 @@ import {
 
 const fetcher = (url: string) => fetch(url).then(r => r.json());
 
+function spendingPlanCommentHistoryUrl(input: {
+  projectId: string;
+  executorId: string;
+  workTypeId: string;
+  year: number;
+  week: number;
+}) {
+  return `/api/activity/comment-history?${new URLSearchParams({
+    kind: "spending-plan",
+    projectId: input.projectId,
+    executorId: input.executorId,
+    workTypeId: input.workTypeId,
+    year: String(input.year),
+    week: String(input.week),
+  })}`;
+}
+
 function fmt(n: number) {
   if (n === 0) return "—";
-  return n.toLocaleString("ru-RU", { maximumFractionDigits: 0 });
+  return formatMoneyWhole(n);
 }
 
 function fmtSign(n: number) {
   if (n === 0) return "—";
-  return n.toLocaleString("ru-RU", { maximumFractionDigits: 0 });
+  return formatMoneyWhole(n);
 }
 
 /** Перерасход: минус — экономия (зелёный), плюс — превышение (красный) */
@@ -950,12 +968,12 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                 fmt(rowTotal(compareData.summary.incomeFact))
               ) &&
               CHANGED_CELL_CLASS
-          )}>{rowTotal(summary.incomeFact).toLocaleString("ru-RU", { maximumFractionDigits: 0 })} ₽</p>
+          )}>{formatMoneyWhole(rowTotal(summary.incomeFact))} ₽</p>
         </div>
         <div className="rounded-lg border border-neutral-200 bg-white p-4">
           <div className="flex items-center gap-2 text-neutral-500 text-xs mb-1"><CreditCard className="h-3.5 w-3.5" />Расходы</div>
           <p className={cn("text-lg font-semibold", aggregateTotalChanged("expenses") && CHANGED_CELL_CLASS)}>
-            {rowTotal(summary.expenses).toLocaleString("ru-RU", { maximumFractionDigits: 0 })} ₽
+            {formatMoneyWhole(rowTotal(summary.expenses))} ₽
           </p>
         </div>
         <div className="rounded-lg border border-neutral-200 bg-white p-4">
@@ -1530,6 +1548,13 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
                                         allowHighlight={false}
                                         compact
                                         className="w-full px-0.5"
+                                        historyUrl={spendingPlanCommentHistoryUrl({
+                                          projectId,
+                                          executorId: pl.executorId,
+                                          workTypeId: pl.workTypeId,
+                                          year,
+                                          week: visibleWeeks[vi]?.week ?? idx + 1,
+                                        })}
                                         onSave={({ text }) =>
                                           savePlanComment(pl, idx, text)
                                         }
@@ -1600,6 +1625,7 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
           emptyText="По проекту ещё нет работ (Личные сметы и Прочие траты)."
           showProjectColumn={false}
           showExecutorLinks={isAdmin}
+          showEditAction
         />
       </CollapsibleSection>
 
@@ -1659,14 +1685,10 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
           {mismatchDetail && (
             <div className="space-y-2 text-sm">
               <p>
-                План: {mismatchDetail.plan.toLocaleString("ru-RU", {
-                  maximumFractionDigits: 2,
-                })} ₽
+                План: {formatMoneyWhole(mismatchDetail.plan)} ₽
               </p>
               <p>
-                Факт: {mismatchDetail.fact.toLocaleString("ru-RU", {
-                  maximumFractionDigits: 2,
-                })} ₽
+                Факт: {formatMoneyWhole(mismatchDetail.fact)} ₽
               </p>
             </div>
           )}

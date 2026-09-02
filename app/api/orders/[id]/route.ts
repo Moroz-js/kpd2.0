@@ -7,7 +7,7 @@ import { updateOrder } from "@/lib/services/orders";
 const patchSchema = z.object({
   description: z.string().min(1).optional(),
   projectId: z.string().optional(),
-  contractNumber: z.string().nullable().optional(),
+  contractNumber: z.string().trim().min(1, "Введите номер договора / допсоглашения"),
   status: z.enum(["active", "archived"]).optional(),
 });
 

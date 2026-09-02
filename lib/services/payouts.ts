@@ -15,6 +15,10 @@
 
 import { prisma } from "@/lib/db";
 import { logActivity, diff } from "@/lib/audit/log";
+import {
+  captureCashflowCommentValues,
+  logCashflowCommentValueChanges,
+} from "@/lib/cashflow-comment-activity";
 import type { PayoutSource } from "@/lib/views/payouts";
 import {
   clearOtherExpensePayment,
@@ -74,6 +78,7 @@ async function updatePaymentSource(paymentId: string, patch: PayoutPatch, userId
   if (patch.plannedPayAt !== undefined) {
     await propagatePlanDate(paymentId, patch.plannedPayAt ?? null, userId);
   }
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   // Возврат в «Запланировано» → очистить дату оплаты
   if (patch.paymentStatus === "planned" && before.paymentStatus !== "planned") {
@@ -131,6 +136,7 @@ async function updatePaymentSource(paymentId: string, patch: PayoutPatch, userId
       changes,
     });
   }
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 
   return updated;
 }
@@ -190,6 +196,7 @@ export async function deletePayout(
 async function deletePaymentSource(paymentId: string, userId: string) {
   const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
   if (!payment) throw new Error("Payment not found");
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   await prisma.$transaction(async (tx) => {
     // Откатываем работы: paymentId=NULL, paidAt=NULL, paid → checked
@@ -211,6 +218,7 @@ async function deletePaymentSource(paymentId: string, userId: string) {
     entityId: paymentId,
     entityLabel: `Выплата · ${payment.periodYear}.${String(payment.periodMonth).padStart(2, "0")}`,
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 
   return { ok: true };
 }

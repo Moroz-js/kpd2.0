@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { Plus, Pencil, Archive, ArchiveRestore } from "lucide-react";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
+import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
+import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
 import { ConfirmDialog } from "@/components/ui-custom/ConfirmDialog";
 import { ENTITY_STATUSES } from "@/lib/statuses";
@@ -25,6 +27,8 @@ import {
   usePersistedInterfaceState,
   usePersistedScroll,
 } from "@/components/PersistedInterfaceState";
+import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
+import { useCompatibleFilterOptions } from "@/lib/useCompatibleFilterOptions";
 
 type Row = {
   id: string;
@@ -69,6 +73,11 @@ export function BankAccountsClient() {
     field: "name",
     dir: "asc",
   });
+  const hasActiveFilters = statusFilter.length > 0;
+  const resetFilters = () => setStatusFilter([]);
+  const urlFilters = useUrlSyncedFilters([
+    { stateKey: "statusFilter", param: "status", kind: "array", value: statusFilter, defaultValue: [], setValue: setStatusFilter },
+  ]);
 
   const [editing, setEditing] = React.useState<Row | "new" | null>(null);
   const [archiveTarget, setArchiveTarget] = React.useState<Row | null>(null);
@@ -80,7 +89,7 @@ export function BankAccountsClient() {
     { activeTab, statusFilter, sort },
     (stored) => {
       if (stored.activeTab !== undefined) setActiveTab(stored.activeTab);
-      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
+      urlFilters.restorePersisted(stored);
       if (stored.sort) setSort(stored.sort);
     }
   );
@@ -102,6 +111,16 @@ export function BankAccountsClient() {
     });
     return list;
   }, [data, statusFilter, sort]);
+
+  const compatibleValues = useCompatibleFilterOptions(data, [
+    {
+      key: "status",
+      value: statusFilter,
+      setValue: setStatusFilter,
+      matches: (row, value) => !value.length || value.includes(row.status),
+      values: (row) => [row.status],
+    },
+  ]);
 
   function handleSort(field: string, dir: SortDir) {
     setSort({ field: field as SortField, dir });
@@ -168,10 +187,13 @@ export function BankAccountsClient() {
       {activeTab === "accounts" && (
       <>
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
           <MultiSelectFilter
             label="Статус"
-            options={Object.entries(ENTITY_STATUSES).map(([value, { label }]) => ({ value, label }))}
+            options={Object.entries(ENTITY_STATUSES)
+              .map(([value, { label }]) => ({ value, label }))
+              .filter((option) => compatibleValues.status?.has(option.value))}
             value={statusFilter}
             onChange={setStatusFilter}
           />
@@ -429,6 +451,9 @@ function BankAccountEditDialog({
               onAddOption={handleAddCurrency}
             />
           </div>
+          {row && (
+            <EntityActivityHistory entityType="BankAccount" entityId={row.id} />
+          )}
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
               Отмена

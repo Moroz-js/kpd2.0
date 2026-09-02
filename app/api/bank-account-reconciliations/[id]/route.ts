@@ -5,6 +5,10 @@ import { isAdmin } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { getISOWeek, getISOWeekYear } from "@/lib/iso-weeks";
 import { weekLabel } from "@/lib/format";
+import {
+  captureCashflowCommentValues,
+  logCashflowCommentValueChanges,
+} from "@/lib/cashflow-comment-activity";
 
 export async function DELETE(
   _req: NextRequest,
@@ -15,7 +19,9 @@ export async function DELETE(
   if (!isAdmin(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id } = await params;
+  const cashflowCommentValues = await captureCashflowCommentValues();
   await prisma.bankAccountReconciliation.delete({ where: { id } });
+  await logCashflowCommentValueChanges(cashflowCommentValues, user.id);
   return NextResponse.json({ ok: true });
 }
 
@@ -50,10 +56,12 @@ export async function PATCH(
     );
   }
 
+  const cashflowCommentValues = await captureCashflowCommentValues();
   const updated = await prisma.bankAccountReconciliation.update({
     where: { id },
     data: { date, isoWeek, isoWeekYear },
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, user.id);
 
   return NextResponse.json({ id: updated.id, date: updated.date.toISOString(), isoWeek, isoWeekYear, weekLabel: weekLabel(isoWeek) });
 }

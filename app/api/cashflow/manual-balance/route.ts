@@ -5,6 +5,10 @@ import { logActivity } from "@/lib/audit/log";
 import { prisma } from "@/lib/db";
 import { getISOWeeksInYear } from "@/lib/iso-weeks";
 import { isAdmin } from "@/lib/permissions";
+import {
+  captureCashflowCommentValues,
+  logCashflowCommentValueChanges,
+} from "@/lib/cashflow-comment-activity";
 
 const yearSchema = z.number().int().min(2020).max(2100);
 const putSchema = z.object({
@@ -61,6 +65,7 @@ export async function PUT(req: NextRequest) {
   if ((existing?.amount ?? null) === amount) {
     return NextResponse.json(existing ?? { year, week, amount: null });
   }
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   let record;
   if (amount === null) {
@@ -82,6 +87,11 @@ export async function PUT(req: NextRequest) {
     entityLabel: `Баланс руками · нед. ${week} / ${year}`,
     changes: { amount: { from: existing?.amount ?? null, to: amount } },
   });
+  await logCashflowCommentValueChanges(
+    cashflowCommentValues,
+    user.id,
+    (cell) => cell.rowKey === "summary:manualBalance"
+  );
 
   return NextResponse.json({ year, week, amount });
 }

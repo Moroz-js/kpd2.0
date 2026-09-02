@@ -3,7 +3,7 @@
  *
  * Правила (см. TZ-DORABOTKI.md §Глобальные правила):
  * - Деньги: разряды через неразрывный пробел, без знака валюты.
- *   Целые без копеек («1 234 567»), дробные до 2 знаков («0,75»).
+ *   Ровно два знака после запятой («1 234 567,00»).
  * - Дата:   dd.MM.yyyy (28.05.2026), отображение в Europe/Moscow.
  * - Время:  dd.MM.yyyy HH:mm.
  * - Неделя: "Неделя NN" (zero-pad).
@@ -14,8 +14,13 @@ const LOCALE = "ru-RU";
 
 const moneyFormatter = new Intl.NumberFormat(LOCALE, {
   style: "decimal",
-  minimumFractionDigits: 0,
+  minimumFractionDigits: 2,
   maximumFractionDigits: 2,
+  useGrouping: true,
+});
+const moneyWholeFormatter = new Intl.NumberFormat(LOCALE, {
+  style: "decimal",
+  maximumFractionDigits: 0,
   useGrouping: true,
 });
 
@@ -39,6 +44,12 @@ const dateTimeFormatter = new Intl.DateTimeFormat(LOCALE, {
 export function formatMoney(n: number | null | undefined): string {
   if (n == null) return "—";
   return moneyFormatter.format(n).replace(/\s/g, "\u00A0");
+}
+
+/** Денежное значение без дробной части для кэшфлоу и дашбордов. */
+export function formatMoneyWhole(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return moneyWholeFormatter.format(n).replace(/\s/g, "\u00A0");
 }
 
 /** Сумма с суффиксом «руб.» для агрегатов и итогов в шапке таблиц. */
@@ -105,6 +116,17 @@ export function monthLabel(m: number): string {
 
 export function monthFullLabel(m: number): string {
   return MONTH_FULL[m - 1] ?? String(m);
+}
+
+// Предложный падеж ("в январе", а не "в Январь") — для фраз вида
+// «Выплачено в {месяц}», где именительный падеж грамматически некорректен.
+const MONTH_PREPOSITIONAL = [
+  "январе", "феврале", "марте", "апреле", "мае", "июне",
+  "июле", "августе", "сентябре", "октябре", "ноябре", "декабре",
+];
+
+export function monthPrepositionalLabel(m: number): string {
+  return MONTH_PREPOSITIONAL[m - 1] ?? String(m);
 }
 
 export const MONTHS = Array.from({ length: 12 }, (_, i) => ({

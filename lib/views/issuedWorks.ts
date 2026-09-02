@@ -44,6 +44,8 @@ export type IssuedWorkRow = {
   techTask: string | null;
   rate: number | null;
   workStatus: string;
+  paymentId: string | null;
+  paymentStatus: string | null;
   comment: string | null;
   checkedAt: Date | null;
   paidAt: Date | null;
@@ -97,6 +99,7 @@ export async function listIssuedWorks(
         project: { select: { id: true, name: true, type: true } },
         workType: { select: { id: true, name: true, segment: true } },
         responsibleExecutor: { select: { id: true, name: true } },
+      payment: { select: { id: true, paymentStatus: true } },
       },
     }),
     db.otherExpense.findMany({
@@ -148,6 +151,8 @@ export async function listIssuedWorks(
       techTask: w.techTask,
       rate: w.rate,
       workStatus: w.workStatus,
+      paymentId: w.payment?.id ?? null,
+      paymentStatus: w.payment?.paymentStatus ?? null,
       comment: w.comment,
       checkedAt: w.checkedAt,
       paidAt: w.paidAt,
@@ -187,6 +192,8 @@ export async function listIssuedWorks(
       techTask: null,
       rate: null,
       workStatus: o.workStatus,
+      paymentId: o.paymentStatus ? o.id : null,
+      paymentStatus: o.paymentStatus,
       comment: o.comment,
       checkedAt: o.checkedAt,
       paidAt: o.paidAt,
