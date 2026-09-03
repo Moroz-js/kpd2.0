@@ -889,22 +889,20 @@ export function IssuedWorksClient() {
           value={smetaFilter}
           onChange={setSmetaFilter}
         />
-        <div className="ml-auto">
-          <MoreFilters activeCount={yearPlanFactFilter.length + executionYearFilter.length}>
-            <MultiSelectFilter
-              label="Год оплаты план-факт"
-              options={yearOptions}
-              value={yearPlanFactFilter}
-              onChange={setYearPlanFactFilter}
-            />
-            <MultiSelectFilter
-              label="Год выполнения"
-              options={execYearOptions}
-              value={executionYearFilter}
-              onChange={setExecutionYearFilter}
-            />
-          </MoreFilters>
-        </div>
+        <MoreFilters activeCount={yearPlanFactFilter.length + executionYearFilter.length}>
+          <MultiSelectFilter
+            label="Год оплаты план-факт"
+            options={yearOptions}
+            value={yearPlanFactFilter}
+            onChange={setYearPlanFactFilter}
+          />
+          <MultiSelectFilter
+            label="Год выполнения"
+            options={execYearOptions}
+            value={executionYearFilter}
+            onChange={setExecutionYearFilter}
+          />
+        </MoreFilters>
       </div>
 
       {(rows.length > 0 || selectedIds.size > 0) && (

@@ -903,11 +903,9 @@ export function PayoutsClient() {
           value={smetaFilter}
           onChange={setSmetaFilter}
         />
-        <div className="ml-auto">
-          <MoreFilters activeCount={periodYearFilter.length}>
-            <MultiSelectFilter label="Год выполнения" options={periodYearOptions} value={periodYearFilter} onChange={setPeriodYearFilter} />
-          </MoreFilters>
-        </div>
+        <MoreFilters activeCount={periodYearFilter.length}>
+          <MultiSelectFilter label="Год выполнения" options={periodYearOptions} value={periodYearFilter} onChange={setPeriodYearFilter} />
+        </MoreFilters>
       </div>
 
       {/* Bulk toolbar */}
