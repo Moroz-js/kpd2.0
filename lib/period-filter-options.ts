@@ -65,10 +65,11 @@ export function getMonthFilterMetadata(
 ): PeriodFilterOptionMetadata {
   if (periods.length === 0) return {};
 
-  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  // В варианте фильтра месяц не содержит года. Поэтому сравниваем номер месяца
+  // с текущим календарным годом, а не с годами строк: январь остаётся прошлым
+  // даже при наличии записи за январь следующего года.
+  const currentMonth = now.getMonth() + 1;
   return {
-    muted: periods.every(
-      ({ year, month }) => new Date(year, month - 1, 1) < currentMonthStart,
-    ),
+    muted: periods[0].month < currentMonth,
   };
 }
