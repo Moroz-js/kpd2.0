@@ -87,5 +87,7 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Статические файлы из public не должны проходить через auth-proxy, иначе
+  // вместо изображения браузер получает редирект на страницу входа.
+  matcher: ["/((?!_next/static|_next/image|.*\\..*).*)"],
 };

@@ -33,4 +33,27 @@ node scripts/migrate-excel.mjs --run --production
 
 ## Деплой
 
-Vercel + Neon PostgreSQL. Схему в Neon применять отдельно: `npm run db:migrate` с prod `DATABASE_URL`.
+### Staging — ветка `dev`
+
+Ветка `dev` — стенд для внутренней проверки. Изменения в ней разворачиваются в
+Vercel и используют внутреннюю базу Neon. Перед слиянием в `main` проверьте
+функциональность на staging.
+
+### Production — ветка `main`
+
+Ветка `main` — production. При каждом push GitHub Actions:
+
+1. устанавливает зависимости и выполняет TypeScript-проверку;
+2. после успешной проверки запускает развёртывание по SSH на сервер КПД.
+
+Не пушьте непроверенные изменения напрямую в `main`.
+
+### База данных
+
+Схему Neon нужно применять отдельно с соответствующим окружению `DATABASE_URL`:
+
+```bash
+npm run db:migrate
+```
+
+Локальная разработка использует SQLite (`npm run db:push`).

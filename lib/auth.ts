@@ -2,6 +2,16 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { prisma } from "@/lib/db";
 import bcrypt from "bcryptjs";
+import {
+  assertLoginAllowed,
+  clearLoginFailures,
+  loginRateLimitKeys,
+  registerLoginFailure,
+} from "@/lib/login-rate-limit";
+
+// Сравнение выполняется и для отсутствующего/заблокированного аккаунта, чтобы
+// ответ по времени не раскрывал существование email.
+const DUMMY_PASSWORD_HASH = "$2b$10$2D4ok271vYsipx6VsG1.4eJyBmI0LqC0SI8Hq2369qyVgz.OoxA9S";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   secret: process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET,
@@ -19,26 +29,38 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
-      authorize: async (credentials) => {
+      authorize: async (credentials, request) => {
         if (!credentials?.email || !credentials?.password) return null;
 
         const email = String(credentials.email).trim().toLowerCase();
+        const rateLimitKeys = loginRateLimitKeys(email, request);
+        try {
+          if (!await assertLoginAllowed(rateLimitKeys)) return null;
+        } catch {
+          // При сбое хранилища лимитов запрещаем вход, а не даём обход защиты.
+          return null;
+        }
+
         const user = await prisma.user.findUnique({
           where: { email },
           include: { executor: true },
         });
 
-        if (!user) return null;
-        if (!user.isActive) return null;
-        if (user.executor && !user.executor.accessEmail?.trim()) return null;
-        if (user.executor?.accessRevokedAt) return null;
-        if (user.executor?.status === "archived") return null;
-
+        const accountAvailable =
+          !!user &&
+          user.isActive &&
+          (!user.executor || !!user.executor.accessEmail?.trim()) &&
+          !user.executor?.accessRevokedAt &&
+          user.executor?.status !== "archived";
         const isValid = await bcrypt.compare(
           credentials.password as string,
-          user.password
+          user?.password ?? DUMMY_PASSWORD_HASH,
         );
-        if (!isValid) return null;
+        if (!accountAvailable || !isValid) {
+          await registerLoginFailure(rateLimitKeys).catch(() => {});
+          return null;
+        }
+        await clearLoginFailures(rateLimitKeys).catch(() => {});
 
         const exec = user.executor;
         return {
