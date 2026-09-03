@@ -49,6 +49,7 @@ import {
   usePersistedScroll,
 } from "@/components/PersistedInterfaceState";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
+import { MoreFilters } from "@/components/ui-custom/MoreFilters";
 import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
 import { useCompatibleFilterOptions } from "@/lib/useCompatibleFilterOptions";
 import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
@@ -1094,16 +1095,6 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
             Спрятать оплаченные группы
           </label>
           <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
-          <div className="mr-2 border-r pr-2">
-            <MultiSelectFilter
-              label="Год"
-              options={allYears
-                .map((year) => ({ value: String(year), label: `${year} год` }))
-                .filter((option) => compatibleValues.year?.has(option.value))}
-              value={filterYear}
-              onChange={setFilterYear}
-            />
-          </div>
           <MultiSelectFilter
             label="Тип строк"
             options={[
@@ -1153,6 +1144,16 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
             onChange={setFilterBank}
             popoverClassName="w-80"
           />
+          <MoreFilters activeCount={filterYear.length}>
+            <MultiSelectFilter
+              label="Год"
+              options={allYears
+                .map((year) => ({ value: String(year), label: `${year} год` }))
+                .filter((option) => compatibleValues.year?.has(option.value))}
+              value={filterYear}
+              onChange={setFilterYear}
+            />
+          </MoreFilters>
         </div>
       </div>
 

@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Pencil, Trash2, CircleDollarSign, X } from "lucide-react";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
+import { MoreFilters } from "@/components/ui-custom/MoreFilters";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
 import { OverduePaymentSummary } from "@/components/ui-custom/OverduePaymentSummary";
 import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
@@ -878,9 +879,6 @@ export function PayoutsClient() {
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
-        <div className="mr-2 border-r pr-2">
-          <MultiSelectFilter label="Год выполнения" options={periodYearOptions} value={periodYearFilter} onChange={setPeriodYearFilter} />
-        </div>
         <GroupBySelect
           value={groupBy}
           onChange={handleGroupByChange}
@@ -905,6 +903,11 @@ export function PayoutsClient() {
           value={smetaFilter}
           onChange={setSmetaFilter}
         />
+        <div className="ml-auto">
+          <MoreFilters activeCount={periodYearFilter.length}>
+            <MultiSelectFilter label="Год выполнения" options={periodYearOptions} value={periodYearFilter} onChange={setPeriodYearFilter} />
+          </MoreFilters>
+        </div>
       </div>
 
       {/* Bulk toolbar */}

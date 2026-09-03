@@ -30,6 +30,7 @@ import { OverduePaymentSummary } from "@/components/ui-custom/OverduePaymentSumm
 import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
 import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
+import { MoreFilters } from "@/components/ui-custom/MoreFilters";
 import { SortableHead } from "@/components/ui-custom/SortableHead";
 import { WORK_STATUSES, PAYMENT_STATUSES } from "@/lib/statuses";
 import { formatMoney, formatMoneyRub, formatDateShort, MONTHS } from "@/lib/format";
@@ -1107,16 +1108,6 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
         <div className="ml-auto flex flex-wrap gap-2">
           {/* Фильтры */}
           <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
-          <div className="mr-2 border-r pr-2">
-            <MultiSelectFilter
-              label="Год"
-              options={allYears
-                .map(y => ({ value: String(y), label: `${y} год` }))
-                .filter((option) => compatibleValues.year?.has(option.value))}
-              value={fYear}
-              onChange={setFYear}
-            />
-          </div>
           <MultiSelectFilter
             label="Месяц"
             options={monthOptions}
@@ -1170,6 +1161,16 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
             value={fPayStatus}
             onChange={setFPayStatus}
           />
+          <MoreFilters activeCount={fYear.length}>
+            <MultiSelectFilter
+              label="Год"
+              options={allYears
+                .map(y => ({ value: String(y), label: `${y} год` }))
+                .filter((option) => compatibleValues.year?.has(option.value))}
+              value={fYear}
+              onChange={setFYear}
+            />
+          </MoreFilters>
         </div>
       </div>
 

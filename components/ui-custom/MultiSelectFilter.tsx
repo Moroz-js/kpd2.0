@@ -124,23 +124,23 @@ export function MultiSelectFilter({
             variant="outline"
             size="sm"
             className={cn(
-              "h-8 text-xs font-normal whitespace-nowrap",
+              "h-8 justify-between text-xs font-normal whitespace-nowrap",
               value.length > 0 && "border-neutral-400 bg-neutral-50",
               className
             )}
           >
-            <span className="truncate max-w-44">{triggerLabel}</span>
+            <span className="min-w-0 flex-1 truncate text-left">{triggerLabel}</span>
             {value.length > 0 ? (
               <span
                 role="button"
                 tabIndex={0}
                 onClick={clear}
-                className="ml-1 -mr-1 rounded-sm p-0.5 hover:bg-neutral-200"
+                className="ml-1 -mr-1 shrink-0 rounded-sm p-0.5 hover:bg-neutral-200"
               >
                 <X className="h-3 w-3" />
               </span>
             ) : (
-              <ChevronDown className="ml-1 h-3 w-3 opacity-60" />
+              <ChevronDown className="ml-1 h-3 w-3 shrink-0 opacity-60" />
             )}
           </Button>
         }

@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Pencil, CheckCircle2, X } from "lucide-react";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
+import { MoreFilters } from "@/components/ui-custom/MoreFilters";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
 import { OverduePaymentSummary } from "@/components/ui-custom/OverduePaymentSummary";
 import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
@@ -830,24 +831,10 @@ export function IssuedWorksClient() {
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
-        <div className="mr-2 border-r pr-2">
-          <MultiSelectFilter
-            label="Год оплаты план-факт"
-            options={yearOptions}
-            value={yearPlanFactFilter}
-            onChange={setYearPlanFactFilter}
-          />
-        </div>
         <GroupBySelect
           value={groupBy}
           onChange={handleGroupByChange}
           options={[...ISSUED_WORK_GROUP_OPTIONS]}
-        />
-        <MultiSelectFilter
-          label="Год выполнения"
-          options={execYearOptions}
-          value={executionYearFilter}
-          onChange={setExecutionYearFilter}
         />
         <MultiSelectFilter
           label="Месяц"
@@ -902,6 +889,22 @@ export function IssuedWorksClient() {
           value={smetaFilter}
           onChange={setSmetaFilter}
         />
+        <div className="ml-auto">
+          <MoreFilters activeCount={yearPlanFactFilter.length + executionYearFilter.length}>
+            <MultiSelectFilter
+              label="Год оплаты план-факт"
+              options={yearOptions}
+              value={yearPlanFactFilter}
+              onChange={setYearPlanFactFilter}
+            />
+            <MultiSelectFilter
+              label="Год выполнения"
+              options={execYearOptions}
+              value={executionYearFilter}
+              onChange={setExecutionYearFilter}
+            />
+          </MoreFilters>
+        </div>
       </div>
 
       {(rows.length > 0 || selectedIds.size > 0) && (
