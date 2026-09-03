@@ -44,15 +44,11 @@ export function getWeekFilterMetadata(
   const current = periods.some(
     ({ year, week }) => year === currentYear && week === currentWeek,
   );
-  const muted = periods.every(
-    ({ year, week }) => isoWeekEnd(year, week) < currentWeekStart,
-  );
   const olderThanFourWeeks = periods.every(
     ({ year, week }) => isoWeekEnd(year, week) < fourWeeksAgo,
   );
 
   return {
-    muted,
     current,
     ...(olderThanFourWeeks ? { group: PAST_WEEKS_GROUP } : {}),
   };
@@ -65,11 +61,10 @@ export function getMonthFilterMetadata(
 ): PeriodFilterOptionMetadata {
   if (periods.length === 0) return {};
 
-  // В варианте фильтра месяц не содержит года. Поэтому сравниваем номер месяца
-  // с текущим календарным годом, а не с годами строк: январь остаётся прошлым
-  // даже при наличии записи за январь следующего года.
+  // В варианте фильтра месяц не содержит года, поэтому текущим считаем месяц
+  // текущего календарного года независимо от дат строк.
   const currentMonth = now.getMonth() + 1;
   return {
-    muted: periods[0].month < currentMonth,
+    current: periods.some(({ month }) => month === currentMonth),
   };
 }
