@@ -52,10 +52,10 @@ import {
   usePersistedScroll,
 } from "@/components/PersistedInterfaceState";
 
-/** Ширины колонок (19) — table-fixed, иначе правые колонки сжимаются и наезжают друг на друга */
+/** Ширины колонок (20) — table-fixed, иначе правые колонки сжимаются и наезжают друг на друга */
 const ACTIONS_COL_WIDTH = 152;
 const COL_WIDTHS = [
-  40, 96, 112, 72, 192, 116, 124, 104, 100, 124, 104, 192, 148, 208, 140, 140, 124, 84, ACTIONS_COL_WIDTH,
+  40, 96, 112, 72, 192, 116, 124, 104, 100, 104, 124, 104, 192, 148, 208, 140, 140, 124, 84, ACTIONS_COL_WIDTH,
 ] as const;
 const COL_COUNT = COL_WIDTHS.length;
 const TABLE_MIN_WIDTH = COL_WIDTHS.reduce((s, w) => s + w, 0);
@@ -91,6 +91,7 @@ type OtherExpense = {
   description: string;
   amount: number;
   paymentAmount: number | null;
+  payoutNumber: string | null;
   preferredPayMethod: string | null;
   plannedPayAt: string | null;
   paidAt: string | null;
@@ -370,6 +371,9 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
           <span className="text-neutral-300">—</span>
         )}
       </TableCell>
+      <TableCell className={cn(cellClip, "tabular-nums whitespace-nowrap")} title={row.payoutNumber ?? undefined}>
+        <div className="truncate">{row.payoutNumber ?? "—"}</div>
+      </TableCell>
       <TableCell className={cn(cellClip, "whitespace-nowrap", !!row.paidAt && overdue && "bg-red-100 text-red-700")}>
         {inlineActive === "paidAt" ? (
           <input
@@ -516,6 +520,7 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
   const [fResponsible, setFResponsible] = useState<string[]>([]);
   const [fWorkStatus, setFWorkStatus] = useState<string[]>([]);
   const [fPayStatus, setFPayStatus] = useState<string[]>([]);
+  const [overdueOnly, setOverdueOnly] = useState(false);
   const [sort, setSort] = useState<{ field: SortField; dir: SortDir } | null>(null);
   const overdueTotal = React.useMemo(
     () => overduePaymentTotal(rows.map((row) => ({
@@ -529,10 +534,18 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
   const hasActiveFilters =
     fMonth.length > 0 || fPayWeek.length > 0 || fProject.length > 0 ||
     fExecutor.length > 0 || fWorkType.length > 0 || fResponsible.length > 0 ||
-    fWorkStatus.length > 0 || fPayStatus.length > 0;
+    fWorkStatus.length > 0 || fPayStatus.length > 0 || overdueOnly;
   const resetFilters = () => {
     setFMonth([]); setFPayWeek([]); setFProject([]); setFExecutor([]);
+    setFWorkType([]); setFResponsible([]); setFWorkStatus([]); setFPayStatus([]); setOverdueOnly(false);
+  };
+  const showOverdue = () => {
+    // Агрегат считается по всем строкам, поэтому выбираем все доступные годы:
+    // в таблице остаются все и только записи, учтённые в сумме.
+    setFYear(Array.from(new Set(rows.map((row) => String(row.executionYear)))));
+    setFMonth([]); setFPayWeek([]); setFProject([]); setFExecutor([]);
     setFWorkType([]); setFResponsible([]); setFWorkStatus([]); setFPayStatus([]);
+    setOverdueOnly(true);
   };
 
   const urlFilters = useUrlSyncedFilters([
@@ -545,6 +558,7 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
     { stateKey: "fResponsible", param: "responsible", kind: "array", value: fResponsible, defaultValue: [], setValue: setFResponsible },
     { stateKey: "fWorkStatus", param: "workStatus", kind: "array", value: fWorkStatus, defaultValue: [], setValue: setFWorkStatus },
     { stateKey: "fPayStatus", param: "payStatus", kind: "array", value: fPayStatus, defaultValue: [], setValue: setFPayStatus },
+    { stateKey: "overdueOnly", param: "overdue", kind: "boolean", value: overdueOnly, defaultValue: false, setValue: setOverdueOnly },
   ]);
 
   usePersistedInterfaceState(
@@ -559,6 +573,7 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
       fResponsible,
       fWorkStatus,
       fPayStatus,
+      overdueOnly,
       sort,
     },
     (stored) => {
@@ -578,6 +593,7 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
       fResponsible,
       fWorkStatus,
       fPayStatus,
+      overdueOnly,
       sort,
     },
   });
@@ -594,7 +610,10 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
     finally { setLoading(false); }
   }, [fetchData]);
 
-  const silentLoad = useCallback(() => { fetchData().then(setRows).catch(() => {}); }, [fetchData]);
+  const silentLoad = useCallback(
+    () => fetchData().then(setRows).catch(() => {}),
+    [fetchData]
+  );
 
   useEffect(() => { load(); }, [load]);
 
@@ -713,13 +732,18 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
       if (fResponsible.length && !fResponsible.includes(r.responsibleExecutorId ?? "__empty__")) return false;
       if (fWorkStatus.length && !fWorkStatus.includes(r.workStatus)) return false;
       if (fPayStatus.length && !fPayStatus.includes(r.paymentStatus ?? "__empty__")) return false;
+      if (overdueOnly && !isOverduePayment({
+        status: r.paymentStatus,
+        paidAt: r.paidAt,
+        plannedPayAt: r.plannedPayAt,
+      })) return false;
       return true;
     });
     if (sort) {
       list = [...list].sort((a, b) => compareOtherExpenses(a, b, sort.field, sort.dir));
     }
     return list;
-  }, [rows, fYear, fMonth, fPayWeek, fProject, fExecutor, fWorkType, fResponsible, fWorkStatus, fPayStatus, sort]);
+  }, [rows, fYear, fMonth, fPayWeek, fProject, fExecutor, fWorkType, fResponsible, fWorkStatus, fPayStatus, overdueOnly, sort]);
 
   function handleSort(field: string, dir: SortDir) {
     setSort({ field: field as SortField, dir });
@@ -1069,7 +1093,10 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
 
   return (
     <div className="flex flex-col gap-4 h-full min-h-0">
-      <PageHeader title="Прочие траты" actions={<OverduePaymentSummary amount={overdueTotal} />} />
+      <PageHeader
+        title="Прочие траты"
+        actions={<OverduePaymentSummary amount={overdueTotal} onClick={showOverdue} active={overdueOnly} />}
+      />
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -1248,6 +1275,7 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
               <SortableHead field="paymentStatus" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
                 Статус выплаты
               </SortableHead>
+              <TableHead className={compactHead}>Выплата</TableHead>
               <SortableHead field="paidAt" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
                 <span className="inline-flex items-center gap-1">
                   Дата оплаты факт
@@ -1313,7 +1341,11 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
           permanentExecutors={permanentExecutors} bankAccounts={bankAccounts}
           initial={editTarget}
           onClose={() => setEditTarget(null)}
-          onSaved={() => { setEditTarget(null); silentLoad(); toast.success("Сохранено"); }}
+          onSaved={async () => {
+            await silentLoad();
+            setEditTarget(null);
+            toast.success("Сохранено");
+          }}
         />
       )}
 

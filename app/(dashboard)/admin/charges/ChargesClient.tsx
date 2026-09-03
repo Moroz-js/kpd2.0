@@ -570,6 +570,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
   const [fProject, setFProject] = useState<string[]>([]);
   const [fWeek, setFWeek] = useState<string[]>([]);
   const [hidePaid, setHidePaid] = useState(false);
+  const [overdueOnly, setOverdueOnly] = useState(false);
   const [groupBy, setGroupBy] = useState<"" | "bank" | "week" | "project">("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [sort, setSort] = useState<{ field: SortField; dir: SortDir } | null>(null);
@@ -591,10 +592,15 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
   );
   const hasActiveFilters =
     fBankAccount.length > 0 || fOrder.length > 0 || fStatus.length > 0 ||
-    fClient.length > 0 || fProject.length > 0 || fWeek.length > 0 || hidePaid;
+    fClient.length > 0 || fProject.length > 0 || fWeek.length > 0 || hidePaid || overdueOnly;
   const resetFilters = () => {
     setFBankAccount([]); setFOrder([]); setFStatus([]); setFClient([]);
+    setFProject([]); setFWeek([]); setHidePaid(false); setOverdueOnly(false);
+  };
+  const showOverdue = () => {
+    setFBankAccount([]); setFOrder([]); setFStatus([]); setFClient([]);
     setFProject([]); setFWeek([]); setHidePaid(false);
+    setOverdueOnly(true);
   };
 
   const urlFilters = useUrlSyncedFilters([
@@ -605,6 +611,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
     { stateKey: "fProject", param: "project", kind: "array", value: fProject, defaultValue: [], setValue: setFProject },
     { stateKey: "fWeek", param: "week", kind: "array", value: fWeek, defaultValue: [], setValue: setFWeek },
     { stateKey: "hidePaid", param: "hidePaid", kind: "boolean", value: hidePaid, defaultValue: false, setValue: setHidePaid },
+    { stateKey: "overdueOnly", param: "overdue", kind: "boolean", value: overdueOnly, defaultValue: false, setValue: setOverdueOnly },
   ]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -619,6 +626,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
       fProject,
       fWeek,
       hidePaid,
+      overdueOnly,
       groupBy,
       collapsedGroups,
       sort,
@@ -640,6 +648,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
       fProject,
       fWeek,
       hidePaid,
+      overdueOnly,
       groupBy,
       collapsedGroups,
       sort,
@@ -658,7 +667,10 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
     finally { setLoading(false); }
   }, [fetchData]);
 
-  const silentLoad = useCallback(() => { fetchData().then(setRows).catch(() => {}); }, [fetchData]);
+  const silentLoad = useCallback(
+    () => fetchData().then(setRows).catch(() => {}),
+    [fetchData]
+  );
 
   useEffect(() => { load(); }, [load]);
 
@@ -677,6 +689,14 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
     if (fWeek.length) {
       if (!fWeek.includes(payWeekKey(r))) return false;
     }
+    if (overdueOnly && (
+      r.bankAccount?.currency?.toUpperCase() !== "RUB" ||
+      !isOverduePayment({
+        status: r.status,
+        paidAt: r.paidAt,
+        plannedPayAt: r.paidPlanAt,
+      })
+    )) return false;
     return true;
   });
 
@@ -1056,7 +1076,10 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
 
   return (
     <div className="flex flex-col gap-4 h-full min-h-0">
-      <PageHeader title="Начисления" actions={<OverduePaymentSummary amount={overdueTotal} />} />
+      <PageHeader
+        title="Начисления"
+        actions={<OverduePaymentSummary amount={overdueTotal} onClick={showOverdue} active={overdueOnly} />}
+      />
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -1287,9 +1310,11 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
         <ChargeFormDialog bankAccounts={bankAccounts} orders={orders}
           initial={editTarget}
           onClose={() => setEditTarget(null)}
-          onSaved={() => {
+          onSaved={async () => {
+            // Ждём обновления данных до закрытия — иначе при быстром повторном
+            // открытии той же записи форма показывает не обновлённый кэш.
+            await silentLoad();
             setEditTarget(null);
-            silentLoad();
             toast.success("Сохранено");
           }} />
       )}

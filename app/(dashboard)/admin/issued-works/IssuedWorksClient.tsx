@@ -86,6 +86,7 @@ type Row = {
   description: string | null;
   workStatus: string;
   paymentId: string | null;
+  payoutNumber: string | null;
   paymentStatus: string | null;
   checkedAt: string | null;
   paidAt: string | null;
@@ -230,14 +231,14 @@ const IssuedWorkRow = React.memo(function IssuedWorkRow({
         {r.responsibleExecutorName ?? "—"}
       </TableCell>
       <TableCell className={cn(compactCell, compactCellClip, "tabular-nums")}>
-        {r.paymentId ? (
+        {r.paymentId && r.payoutNumber ? (
           <button
             type="button"
-            title={r.paymentId}
+            title={r.payoutNumber}
             className="block w-full truncate text-left text-blue-600 hover:underline"
             onClick={() => onOpenPayment(r)}
           >
-            {r.paymentId}
+            {r.payoutNumber}
           </button>
         ) : "—"}
       </TableCell>
@@ -290,6 +291,7 @@ export function IssuedWorksClient() {
   const [workTypeFilter, setWorkTypeFilter] = React.useState<string[]>([]);
   const [statusFilter, setStatusFilter] = React.useState<string[]>([]);
   const [smetaFilter, setSmetaFilter] = React.useState<string[]>([]);
+  const [overdueOnly, setOverdueOnly] = React.useState(false);
   const [groupBy, setGroupBy] = React.useState<"" | "executor" | "week" | "project" | "workType">("");
   const [collapsedGroups, setCollapsedGroups] = React.useState<Set<string>>(() => new Set());
 
@@ -306,11 +308,28 @@ export function IssuedWorksClient() {
     executionYearFilter.length > 0 || executionMonthFilter.length > 0 ||
     weekFilter.length > 0 || executorFilter.length > 0 || responsibleExecutorFilter.length > 0 ||
     projectFilter.length > 0 || workTypeFilter.length > 0 || statusFilter.length > 0 ||
-    smetaFilter.length > 0;
+    smetaFilter.length > 0 || overdueOnly;
   const resetFilters = () => {
     setExecutionYearFilter([]); setExecutionMonthFilter([]); setWeekFilter([]);
     setExecutorFilter([]); setResponsibleExecutorFilter([]); setProjectFilter([]);
+    setWorkTypeFilter([]); setStatusFilter([]); setSmetaFilter([]); setOverdueOnly(false);
+  };
+  const showOverdue = () => {
+    // Сумма в шапке не ограничена годом и прочими фильтрами, поэтому показываем
+    // ровно те строки, которые в неё входят.
+    setYearPlanFactFilter(
+      Array.from(
+        new Set(
+          (data ?? []).map((row) =>
+            row.yearPlanFact === null ? "__empty__" : String(row.yearPlanFact)
+          )
+        )
+      )
+    );
+    setExecutionYearFilter([]); setExecutionMonthFilter([]); setWeekFilter([]);
+    setExecutorFilter([]); setResponsibleExecutorFilter([]); setProjectFilter([]);
     setWorkTypeFilter([]); setStatusFilter([]); setSmetaFilter([]);
+    setOverdueOnly(true);
   };
 
   const urlFilters = useUrlSyncedFilters([
@@ -324,6 +343,7 @@ export function IssuedWorksClient() {
     { stateKey: "workTypeFilter", param: "workType", kind: "array", value: workTypeFilter, defaultValue: [], setValue: setWorkTypeFilter },
     { stateKey: "statusFilter", param: "status", kind: "array", value: statusFilter, defaultValue: [], setValue: setStatusFilter },
     { stateKey: "smetaFilter", param: "smeta", kind: "array", value: smetaFilter, defaultValue: [], setValue: setSmetaFilter },
+    { stateKey: "overdueOnly", param: "overdue", kind: "boolean", value: overdueOnly, defaultValue: false, setValue: setOverdueOnly },
   ]);
 
   // Bulk
@@ -346,6 +366,7 @@ export function IssuedWorksClient() {
       workTypeFilter,
       statusFilter,
       smetaFilter,
+      overdueOnly,
       groupBy,
       collapsedGroups,
       sort,
@@ -370,6 +391,7 @@ export function IssuedWorksClient() {
       workTypeFilter,
       statusFilter,
       smetaFilter,
+      overdueOnly,
       groupBy,
       collapsedGroups,
       sort,
@@ -431,8 +453,8 @@ export function IssuedWorksClient() {
     },
     {
       key: "week", value: weekFilter, setValue: setWeekFilter,
-      matches: (row, values) => !values.length || values.includes(row.weekPlanFact === null ? "__empty__" : String(row.weekPlanFact)),
-      values: (row) => [row.weekPlanFact === null ? "__empty__" : String(row.weekPlanFact)],
+      matches: (row, values) => !values.length || values.includes(issuedWorkWeekKey(row)),
+      values: (row) => [issuedWorkWeekKey(row)],
     },
     {
       key: "executor", value: executorFilter, setValue: setExecutorFilter,
@@ -502,20 +524,22 @@ export function IssuedWorksClient() {
       }));
   }, [allRows, compatibleValues.execMonth, executionYearFilter]);
   const weekOptions = React.useMemo(() => {
-    const periodsByWeek = new Map<number, { year: number; week: number }[]>();
+    // Ключ включает год ("YYYY-WW"): неделя №2 2025-го и неделя №2 2026-го — это
+    // разные календарные периоды и не должны схлопываться в один вариант фильтра
+    // (иначе «прошлое» и «будущее» смешиваются под одним номером недели).
+    const map = new Map<string, { year: number; week: number }>();
     for (const row of allRows) {
       if (row.weekPlanFact == null || row.yearPlanFact == null) continue;
-      const periods = periodsByWeek.get(row.weekPlanFact) ?? [];
-      periods.push({ year: row.yearPlanFact, week: row.weekPlanFact });
-      periodsByWeek.set(row.weekPlanFact, periods);
+      const key = issuedWorkWeekKey(row);
+      if (!map.has(key)) map.set(key, { year: row.yearPlanFact, week: row.weekPlanFact });
     }
-    const opts = Array.from(periodsByWeek.entries())
-      .filter(([week]) => compatibleValues.week?.has(String(week)))
-      .sort(([a], [b]) => a - b)
-      .map(([week, periods]) => ({
-        value: String(week),
-        label: weekLabel(week),
-        ...getWeekFilterMetadata(periods),
+    const opts = Array.from(map.entries())
+      .filter(([key]) => compatibleValues.week?.has(key))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, period]) => ({
+        value: key,
+        label: `${weekLabel(period.week)} ${period.year}`,
+        ...getWeekFilterMetadata([period]),
       }));
     const hasEmpty = allRows.some((r) => r.weekPlanFact === null);
     return hasEmpty && compatibleValues.week?.has("__empty__")
@@ -583,7 +607,7 @@ export function IssuedWorksClient() {
       list = list.filter((r) => executionYearFilter.includes(String(r.executionYear)));
     if (executionMonthFilter.length)
       list = list.filter((r) => executionMonthFilter.includes(String(r.executionMonth)));
-    if (weekFilter.length) list = list.filter((r) => weekFilter.includes(r.weekPlanFact === null ? "__empty__" : String(r.weekPlanFact)));
+    if (weekFilter.length) list = list.filter((r) => weekFilter.includes(issuedWorkWeekKey(r)));
     if (executorFilter.length) list = list.filter((r) => executorFilter.includes(r.executorId));
     if (responsibleExecutorFilter.length)
       list = list.filter((r) =>
@@ -593,6 +617,13 @@ export function IssuedWorksClient() {
     if (workTypeFilter.length) list = list.filter((r) => workTypeFilter.includes(r.workTypeId));
     if (statusFilter.length) list = list.filter((r) => statusFilter.includes(r.workStatus));
     if (smetaFilter.length) list = list.filter((r) => smetaFilter.includes(r.sourceType));
+    if (overdueOnly) {
+      list = list.filter((r) => isOverduePayment({
+        status: r.workStatus,
+        paidAt: r.paidAt,
+        plannedPayAt: r.plannedPayAt,
+      }));
+    }
     return [...list].sort(compareRows);
   }, [
     allRows,
@@ -606,6 +637,7 @@ export function IssuedWorksClient() {
     workTypeFilter,
     statusFilter,
     smetaFilter,
+    overdueOnly,
     sort,
   ]);
 
@@ -791,7 +823,10 @@ export function IssuedWorksClient() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <PageHeader title="Выставленные работы" actions={<OverduePaymentSummary amount={overdueTotal} />} />
+      <PageHeader
+        title="Выставленные работы"
+        actions={<OverduePaymentSummary amount={overdueTotal} onClick={showOverdue} active={overdueOnly} />}
+      />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
@@ -1014,7 +1049,7 @@ export function IssuedWorksClient() {
               >
                 Ответственный
               </SortableHead>
-              <TableHead className={cn(compactHead, "w-24 max-w-24")}>ID выплаты</TableHead>
+              <TableHead className={cn(compactHead, "w-24 max-w-24")}>Выплата</TableHead>
               <TableHead className={cn(compactHead, "w-32")}>Тип сметы</TableHead>
               <SortableHead
                 field="executionYear"
@@ -1064,9 +1099,11 @@ export function IssuedWorksClient() {
           executors={executors ?? []}
           workTypes={workTypes ?? []}
           onClose={() => setEditing(null)}
-          onSaved={() => {
+          onSaved={async () => {
+            // Ждём обновления данных до закрытия — иначе при быстром повторном
+            // открытии форма показывает не обновлённый кэш SWR.
+            await mutate();
             setEditing(null);
-            mutate();
           }}
         />
       )}
@@ -1076,9 +1113,9 @@ export function IssuedWorksClient() {
           executors={executors ?? []}
           banks={banks ?? []}
           onClose={() => setEditingPayment(null)}
-          onSaved={() => {
+          onSaved={async () => {
+            await mutate();
             setEditingPayment(null);
-            mutate();
           }}
         />
       )}

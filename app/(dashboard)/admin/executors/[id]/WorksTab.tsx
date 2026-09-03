@@ -360,7 +360,7 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
     finally { setLoading(false); }
   }, [fetchData]);
 
-  const silentLoad = useCallback(() => { fetchData().catch(() => {}); }, [fetchData]);
+  const silentLoad = useCallback(() => fetchData().catch(() => {}), [fetchData]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -984,8 +984,8 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
     return (
       <>
         <td className="border-b border-neutral-100 px-1 py-1 w-8" />
-        <td className={cn(td, "whitespace-nowrap")}>
-          {paymentMonth ? `Выплачено в ${paymentMonth}` : "—"}
+        <td className={cn(td, cellClip)} title={paymentMonth ? `Выплачено в ${paymentMonth}` : undefined}>
+          <div className="truncate">{paymentMonth ? `Выплачено в ${paymentMonth}` : "—"}</div>
         </td>
         <td className={cn(tdr, "font-semibold text-green-800", diff.has("amount") && changedCell)}>{formatMoney(p.amount)}</td>
         <td className={cn(td, diff.has("plannedPayAt") && changedCell)}>
@@ -1359,7 +1359,12 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
           isAdmin={isAdmin}
           permanentExecutors={permanentExecutors}
           onClose={() => setEditWork(null)}
-          onSaved={() => { setEditWork(null); silentLoad(); }}
+          onSaved={async () => {
+            // Ждём обновления данных до закрытия — иначе при быстром повторном
+            // открытии той же записи форма показывает не обновлённый кэш.
+            await silentLoad();
+            setEditWork(null);
+          }}
         />
       )}
 
@@ -1371,7 +1376,10 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
           linkedWorks={worksByPayment.get(editPayment.id) ?? []}
           availableWorks={checkedUnlinked}
           onClose={() => setEditPayment(null)}
-          onSaved={() => { setEditPayment(null); silentLoad(); }}
+          onSaved={async () => {
+            await silentLoad();
+            setEditPayment(null);
+          }}
         />
       )}
 

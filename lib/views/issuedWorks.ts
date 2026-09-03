@@ -45,6 +45,7 @@ export type IssuedWorkRow = {
   rate: number | null;
   workStatus: string;
   paymentId: string | null;
+  payoutNumber: string | null;
   paymentStatus: string | null;
   comment: string | null;
   checkedAt: Date | null;
@@ -99,7 +100,7 @@ export async function listIssuedWorks(
         project: { select: { id: true, name: true, type: true } },
         workType: { select: { id: true, name: true, segment: true } },
         responsibleExecutor: { select: { id: true, name: true } },
-      payment: { select: { id: true, paymentStatus: true } },
+        payment: { select: { id: true, payoutNumber: true, paymentStatus: true } },
       },
     }),
     db.otherExpense.findMany({
@@ -152,6 +153,7 @@ export async function listIssuedWorks(
       rate: w.rate,
       workStatus: w.workStatus,
       paymentId: w.payment?.id ?? null,
+      payoutNumber: w.payment?.payoutNumber ?? null,
       paymentStatus: w.payment?.paymentStatus ?? null,
       comment: w.comment,
       checkedAt: w.checkedAt,
@@ -193,6 +195,7 @@ export async function listIssuedWorks(
       rate: null,
       workStatus: o.workStatus,
       paymentId: o.paymentStatus ? o.id : null,
+      payoutNumber: o.payoutNumber,
       paymentStatus: o.paymentStatus,
       comment: o.comment,
       checkedAt: o.checkedAt,

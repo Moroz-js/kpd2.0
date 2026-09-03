@@ -336,6 +336,7 @@ export function PayoutsClient() {
   const [statusFilter, setStatusFilter] = React.useState<string[]>([]);
   const [bankFilter, setBankFilter] = React.useState<string[]>([]);
   const [smetaFilter, setSmetaFilter] = React.useState<string[]>([]);
+  const [overdueOnly, setOverdueOnly] = React.useState(false);
   const [groupBy, setGroupBy] = React.useState<"" | "executor" | "payWeek" | "month" | "bankAccount">("");
   const [collapsedGroups, setCollapsedGroups] = React.useState<Set<string>>(() => new Set());
 
@@ -364,10 +365,20 @@ export function PayoutsClient() {
   const hasActiveFilters =
     periodMonthFilter.length > 0 || weekFilter.length > 0 ||
     executorFilter.length > 0 || statusFilter.length > 0 ||
-    bankFilter.length > 0 || smetaFilter.length > 0;
+    bankFilter.length > 0 || smetaFilter.length > 0 || overdueOnly;
   const resetFilters = () => {
     setPeriodMonthFilter([]); setWeekFilter([]); setExecutorFilter([]);
+    setStatusFilter([]); setBankFilter([]); setSmetaFilter([]); setOverdueOnly(false);
+  };
+  const showOverdue = () => {
+    // Агрегат считается по всем строкам: выбираем все доступные годы, чтобы
+    // список после клика точно соответствовал сумме в шапке.
+    setPeriodYearFilter(
+      Array.from(new Set((data ?? []).map((row) => String(row.periodYear))))
+    );
+    setPeriodMonthFilter([]); setWeekFilter([]); setExecutorFilter([]);
     setStatusFilter([]); setBankFilter([]); setSmetaFilter([]);
+    setOverdueOnly(true);
   };
 
   const urlFilters = useUrlSyncedFilters([
@@ -378,6 +389,7 @@ export function PayoutsClient() {
     { stateKey: "statusFilter", param: "status", kind: "array", value: statusFilter, defaultValue: [], setValue: setStatusFilter },
     { stateKey: "bankFilter", param: "bank", kind: "array", value: bankFilter, defaultValue: [], setValue: setBankFilter },
     { stateKey: "smetaFilter", param: "smeta", kind: "array", value: smetaFilter, defaultValue: [], setValue: setSmetaFilter },
+    { stateKey: "overdueOnly", param: "overdue", kind: "boolean", value: overdueOnly, defaultValue: false, setValue: setOverdueOnly },
   ]);
 
   usePersistedInterfaceState(
@@ -390,6 +402,7 @@ export function PayoutsClient() {
       statusFilter,
       bankFilter,
       smetaFilter,
+      overdueOnly,
       groupBy,
       collapsedGroups,
       sort,
@@ -411,6 +424,7 @@ export function PayoutsClient() {
       statusFilter,
       bankFilter,
       smetaFilter,
+      overdueOnly,
       groupBy,
       collapsedGroups,
       sort,
@@ -467,8 +481,8 @@ export function PayoutsClient() {
     },
     {
       key: "week", value: weekFilter, setValue: setWeekFilter,
-      matches: (row, values) => !values.length || values.includes(row.weekPlanFact === null ? "__empty__" : String(row.weekPlanFact)),
-      values: (row) => [row.weekPlanFact === null ? "__empty__" : String(row.weekPlanFact)],
+      matches: (row, values) => !values.length || values.includes(payoutWeekKey(row)),
+      values: (row) => [payoutWeekKey(row)],
     },
     {
       key: "executor", value: executorFilter, setValue: setExecutorFilter,
@@ -517,20 +531,22 @@ export function PayoutsClient() {
       }));
   }, [allRows, compatibleValues.month, periodYearFilter]);
   const weekOptions = React.useMemo(() => {
-    const periodsByWeek = new Map<number, { year: number; week: number }[]>();
+    // Ключ включает год ("YYYY-WW"): неделя №2 2025-го и неделя №2 2026-го — это
+    // разные календарные периоды и не должны схлопываться в один вариант фильтра
+    // (иначе «прошлое» и «будущее» смешиваются под одним номером недели).
+    const map = new Map<string, { year: number; week: number }>();
     for (const row of allRows) {
       if (row.weekPlanFact == null || row.yearPlanFact == null) continue;
-      const periods = periodsByWeek.get(row.weekPlanFact) ?? [];
-      periods.push({ year: row.yearPlanFact, week: row.weekPlanFact });
-      periodsByWeek.set(row.weekPlanFact, periods);
+      const key = payoutWeekKey(row);
+      if (!map.has(key)) map.set(key, { year: row.yearPlanFact, week: row.weekPlanFact });
     }
-    const opts = Array.from(periodsByWeek.entries())
-      .filter(([week]) => compatibleValues.week?.has(String(week)))
-      .sort(([a], [b]) => a - b)
-      .map(([week, periods]) => ({
-        value: String(week),
-        label: weekLabel(week),
-        ...getWeekFilterMetadata(periods),
+    const opts = Array.from(map.entries())
+      .filter(([key]) => compatibleValues.week?.has(key))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, period]) => ({
+        value: key,
+        label: `${weekLabel(period.week)} ${period.year}`,
+        ...getWeekFilterMetadata([period]),
       }));
     const hasEmpty = allRows.some((r) => r.weekPlanFact === null);
     return hasEmpty && compatibleValues.week?.has("__empty__")
@@ -559,13 +575,20 @@ export function PayoutsClient() {
     let list = allRows;
     if (periodYearFilter.length) list = list.filter((r) => periodYearFilter.includes(String(r.periodYear)));
     if (periodMonthFilter.length) list = list.filter((r) => periodMonthFilter.includes(String(r.periodMonth)));
-    if (weekFilter.length) list = list.filter((r) => weekFilter.includes(r.weekPlanFact === null ? "__empty__" : String(r.weekPlanFact)));
+    if (weekFilter.length) list = list.filter((r) => weekFilter.includes(payoutWeekKey(r)));
     if (executorFilter.length) list = list.filter((r) => executorFilter.includes(r.executorId));
     if (statusFilter.length) list = list.filter((r) => statusFilter.includes(r.paymentStatus));
     if (bankFilter.length) list = list.filter((r) => bankFilter.includes(r.bankAccountId ?? "__empty__"));
     if (smetaFilter.length) list = list.filter((r) => smetaFilter.includes(r.sourceType));
+    if (overdueOnly) {
+      list = list.filter((r) => isOverduePayment({
+        status: r.paymentStatus,
+        paidAt: r.paidAt,
+        plannedPayAt: r.plannedPayAt,
+      }));
+    }
     return [...list].sort(compareRows);
-  }, [allRows, periodYearFilter, periodMonthFilter, weekFilter, executorFilter, statusFilter, bankFilter, smetaFilter, sort]);
+  }, [allRows, periodYearFilter, periodMonthFilter, weekFilter, executorFilter, statusFilter, bankFilter, smetaFilter, overdueOnly, sort]);
 
   const orderedRowIds = React.useMemo(() => rows.map(rowKey), [rows]);
   const rowIndexById = React.useMemo(() => {
@@ -848,7 +871,10 @@ export function PayoutsClient() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <PageHeader title="Выплаты" actions={<OverduePaymentSummary amount={overdueTotal} />} />
+      <PageHeader
+        title="Выплаты"
+        actions={<OverduePaymentSummary amount={overdueTotal} onClick={showOverdue} active={overdueOnly} />}
+      />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
@@ -1052,7 +1078,14 @@ export function PayoutsClient() {
           executors={executors ?? []}
           banks={banks ?? []}
           onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); mutate(); }}
+          onSaved={async () => {
+            // Сначала ждём обновления данных, потом закрываем диалог — иначе при
+            // быстром повторном открытии той же записи форма успевает
+            // проинициализироваться от ещё не обновлённого кэша SWR и
+            // показывает старые значения, хотя сохранение уже прошло.
+            await mutate();
+            setEditing(null);
+          }}
         />
       )}
 
