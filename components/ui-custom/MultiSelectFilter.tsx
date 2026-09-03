@@ -109,7 +109,11 @@ export function MultiSelectFilter({
       if (!map.has(id)) map.set(id, { group, opts: [] });
       map.get(id)!.opts.push(opt);
     }
-    return Array.from(map.entries()).map(([id, entry]) => ({ id, ...entry }));
+    // Архив периодов всегда располагаем после обычных вариантов — порядок
+    // исходных опций в разных таблицах может отличаться.
+    return Array.from(map.entries())
+      .map(([id, entry]) => ({ id, ...entry }))
+      .sort((a, b) => Number(a.id === "past-weeks") - Number(b.id === "past-weeks"));
   }, [filtered]);
 
   return (
