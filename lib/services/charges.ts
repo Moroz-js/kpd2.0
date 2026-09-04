@@ -114,12 +114,23 @@ export async function duplicateCharges(ids: string[], userId: string) {
   }
 
   const sourcesById = new Map(sources.map((charge) => [charge.id, charge]));
-  // Плановая оплата дубликата — 5-е число месяца, следующего от месяца дублирования (не от исходной даты).
+  // Плановая оплата дубликата — 5-е число следующего месяца от периода
+  // исходного начисления, а не от дня, когда пользователь нажал «Дублировать».
   const now = new Date();
-  const paidPlanAt = new Date(now.getFullYear(), now.getMonth() + 1, 5);
   const created = [];
   for (const id of ids) {
     const source = sourcesById.get(id)!;
+    const sourcePeriod =
+      source.paidAt ??
+      source.paidPlanAt ??
+      source.issuedAt ??
+      source.issuedPlanAt ??
+      now;
+    const paidPlanAt = new Date(
+      sourcePeriod.getFullYear(),
+      sourcePeriod.getMonth() + 1,
+      5,
+    );
     const copy = await createCharge(
       {
         bankAccountId: source.bankAccountId,
