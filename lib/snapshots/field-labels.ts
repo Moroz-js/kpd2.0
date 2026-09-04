@@ -190,6 +190,7 @@ export function fieldLabel(field: string, model?: string): string {
 /** Русские названия моделей snapshot для селектора в таблице сравнения. */
 export const MODEL_LABELS: Record<string, string> = {
   User: "Пользователи",
+  LoginRateLimit: "Лимиты входа",
   Executor: "Исполнители",
   Client: "Клиенты",
   Project: "Проекты",

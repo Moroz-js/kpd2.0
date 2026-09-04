@@ -24,6 +24,7 @@ const SCHEMA_VERSION = 2;
 const EXECUTION_LOCK = "snapshot-creation";
 const MODELS = [
   ["User", "user"],
+  ["LoginRateLimit", "loginRateLimit"],
   ["Executor", "executor"],
   ["Client", "client"],
   ["Project", "project"],
