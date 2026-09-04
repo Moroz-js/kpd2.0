@@ -4,6 +4,7 @@ export const SNAPSHOT_TIMEZONE = "Europe/Moscow";
 
 export const SNAPSHOT_MODELS = [
   "User",
+  "LoginRateLimit",
   "Executor",
   "Client",
   "Project",
@@ -38,6 +39,7 @@ export type SnapshotRecord = Record<string, unknown>;
 
 export const MODEL_DELEGATES: Record<SnapshotModel, string> = {
   User: "user",
+  LoginRateLimit: "loginRateLimit",
   Executor: "executor",
   Client: "client",
   Project: "project",
