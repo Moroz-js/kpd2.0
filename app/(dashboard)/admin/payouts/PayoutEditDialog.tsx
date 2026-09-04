@@ -52,7 +52,7 @@ export function PayoutEditDialog({
   executors: ExecutorOption[];
   banks: BankOption[];
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: () => void | Promise<void>;
 }) {
   const isPersonal = row.sourceType === "personal";
   const isOther = row.sourceType === "other-expense";
@@ -125,19 +125,24 @@ export function PayoutEditDialog({
     }
 
     setSubmitting(true);
-    const res = await fetch(`/api/payouts/${row.sourceType}:${row.sourceId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    setSubmitting(false);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      toast.error(err.error ?? "Не удалось сохранить");
-      return;
+    try {
+      const res = await fetch(`/api/payouts/${row.sourceType}:${row.sourceId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error ?? "Не удалось сохранить");
+        return;
+      }
+      toast.success("Изменения сохранены");
+      await onSaved();
+    } catch {
+      toast.error("Не удалось сохранить");
+    } finally {
+      setSubmitting(false);
     }
-    toast.success("Изменения сохранены");
-    onSaved();
   }
 
   return (

@@ -279,7 +279,7 @@ export function IssuedWorksClient() {
   const { data: projects } = useSWR<ProjectOption[]>("/api/projects/options", fetcher);
   const { data: executors } = useSWR<ExecutorOption[]>("/api/executors", fetcher);
   const { data: workTypes } = useSWR<WorkTypeOption[]>("/api/work-types", fetcher);
-  const { data: payouts } = useSWR<PayoutRowDTO[]>("/api/payouts", fetcher);
+  const { data: payouts, mutate: mutatePayouts } = useSWR<PayoutRowDTO[]>("/api/payouts", fetcher);
   const { data: banks } = useSWR<{ id: string; name: string; status: string }[]>("/api/bank-accounts", fetcher);
 
   const [yearPlanFactFilter, setYearPlanFactFilter] = React.useState<string[]>([String(new Date().getFullYear())]);
@@ -1115,7 +1115,7 @@ export function IssuedWorksClient() {
           banks={banks ?? []}
           onClose={() => setEditingPayment(null)}
           onSaved={async () => {
-            await mutate();
+            await Promise.all([mutate(), mutatePayouts()]);
             setEditingPayment(null);
           }}
         />
