@@ -240,8 +240,12 @@ export async function duplicateWorks(
     const src = byId.get(id)!;
     const executionMonth = src.executionMonth === 12 ? 1 : src.executionMonth + 1;
     const executionYear = src.executionMonth === 12 ? src.executionYear + 1 : src.executionYear;
-    // Оплата дубликата — 5-е число месяца после нового месяца выполнения.
-    const plannedPayAt = new Date(executionYear, executionMonth, 5);
+    // Плановая оплата — 5-е число месяца после план-факт даты исходной работы.
+    // Если даты нет, сохраняем правило от нового месяца выполнения.
+    const sourcePeriod = src.paidAt ?? src.plannedPayAt;
+    const plannedPayAt = sourcePeriod
+      ? new Date(sourcePeriod.getFullYear(), sourcePeriod.getMonth() + 1, 5)
+      : new Date(executionYear, executionMonth, 5);
     const copy = await withNumberedTransaction(async (tx) => {
       const number = await allocateEntityNumber(tx, "issued-work", executionYear);
       return tx.work.create({

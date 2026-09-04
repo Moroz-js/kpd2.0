@@ -294,10 +294,14 @@ export async function duplicateOtherExpenses(ids: string[], userId: string) {
   const cashflowCommentValues = await captureCashflowCommentValues();
   for (const id of ids) {
     const source = sourcesById.get(id)!;
-    // Месяц выполнения +1; плановая оплата — 5-е следующего после него месяца (как у работ).
+    // Месяц выполнения +1. Плановая оплата — 5-е месяца после план-факт даты
+    // исходной записи, а при её отсутствии — после нового месяца выполнения.
     const executionMonth = source.executionMonth === 12 ? 1 : source.executionMonth + 1;
     const executionYear = source.executionMonth === 12 ? source.executionYear + 1 : source.executionYear;
-    const plannedPayAt = new Date(executionYear, executionMonth, 5);
+    const sourcePeriod = source.paidAt ?? source.plannedPayAt;
+    const plannedPayAt = sourcePeriod
+      ? new Date(sourcePeriod.getFullYear(), sourcePeriod.getMonth() + 1, 5)
+      : new Date(executionYear, executionMonth, 5);
 
     const copy = await withNumberedTransaction(async (tx) => {
       const expenseNumber = await allocateEntityNumber(
