@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getSessionUser } from "@/lib/auth";
 import { isAdmin, canViewExecutorEstimate } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
+import { updateWork } from "@/lib/services/works";
 
 const bulkSchema = z.object({
   ids: z.array(z.string()).min(1),
@@ -39,8 +40,6 @@ export async function POST(
     return NextResponse.json({ error: "Some works not found for this executor" }, { status: 400 });
   }
 
-  const updateData: Record<string, unknown> = {};
-
   if (patch.workStatus !== undefined) {
     if (!isAdmin(user)) return NextResponse.json({ error: "Forbidden: status change requires admin" }, { status: 403 });
     // §5 (KPD-284): нельзя менять статус у работ, привязанных к выплате
@@ -50,22 +49,29 @@ export async function POST(
         { status: 400 }
       );
     }
-    updateData.workStatus = patch.workStatus;
   }
 
-  if (patch.plannedPayAt !== undefined) {
-    updateData.plannedPayAt = patch.plannedPayAt ? new Date(patch.plannedPayAt) : null;
-  }
-
-  if (Object.keys(updateData).length === 0) {
+  if (patch.workStatus === undefined && patch.plannedPayAt === undefined) {
     return NextResponse.json({ updated: 0 });
   }
 
-  // Дата оплаты план привязанных работ управляется выплатой — обновляем только непривязанные
-  const result = await prisma.work.updateMany({
-    where: { id: { in: ids }, executorId, paymentId: null },
-    data: updateData,
-  });
+  // Дата оплаты план привязанных работ управляется выплатой — обновляем только непривязанные;
+  // каждое изменение проводится через сервис, чтобы фиксироваться в истории (audit log).
+  let updated = 0;
+  for (const work of works) {
+    if (patch.plannedPayAt !== undefined && work.paymentId) continue;
+    try {
+      await updateWork(
+        work.id,
+        {
+          ...(patch.workStatus !== undefined && { workStatus: patch.workStatus }),
+          ...(patch.plannedPayAt !== undefined && { plannedPayAt: patch.plannedPayAt }),
+        },
+        user.id
+      );
+      updated++;
+    } catch { /* skip */ }
+  }
 
-  return NextResponse.json({ updated: result.count });
+  return NextResponse.json({ updated });
 }

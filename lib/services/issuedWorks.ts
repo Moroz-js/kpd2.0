@@ -12,6 +12,10 @@
 
 import { prisma } from "@/lib/db";
 import { logActivity, diff } from "@/lib/audit/log";
+import {
+  captureCashflowCommentValues,
+  logCashflowCommentValueChanges,
+} from "@/lib/cashflow-comment-activity";
 import type { IssuedWorkSource } from "@/lib/views/issuedWorks";
 import { checkOtherExpense, updateOtherExpense } from "@/lib/services/other-expenses";
 import { hasOtherExpensePayment } from "@/lib/other-expense-payment";
@@ -105,6 +109,7 @@ async function updatePersonal(workId: string, patch: IssuedWorkPatch, userId: st
       data.checkedAt = new Date();
     }
   }
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   const updated = await prisma.work.update({ where: { id: workId }, data });
 
@@ -136,6 +141,7 @@ async function updatePersonal(workId: string, patch: IssuedWorkPatch, userId: st
       changes,
     });
   }
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 
   return updated;
 }

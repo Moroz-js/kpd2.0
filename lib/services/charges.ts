@@ -1,5 +1,9 @@
 import { prisma } from "@/lib/db";
-import { logActivity } from "@/lib/audit/log";
+import { diff, logActivity } from "@/lib/audit/log";
+import {
+  captureCashflowCommentValues,
+  logCashflowCommentValueChanges,
+} from "@/lib/cashflow-comment-activity";
 
 // ─── Автогенерация номера начисления H001, H002, ... ─────────────────────────
 
@@ -72,6 +76,7 @@ export async function createCharge(input: CreateChargeInput, userId: string) {
   }
 
   const paidAt = input.paidAt ? new Date(input.paidAt) : null;
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   const charge = await prisma.charge.create({
     data: {
@@ -96,14 +101,58 @@ export async function createCharge(input: CreateChargeInput, userId: string) {
     entityId: charge.id,
     entityLabel: `${charge.chargeNumber} / ${invoiceNumber}`,
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 
   return charge;
+}
+
+/** Копирует начисления без статуса, фактических дат и номера счёта. */
+export async function duplicateCharges(ids: string[], userId: string) {
+  const sources = await prisma.charge.findMany({ where: { id: { in: ids } } });
+  if (sources.length !== ids.length) {
+    throw new Error("Не найдены все выбранные начисления");
+  }
+
+  const sourcesById = new Map(sources.map((charge) => [charge.id, charge]));
+  // Плановая оплата дубликата — 5-е число следующего месяца от периода
+  // исходного начисления, а не от дня, когда пользователь нажал «Дублировать».
+  const now = new Date();
+  const created = [];
+  for (const id of ids) {
+    const source = sourcesById.get(id)!;
+    const sourcePeriod =
+      source.paidAt ??
+      source.paidPlanAt ??
+      source.issuedAt ??
+      source.issuedPlanAt ??
+      now;
+    const paidPlanAt = new Date(
+      sourcePeriod.getFullYear(),
+      sourcePeriod.getMonth() + 1,
+      5,
+    );
+    const copy = await createCharge(
+      {
+        bankAccountId: source.bankAccountId,
+        orderId: source.orderId,
+        amount: source.amount,
+        issuedPlanAt: source.issuedPlanAt?.toISOString() ?? null,
+        paidPlanAt: paidPlanAt.toISOString(),
+        paymentPurpose: source.paymentPurpose,
+      },
+      userId
+    );
+    created.push(copy);
+  }
+
+  return created;
 }
 
 // ─── Update ───────────────────────────────────────────────────────────────────
 
 export async function updateCharge(id: string, patch: UpdateChargeInput, userId: string) {
   const existing = await prisma.charge.findUniqueOrThrow({ where: { id } });
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   const newPaidAt = patch.paidAt !== undefined
     ? (patch.paidAt ? new Date(patch.paidAt) : null)
@@ -149,13 +198,41 @@ export async function updateCharge(id: string, patch: UpdateChargeInput, userId:
     },
   });
 
-  await logActivity({
-    userId,
-    action: "update",
-    entityType: "Charge",
-    entityId: id,
-    entityLabel: existing.chargeNumber,
-  });
+  const changes = diff(
+    {
+      bankAccountId: existing.bankAccountId,
+      orderId: existing.orderId,
+      amount: existing.amount,
+      issuedPlanAt: existing.issuedPlanAt,
+      issuedAt: existing.issuedAt,
+      paidPlanAt: existing.paidPlanAt,
+      paidAt: existing.paidAt,
+      paymentPurpose: existing.paymentPurpose,
+      status: existing.status,
+    },
+    {
+      bankAccountId: updated.bankAccountId,
+      orderId: updated.orderId,
+      amount: updated.amount,
+      issuedPlanAt: updated.issuedPlanAt,
+      issuedAt: updated.issuedAt,
+      paidPlanAt: updated.paidPlanAt,
+      paidAt: updated.paidAt,
+      paymentPurpose: updated.paymentPurpose,
+      status: updated.status,
+    }
+  );
+  if (Object.keys(changes).length > 0) {
+    await logActivity({
+      userId,
+      action: "update",
+      entityType: "Charge",
+      entityId: id,
+      entityLabel: existing.chargeNumber,
+      changes,
+    });
+  }
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 
   return updated;
 }
@@ -164,6 +241,7 @@ export async function updateCharge(id: string, patch: UpdateChargeInput, userId:
 
 export async function deleteCharge(id: string, userId: string) {
   const existing = await prisma.charge.findUniqueOrThrow({ where: { id } });
+  const cashflowCommentValues = await captureCashflowCommentValues();
   await prisma.charge.delete({ where: { id } });
   await logActivity({
     userId,
@@ -172,4 +250,5 @@ export async function deleteCharge(id: string, userId: string) {
     entityId: id,
     entityLabel: existing.chargeNumber,
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 }

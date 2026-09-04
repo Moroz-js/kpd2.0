@@ -9,6 +9,10 @@
  */
 import { prisma } from "@/lib/db";
 import { logActivity } from "@/lib/audit/log";
+import {
+  captureCashflowCommentValues,
+  logCashflowCommentValueChanges,
+} from "@/lib/cashflow-comment-activity";
 import { parseLocalDateInput } from "@/lib/date-string";
 import { nearestPaymentDate } from "@/lib/iso-weeks";
 import { allocateEntityNumber, withNumberedTransaction } from "@/lib/services/entity-numbering";
@@ -61,6 +65,7 @@ export async function createPaymentFromWorks(
   const amount = works.reduce((s, w) => s + w.amount, 0);
   const bankAccountId = await resolveDefaultBank(executorId);
   const plannedPayAt = nearestPaymentDate();
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   const payment = await withNumberedTransaction(async (tx) => {
     const number = await allocateEntityNumber(tx, "payout", plannedPayAt.getFullYear());
@@ -92,6 +97,7 @@ export async function createPaymentFromWorks(
     entityId: payment.id,
     entityLabel: `Выплата на ${works.length} работ`,
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 
   return payment;
 }
@@ -112,6 +118,7 @@ export async function setPaymentWorkLinks(
   if (payment.paymentStatus === "paid") {
     throw new Error("Чтобы изменить список привязанных работ, смените статус выплаты на «запланирована» (если она ещё не оплачена)");
   }
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   await prisma.$transaction(async (tx) => {
     if (add.length > 0) {
@@ -154,6 +161,7 @@ export async function setPaymentWorkLinks(
     entityId: paymentId,
     entityLabel: `Состав выплаты ${payment.periodMonth}/${payment.periodYear}`,
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 }
 
 // ─── Ручное создание («Добавить выплату») ───────────────────────────────────
@@ -256,6 +264,7 @@ export async function updatePayment(
     } else if (toStatus === "planned") {
       // paid → planned: работы из «оплачено» возвращаются в «проверена»
       const wasPaidLike = fromStatus === "paid";
+      const cashflowCommentValues = await captureCashflowCommentValues();
       await prisma.$transaction(async (tx) => {
         await tx.payment.update({
           where: { id: paymentId },
@@ -266,6 +275,7 @@ export async function updatePayment(
           data: { workStatus: "checked", ...(wasPaidLike && { paidAt: null }) },
         });
       });
+      await logCashflowCommentValueChanges(cashflowCommentValues, userId);
     }
   }
 
@@ -317,6 +327,7 @@ export async function markPaymentPaid(
   userId: string
 ) {
   const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   await prisma.$transaction(async (tx) => {
     await tx.payment.update({
@@ -339,6 +350,7 @@ export async function markPaymentPaid(
     entityLabel: `Выплата ${payment.periodMonth}/${payment.periodYear}`,
     changes: { paymentStatus: { from: payment.paymentStatus, to: "paid" } },
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 }
 
 // ─── §1.12 Смена плана выплаты ─────────────────────────────────────────────
@@ -349,6 +361,7 @@ export async function propagatePlanDate(
   userId: string
 ) {
   const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   await prisma.$transaction(async (tx) => {
     await tx.payment.update({ where: { id: paymentId }, data: { plannedPayAt } });
@@ -368,12 +381,14 @@ export async function propagatePlanDate(
     entityLabel: `Выплата ${payment.periodMonth}/${payment.periodYear}`,
     changes: { plannedPayAt: { from: payment.plannedPayAt, to: plannedPayAt } },
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 }
 
 // ─── Удаление выплаты (только admin, через TDNB-17) ───────────────────────
 
 export async function deletePaymentForExecutor(paymentId: string, userId: string) {
   const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   await prisma.$transaction(async (tx) => {
     // Снять paymentId у связанных работ + откатить статус оплаты (остаются «проверена»)
@@ -392,4 +407,5 @@ export async function deletePaymentForExecutor(paymentId: string, userId: string
     entityId: paymentId,
     entityLabel: `Выплата ${payment.periodMonth}/${payment.periodYear}`,
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 }

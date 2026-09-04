@@ -21,11 +21,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { MONTHS, formatDate } from "@/lib/format";
+import { MONTHS, formatDate, formatMoney } from "@/lib/format";
 import { nearestPaymentDate, toLocalDateString } from "@/lib/iso-weeks";
 import { sortByNameRu } from "@/lib/sort";
 import { WORK_STATUSES, WORK_STATUSES_SETTABLE, EXECUTOR_TYPES, PROJECT_TYPES } from "@/lib/statuses";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
+import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
 import type { IssuedWorkRowDTO } from "./IssuedWorksClient";
 
 export type SmetaType = "personal" | "other-expense";
@@ -133,7 +134,7 @@ export function IssuedWorkEditDialog({
             </div>
             <div>
               <span className="text-neutral-500">Сумма: </span>
-              <span className="font-medium">{row.amount.toLocaleString("ru-RU")} ₽</span>
+              <span className="font-medium">{formatMoney(row.amount)} ₽</span>
             </div>
             <div>
               <span className="text-neutral-500">Год оплаты (план-факт): </span>
@@ -292,6 +293,11 @@ export function IssuedWorkEditDialog({
               </>
             )}
           </div>
+
+          <EntityActivityHistory
+            entityType={isPersonal ? "Work" : "OtherExpense"}
+            entityId={row.sourceId}
+          />
 
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>

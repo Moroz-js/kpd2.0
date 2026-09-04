@@ -34,6 +34,18 @@ export function isSuperAdmin(user: SessionLike | null | undefined): boolean {
   return user?.role === "admin" && user?.isSuperAdmin === true;
 }
 
+/** Сбрасывать пароль супер-администратора может только супер-администратор. */
+export function canResetUserPassword(
+  actor: SessionLike | null | undefined,
+  targetId: string,
+  targetIsSuperAdmin: boolean,
+): boolean {
+  if (!actor) return false;
+  if (targetIsSuperAdmin) return isSuperAdmin(actor);
+  if (actor.id === targetId) return isSuperAdmin(actor);
+  return isAdmin(actor);
+}
+
 /** Назначать/снимать роль admin — только супер-админ. */
 export function canManageAdmins(user: SessionLike | null | undefined): boolean {
   return isSuperAdmin(user);

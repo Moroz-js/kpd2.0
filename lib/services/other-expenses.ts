@@ -1,5 +1,9 @@
 import { prisma } from "@/lib/db";
-import { logActivity } from "@/lib/audit/log";
+import { diff, logActivity } from "@/lib/audit/log";
+import {
+  captureCashflowCommentValues,
+  logCashflowCommentValueChanges,
+} from "@/lib/cashflow-comment-activity";
 import { nearestPaymentDate, resolvePlannedPayAtOnCheck } from "@/lib/iso-weeks";
 import { assertExecutorEligibleForOtherExpense } from "@/lib/executor-personal-estimate";
 import {
@@ -216,6 +220,7 @@ export async function createOtherExpense(
   const plannedPayAt = input.plannedPayAt
     ? parseDate(input.plannedPayAt, "Дата оплаты план")
     : nearestPaymentDate();
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   const expense = await withNumberedTransaction(async (tx) => {
     const expenseNumber = await allocateEntityNumber(tx, "other-expense", input.executionYear);
@@ -267,8 +272,91 @@ export async function createOtherExpense(
     entityId: expense.id,
     entityLabel: expense.description,
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 
   return expense;
+}
+
+/** Копирует прочие траты без статусов, выплаты и фактических дат. */
+export async function duplicateOtherExpenses(ids: string[], userId: string) {
+  const sources = await prisma.otherExpense.findMany({
+    where: { id: { in: ids } },
+  });
+  if (sources.length !== ids.length) {
+    throw new Error("Не найдены все выбранные прочие траты");
+  }
+  if (sources.some((source) => !source.responsibleExecutorId)) {
+    throw new Error("У траты не указан ответственный");
+  }
+
+  const sourcesById = new Map(sources.map((expense) => [expense.id, expense]));
+  const created = [];
+  const cashflowCommentValues = await captureCashflowCommentValues();
+  for (const id of ids) {
+    const source = sourcesById.get(id)!;
+    // Месяц выполнения +1. Плановая оплата — 5-е месяца после план-факт даты
+    // исходной записи, а при её отсутствии — после нового месяца выполнения.
+    const executionMonth = source.executionMonth === 12 ? 1 : source.executionMonth + 1;
+    const executionYear = source.executionMonth === 12 ? source.executionYear + 1 : source.executionYear;
+    const sourcePeriod = source.paidAt ?? source.plannedPayAt;
+    const plannedPayAt = sourcePeriod
+      ? new Date(sourcePeriod.getFullYear(), sourcePeriod.getMonth() + 1, 5)
+      : new Date(executionYear, executionMonth, 5);
+
+    const copy = await withNumberedTransaction(async (tx) => {
+      const expenseNumber = await allocateEntityNumber(
+        tx,
+        "other-expense",
+        executionYear
+      );
+      const issuedNumber = await allocateEntityNumber(
+        tx,
+        "issued-work",
+        executionYear
+      );
+      return tx.otherExpense.create({
+        data: {
+          otherExpenseNumber: expenseNumber.number,
+          otherExpenseNumberYear: expenseNumber.year,
+          otherExpenseNumberSerial: expenseNumber.serial,
+          issuedWorkNumber: issuedNumber.number,
+          issuedWorkNumberYear: issuedNumber.year,
+          issuedWorkNumberSerial: issuedNumber.serial,
+          projectId: source.projectId,
+          executorId: source.executorId,
+          workTypeId: source.workTypeId,
+          responsibleExecutorId: source.responsibleExecutorId,
+          bankAccountId: source.bankAccountId,
+          executionYear,
+          executionMonth,
+          description: source.description,
+          amount: source.amount,
+          preferredPayMethod: source.preferredPayMethod,
+          plannedPayAt,
+          comment: source.comment,
+          paymentAmount: null,
+          paidAt: null,
+          checkedAt: null,
+          workStatus: "submitted",
+          paymentStatus: null,
+          createdById: userId,
+        },
+        include: otherExpenseInclude,
+      });
+    });
+
+    await logActivity({
+      userId,
+      action: "create",
+      entityType: "OtherExpense",
+      entityId: copy.id,
+      entityLabel: `${copy.description} (копия)`,
+    });
+    created.push(copy);
+  }
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
+
+  return created;
 }
 
 // ─── Update ───────────────────────────────────────────────────────────────────
@@ -301,6 +389,7 @@ export async function updateOtherExpense(
     throw new Error(AMOUNTS_POSITIVE);
   }
   assertAmountsConsistent(amount, state.paymentAmount, state.paymentStatus);
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   const updated = await withNumberedTransaction(async (tx) => {
     const hasPayment = hasOtherExpensePayment(state.paymentStatus) && state.paymentAmount != null;
@@ -343,13 +432,55 @@ export async function updateOtherExpense(
     });
   });
 
-  await logActivity({
-    userId,
-    action: "update",
-    entityType: "OtherExpense",
-    entityId: id,
-    entityLabel: existing.description,
-  });
+  const changes = diff(
+    {
+      projectId: existing.projectId,
+      executorId: existing.executorId,
+      workTypeId: existing.workTypeId,
+      responsibleExecutorId: existing.responsibleExecutorId,
+      bankAccountId: existing.bankAccountId,
+      executionYear: existing.executionYear,
+      executionMonth: existing.executionMonth,
+      description: existing.description,
+      amount: existing.amount,
+      paymentAmount: existing.paymentAmount,
+      plannedPayAt: existing.plannedPayAt,
+      paidAt: existing.paidAt,
+      workStatus: existing.workStatus,
+      paymentStatus: existing.paymentStatus,
+      preferredPayMethod: existing.preferredPayMethod,
+      comment: existing.comment,
+    },
+    {
+      projectId: updated.projectId,
+      executorId: updated.executorId,
+      workTypeId: updated.workTypeId,
+      responsibleExecutorId: updated.responsibleExecutorId,
+      bankAccountId: updated.bankAccountId,
+      executionYear: updated.executionYear,
+      executionMonth: updated.executionMonth,
+      description: updated.description,
+      amount: updated.amount,
+      paymentAmount: updated.paymentAmount,
+      plannedPayAt: updated.plannedPayAt,
+      paidAt: updated.paidAt,
+      workStatus: updated.workStatus,
+      paymentStatus: updated.paymentStatus,
+      preferredPayMethod: updated.preferredPayMethod,
+      comment: updated.comment,
+    }
+  );
+  if (Object.keys(changes).length > 0) {
+    await logActivity({
+      userId,
+      action: "update",
+      entityType: "OtherExpense",
+      entityId: id,
+      entityLabel: existing.description,
+      changes,
+    });
+  }
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 
   return updated;
 }
@@ -367,6 +498,7 @@ export async function checkOtherExpense(id: string, userId: string) {
   }
 
   const plannedPayAt = resolvePlannedPayAtOnCheck(existing.plannedPayAt);
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   const updated = await withNumberedTransaction(async (tx) => {
     const number = existing.payoutNumber
@@ -401,6 +533,7 @@ export async function checkOtherExpense(id: string, userId: string) {
       paymentStatus: { from: existing.paymentStatus, to: "planned" },
     },
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 
   return updated;
 }
@@ -420,6 +553,7 @@ export async function revertOtherExpenseCheck(
   if (existing.paymentStatus === "paid") {
     throw new Error("Нельзя откатить: выплата уже оплачена");
   }
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   const updated = await prisma.otherExpense.update({
     where: { id },
@@ -447,6 +581,7 @@ export async function revertOtherExpenseCheck(
       paymentStatus: { from: existing.paymentStatus, to: null },
     },
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 
   return updated;
 }
@@ -455,6 +590,7 @@ export async function revertOtherExpenseCheck(
 
 export async function clearOtherExpensePayment(id: string, userId: string) {
   const existing = await prisma.otherExpense.findUniqueOrThrow({ where: { id } });
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   const updated = await prisma.otherExpense.update({
     where: { id },
@@ -479,6 +615,7 @@ export async function clearOtherExpensePayment(id: string, userId: string) {
     entityId: id,
     entityLabel: `Прочие траты · ${existing.description.slice(0, 40)} (очищена выплата)`,
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 
   return updated;
 }
@@ -487,6 +624,7 @@ export async function clearOtherExpensePayment(id: string, userId: string) {
 
 export async function deleteOtherExpense(id: string, userId: string) {
   const existing = await prisma.otherExpense.findUniqueOrThrow({ where: { id } });
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   await prisma.otherExpense.delete({ where: { id } });
 
@@ -497,4 +635,5 @@ export async function deleteOtherExpense(id: string, userId: string) {
     entityId: id,
     entityLabel: existing.description,
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 }

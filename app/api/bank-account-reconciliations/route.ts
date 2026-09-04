@@ -5,6 +5,10 @@ import { isAdmin } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { getISOWeek, getISOWeekYear } from "@/lib/iso-weeks";
 import { weekLabel } from "@/lib/format";
+import {
+  captureCashflowCommentValues,
+  logCashflowCommentValueChanges,
+} from "@/lib/cashflow-comment-activity";
 
 function isResultFilled(r: { foreignAmount: number | null; exchangeRate: number | null; amount: number | null; bankAccountCurrency: string }): boolean {
   if (r.bankAccountCurrency === "RUB") {
@@ -93,6 +97,7 @@ export async function POST(req: NextRequest) {
     select: { id: true },
   });
 
+  const cashflowCommentValues = await captureCashflowCommentValues();
   const reconciliation = await prisma.bankAccountReconciliation.create({
     data: {
       date,
@@ -104,6 +109,7 @@ export async function POST(req: NextRequest) {
       },
     },
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, user.id);
 
   return NextResponse.json({ id: reconciliation.id }, { status: 201 });
 }

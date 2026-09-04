@@ -14,7 +14,7 @@ export async function GET() {
 const createSchema = z.object({
   description: z.string().min(1, "Введите описание заказа"),
   projectId: z.string().min(1, "Выберите проект"),
-  contractNumber: z.string().nullable().optional(),
+  contractNumber: z.string().trim().min(1, "Введите номер договора / допсоглашения"),
 });
 
 export async function POST(req: Request) {

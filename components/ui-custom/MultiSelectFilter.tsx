@@ -5,10 +5,29 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Check, ChevronDown, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type MultiSelectOption = { value: string; label: string; group?: string };
+export type MultiSelectOptionGroup =
+  | string
+  | {
+      id: string;
+      label: string;
+      /** По умолчанию группа скрывает вложенные варианты. */
+      collapsible?: boolean;
+      /** Позволяет выбрать или снять все варианты группы. */
+      selectable?: boolean;
+    };
+
+export type MultiSelectOption = {
+  value: string;
+  label: string;
+  group?: MultiSelectOptionGroup;
+  /** Приглушённый вариант, например уже завершившийся период. */
+  muted?: boolean;
+  /** Выделенный вариант, например текущая ISO-неделя. */
+  current?: boolean;
+};
 
 export type MultiSelectFilterProps = {
   label: string;
@@ -33,6 +52,7 @@ export function MultiSelectFilter({
 }: MultiSelectFilterProps) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
+  const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(() => new Set());
   const valueSet = React.useMemo(() => new Set(value), [value]);
 
   function handleOpenChange(next: boolean) {
@@ -55,6 +75,15 @@ export function MultiSelectFilter({
     else onChange([...value, v]);
   }
 
+  function toggleGroup(opts: MultiSelectOption[]) {
+    const allSelected = opts.every((opt) => valueSet.has(opt.value));
+    if (allSelected) {
+      onChange(value.filter((item) => !opts.some((opt) => opt.value === item)));
+      return;
+    }
+    onChange([...value, ...opts.filter((opt) => !valueSet.has(opt.value)).map((opt) => opt.value)]);
+  }
+
   function clear(e: React.MouseEvent) {
     e.stopPropagation();
     onChange([]);
@@ -69,14 +98,22 @@ export function MultiSelectFilter({
   // Group options (после фильтрации; пустые группы не попадают)
   const grouped = React.useMemo(() => {
     const hasGroups = filtered.some((o) => o.group);
-    if (!hasGroups) return [{ group: null as string | null, opts: filtered }];
-    const map = new Map<string, MultiSelectOption[]>();
+    if (!hasGroups) return [{ id: "__ungrouped__", group: null as Exclude<MultiSelectOptionGroup, string> | null, opts: filtered }];
+    const map = new Map<string, { group: Exclude<MultiSelectOptionGroup, string> | null; opts: MultiSelectOption[] }>();
     for (const opt of filtered) {
-      const g = opt.group ?? "";
-      if (!map.has(g)) map.set(g, []);
-      map.get(g)!.push(opt);
+      const group =
+        typeof opt.group === "string"
+          ? { id: opt.group, label: opt.group }
+          : opt.group ?? null;
+      const id = group?.id ?? "__ungrouped__";
+      if (!map.has(id)) map.set(id, { group, opts: [] });
+      map.get(id)!.opts.push(opt);
     }
-    return Array.from(map.entries()).map(([group, opts]) => ({ group: group || null, opts }));
+    // Архив периодов всегда располагаем после обычных вариантов — порядок
+    // исходных опций в разных таблицах может отличаться.
+    return Array.from(map.entries())
+      .map(([id, entry]) => ({ id, ...entry }))
+      .sort((a, b) => Number(a.id === "past-weeks") - Number(b.id === "past-weeks"));
   }, [filtered]);
 
   return (
@@ -87,23 +124,23 @@ export function MultiSelectFilter({
             variant="outline"
             size="sm"
             className={cn(
-              "h-8 text-xs font-normal whitespace-nowrap",
+              "h-8 justify-between text-xs font-normal whitespace-nowrap",
               value.length > 0 && "border-neutral-400 bg-neutral-50",
               className
             )}
           >
-            <span className="truncate max-w-44">{triggerLabel}</span>
+            <span className="min-w-0 flex-1 truncate text-left">{triggerLabel}</span>
             {value.length > 0 ? (
               <span
                 role="button"
                 tabIndex={0}
                 onClick={clear}
-                className="ml-1 -mr-1 rounded-sm p-0.5 hover:bg-neutral-200"
+                className="ml-1 -mr-1 shrink-0 rounded-sm p-0.5 hover:bg-neutral-200"
               >
                 <X className="h-3 w-3" />
               </span>
             ) : (
-              <ChevronDown className="ml-1 h-3 w-3 opacity-60" />
+              <ChevronDown className="ml-1 h-3 w-3 shrink-0 opacity-60" />
             )}
           </Button>
         }
@@ -123,14 +160,60 @@ export function MultiSelectFilter({
           {options.length > 0 && filtered.length === 0 && (
             <div className="px-3 py-4 text-xs text-neutral-500 text-center">Ничего не найдено</div>
           )}
-          {grouped.map(({ group, opts }) => (
-            <React.Fragment key={group ?? "__ungrouped__"}>
+          {grouped.map(({ id, group, opts }) => {
+            const isCollapsed =
+              !!group?.collapsible &&
+              !search.trim() &&
+              !expandedGroups.has(id);
+            const allSelected = opts.length > 0 && opts.every((opt) => valueSet.has(opt.value));
+
+            return (
+            <React.Fragment key={id}>
               {group && (
-                <div className="px-2 pt-2 pb-0.5 text-[10px] font-semibold text-neutral-400 uppercase tracking-wide">
-                  {group}
+                <div className="flex items-center gap-0.5 px-1 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                  {group.collapsible && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-5 text-neutral-400 hover:text-neutral-700"
+                      aria-label={isCollapsed ? `Развернуть: ${group.label}` : `Свернуть: ${group.label}`}
+                      onClick={() => {
+                        setExpandedGroups((prev) => {
+                          const next = new Set(prev);
+                          if (isCollapsed) next.add(id);
+                          else next.delete(id);
+                          return next;
+                        });
+                      }}
+                    >
+                      {isCollapsed ? <ChevronRight className="size-3" /> : <ChevronDown className="size-3" />}
+                    </Button>
+                  )}
+                  {group.selectable ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-5 px-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400 hover:text-neutral-700"
+                      onClick={() => toggleGroup(opts)}
+                    >
+                      <span
+                        className={cn(
+                          "grid size-3 place-items-center rounded-[3px] border border-neutral-300",
+                          allSelected && "border-primary bg-primary text-primary-foreground",
+                        )}
+                      >
+                        {allSelected && <Check className="size-2.5" />}
+                      </span>
+                      {group.label}
+                    </Button>
+                  ) : (
+                    <span>{group.label}</span>
+                  )}
                 </div>
               )}
-              {opts.map((opt) => {
+              {!isCollapsed && opts.map((opt) => {
                 const checked = valueSet.has(opt.value);
                 return (
                   <button
@@ -143,13 +226,23 @@ export function MultiSelectFilter({
                     )}
                   >
                     <Checkbox checked={checked} onCheckedChange={() => toggle(opt.value)} />
-                    <span className={cn("flex-1 text-left", optionLabelClassName)}>{opt.label}</span>
+                    <span
+                      className={cn(
+                        "flex-1 text-left",
+                        opt.muted && "text-neutral-400",
+                        opt.current && "font-semibold text-neutral-900",
+                        optionLabelClassName,
+                      )}
+                    >
+                      {opt.label}
+                    </span>
                     {checked && <Check className="h-3 w-3 shrink-0 text-neutral-500" />}
                   </button>
                 );
               })}
             </React.Fragment>
-          ))}
+            );
+          })}
         </div>
       </PopoverContent>
     </Popover>

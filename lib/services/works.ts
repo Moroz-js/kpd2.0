@@ -3,6 +3,10 @@
  */
 import { prisma } from "@/lib/db";
 import { logActivity } from "@/lib/audit/log";
+import {
+  captureCashflowCommentValues,
+  logCashflowCommentValueChanges,
+} from "@/lib/cashflow-comment-activity";
 import { nearestPaymentDate } from "@/lib/iso-weeks";
 import { parseLocalDateInput } from "@/lib/date-string";
 import { resolveProjectManagerExecutorId } from "@/lib/services/projects";
@@ -69,6 +73,7 @@ export async function createWork(
     input.responsibleExecutorId !== undefined && input.responsibleExecutorId !== null
       ? input.responsibleExecutorId
       : await resolveProjectManagerExecutorId(input.projectId);
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   const created = await withNumberedTransaction(async (tx) => {
     const number = await allocateEntityNumber(tx, "issued-work", input.executionYear);
@@ -103,6 +108,7 @@ export async function createWork(
     entityId: created.id,
     entityLabel: `Работа ${created.executionMonth}/${created.executionYear}`,
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 
   return created;
 }
@@ -137,6 +143,7 @@ export async function updateWork(
       }
     }
   }
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   const updated = await prisma.$transaction(async (tx) => {
     const row = await tx.work.update({
@@ -185,6 +192,7 @@ export async function updateWork(
     entityId: workId,
     entityLabel: `Работа ${updated.executionMonth}/${updated.executionYear}`,
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 
   return updated;
 }
@@ -226,11 +234,20 @@ export async function duplicateWorks(
 
   const byId = new Map(sources.map((w) => [w.id, w]));
   const created = [];
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   for (const id of ids) {
     const src = byId.get(id)!;
+    const executionMonth = src.executionMonth === 12 ? 1 : src.executionMonth + 1;
+    const executionYear = src.executionMonth === 12 ? src.executionYear + 1 : src.executionYear;
+    // Плановая оплата — 5-е число месяца после план-факт даты исходной работы.
+    // Если даты нет, сохраняем правило от нового месяца выполнения.
+    const sourcePeriod = src.paidAt ?? src.plannedPayAt;
+    const plannedPayAt = sourcePeriod
+      ? new Date(sourcePeriod.getFullYear(), sourcePeriod.getMonth() + 1, 5)
+      : new Date(executionYear, executionMonth, 5);
     const copy = await withNumberedTransaction(async (tx) => {
-      const number = await allocateEntityNumber(tx, "issued-work", src.executionYear);
+      const number = await allocateEntityNumber(tx, "issued-work", executionYear);
       return tx.work.create({
         data: {
           issuedWorkNumber: number.number,
@@ -239,8 +256,8 @@ export async function duplicateWorks(
           executorId,
           projectId: src.projectId,
           workTypeId: src.workTypeId,
-          executionYear: src.executionYear,
-          executionMonth: src.executionMonth,
+          executionYear,
+          executionMonth,
           techTask: src.techTask,
           report: src.report,
           link: src.link,
@@ -249,7 +266,7 @@ export async function duplicateWorks(
           amount: src.amount,
           responsibleExecutorId: src.responsibleExecutorId,
           comment: src.comment,
-          plannedPayAt: src.plannedPayAt,
+          plannedPayAt,
           workStatus: "submitted",
           paymentId: null,
           paidAt: null,
@@ -268,6 +285,7 @@ export async function duplicateWorks(
 
     created.push(copy);
   }
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 
   return created;
 }
@@ -275,6 +293,7 @@ export async function duplicateWorks(
 /** Удаление с каскадом: пересчитываем Payment.amount, если нет работ — удаляем Payment. */
 export async function deleteWork(workId: string, userId: string) {
   const work = await prisma.work.findUniqueOrThrow({ where: { id: workId } });
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   await prisma.$transaction(async (tx) => {
     if (work.paymentId) {
@@ -307,4 +326,5 @@ export async function deleteWork(workId: string, userId: string) {
     entityId: workId,
     entityLabel: `Работа ${work.executionMonth}/${work.executionYear}`,
   });
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 }

@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -39,10 +39,17 @@ import {
   type FlatGroupItem,
 } from "@/components/ui-custom/TableGrouping";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
+import { OverduePaymentSummary } from "@/components/ui-custom/OverduePaymentSummary";
+import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
+import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
 import { RowSelectCheckbox } from "@/components/ui-custom/RowSelectCheckbox";
 import { SortableHead } from "@/components/ui-custom/SortableHead";
 import { useTableRowSelection } from "@/lib/useTableRowSelection";
+import { isOverduePayment, overduePaymentTotal } from "@/lib/overdue-payments";
 import { sortByNameRu } from "@/lib/sort";
+import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
+import { useCompatibleFilterOptions } from "@/lib/useCompatibleFilterOptions";
+import { getWeekFilterMetadata } from "@/lib/period-filter-options";
 import {
   usePersistedInterfaceState,
   usePersistedScroll,
@@ -234,9 +241,11 @@ function cellEmpty(value: unknown): boolean {
 }
 
 function isOverdueH(charge: Charge): boolean {
-  const d = planDate(charge);
-  if (!d) return false;
-  return d < new Date() && charge.status !== "paid";
+  return isOverduePayment({
+    status: charge.status,
+    paidAt: charge.paidAt,
+    plannedPayAt: charge.paidPlanAt,
+  });
 }
 
 function isMissingM(charge: Charge): boolean {
@@ -388,6 +397,7 @@ type ChargeTableRowProps = {
   checked: boolean;
   onSelect: (index: number, id: string, shiftKey: boolean) => void;
   onEdit: (row: Charge) => void;
+  onDuplicate: (row: Charge) => void;
   onDelete: (row: Charge) => void;
   onPatchStatus: (id: string, status: string) => void;
   onPatchDate: (id: string, field: "issuedPlanAt" | "issuedAt" | "paidPlanAt" | "paidAt", value: string) => void;
@@ -400,6 +410,7 @@ const ChargeTableRow = React.memo(function ChargeTableRow({
   checked,
   onSelect,
   onEdit,
+  onDuplicate,
   onDelete,
   onPatchStatus,
   onPatchDate,
@@ -493,7 +504,7 @@ const ChargeTableRow = React.memo(function ChargeTableRow({
           onSave={(v) => onPatchDate(row.id, "issuedAt", v)}
         />
       </TableCell>
-      <TableCell className={cn(compactCell, cellRed(overdueH))}>
+      <TableCell className={cn(compactCell, !row.paidAt && cellRed(overdueH))}>
         <InlineDateCell
           value={row.paidPlanAt ? row.paidPlanAt.slice(0, 10) : ""}
           onSave={(v) => onPatchDate(row.id, "paidPlanAt", v)}
@@ -502,7 +513,7 @@ const ChargeTableRow = React.memo(function ChargeTableRow({
       <TableCell className={compactCell}>{pd ? MONTH_LABELS[pd.getMonth()] : "—"}</TableCell>
       <TableCell className={compactCell}>{pd ? weekLabel(getISOWeek(pd)) : "—"}</TableCell>
       <TableCell className={compactCell}>{pd ? pd.getFullYear() : "—"}</TableCell>
-      <TableCell className={cn(compactCell, cellRed(missingM))}>
+      <TableCell className={cn(compactCell, cellRed(missingM || (!!row.paidAt && overdueH)))}>
         <InlineDateCell
           value={row.paidAt ? row.paidAt.slice(0, 10) : ""}
           onSave={(v) => onPatchDate(row.id, "paidAt", v)}
@@ -526,6 +537,9 @@ const ChargeTableRow = React.memo(function ChargeTableRow({
       </TableCell>
       <TableCell className={cn(stickyActionsCell, "w-[96px] min-w-[96px] max-w-[96px]", checked && "bg-blue-50")}>
         <div className={stickyActionsInner}>
+          <button title="Дублировать" className="p-0.5 text-neutral-500 hover:text-neutral-800" onClick={() => onDuplicate(row)}>
+            <Copy className="h-3.5 w-3.5" />
+          </button>
           <button title="Редактировать" className="p-0.5 text-neutral-500 hover:text-neutral-800" onClick={() => onEdit(row)}>
             <Pencil className="h-3.5 w-3.5" />
           </button>
@@ -556,11 +570,49 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
   const [fProject, setFProject] = useState<string[]>([]);
   const [fWeek, setFWeek] = useState<string[]>([]);
   const [hidePaid, setHidePaid] = useState(false);
+  const [overdueOnly, setOverdueOnly] = useState(false);
   const [groupBy, setGroupBy] = useState<"" | "bank" | "week" | "project">("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [sort, setSort] = useState<{ field: SortField; dir: SortDir } | null>(null);
 
   const [bulkStatus, setBulkStatus] = useState("");
+  const overdueTotal = React.useMemo(
+    () =>
+      overduePaymentTotal(
+        rows
+          .filter((row) => row.bankAccount?.currency?.toUpperCase() === "RUB")
+          .map((row) => ({
+            status: row.status,
+            paidAt: row.paidAt,
+            plannedPayAt: row.paidPlanAt,
+            amount: row.amount,
+          }))
+      ),
+    [rows]
+  );
+  const hasActiveFilters =
+    fBankAccount.length > 0 || fOrder.length > 0 || fStatus.length > 0 ||
+    fClient.length > 0 || fProject.length > 0 || fWeek.length > 0 || hidePaid || overdueOnly;
+  const resetFilters = () => {
+    setFBankAccount([]); setFOrder([]); setFStatus([]); setFClient([]);
+    setFProject([]); setFWeek([]); setHidePaid(false); setOverdueOnly(false);
+  };
+  const showOverdue = () => {
+    setFBankAccount([]); setFOrder([]); setFStatus([]); setFClient([]);
+    setFProject([]); setFWeek([]); setHidePaid(false);
+    setOverdueOnly(true);
+  };
+
+  const urlFilters = useUrlSyncedFilters([
+    { stateKey: "fBankAccount", param: "bank", kind: "array", value: fBankAccount, defaultValue: [], setValue: setFBankAccount },
+    { stateKey: "fOrder", param: "order", kind: "array", value: fOrder, defaultValue: [], setValue: setFOrder },
+    { stateKey: "fStatus", param: "status", kind: "array", value: fStatus, defaultValue: [], setValue: setFStatus },
+    { stateKey: "fClient", param: "client", kind: "array", value: fClient, defaultValue: [], setValue: setFClient },
+    { stateKey: "fProject", param: "project", kind: "array", value: fProject, defaultValue: [], setValue: setFProject },
+    { stateKey: "fWeek", param: "week", kind: "array", value: fWeek, defaultValue: [], setValue: setFWeek },
+    { stateKey: "hidePaid", param: "hidePaid", kind: "boolean", value: hidePaid, defaultValue: false, setValue: setHidePaid },
+    { stateKey: "overdueOnly", param: "overdue", kind: "boolean", value: overdueOnly, defaultValue: false, setValue: setOverdueOnly },
+  ]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -574,18 +626,13 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
       fProject,
       fWeek,
       hidePaid,
+      overdueOnly,
       groupBy,
       collapsedGroups,
       sort,
     },
     (stored) => {
-      if (stored.fBankAccount) setFBankAccount(stored.fBankAccount);
-      if (stored.fOrder) setFOrder(stored.fOrder);
-      if (stored.fStatus) setFStatus(stored.fStatus);
-      if (stored.fClient) setFClient(stored.fClient);
-      if (stored.fProject) setFProject(stored.fProject);
-      if (stored.fWeek) setFWeek(stored.fWeek);
-      if (stored.hidePaid !== undefined) setHidePaid(stored.hidePaid);
+      urlFilters.restorePersisted(stored);
       if (stored.groupBy !== undefined) setGroupBy(stored.groupBy);
       if (stored.collapsedGroups instanceof Set) setCollapsedGroups(stored.collapsedGroups);
       if ("sort" in stored) setSort(stored.sort ?? null);
@@ -601,6 +648,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
       fProject,
       fWeek,
       hidePaid,
+      overdueOnly,
       groupBy,
       collapsedGroups,
       sort,
@@ -619,7 +667,10 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
     finally { setLoading(false); }
   }, [fetchData]);
 
-  const silentLoad = useCallback(() => { fetchData().then(setRows).catch(() => {}); }, [fetchData]);
+  const silentLoad = useCallback(
+    () => fetchData().then(setRows).catch(() => {}),
+    [fetchData]
+  );
 
   useEffect(() => { load(); }, [load]);
 
@@ -638,6 +689,14 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
     if (fWeek.length) {
       if (!fWeek.includes(payWeekKey(r))) return false;
     }
+    if (overdueOnly && (
+      r.bankAccount?.currency?.toUpperCase() !== "RUB" ||
+      !isOverduePayment({
+        status: r.status,
+        paidAt: r.paidAt,
+        plannedPayAt: r.paidPlanAt,
+      })
+    )) return false;
     return true;
   });
 
@@ -724,29 +783,95 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
     setCollapsedGroups(new Set());
   }, []);
 
+  const compatibleValues = useCompatibleFilterOptions(rows, [
+    {
+      key: "bank", value: fBankAccount, setValue: setFBankAccount,
+      matches: (row, values) => !values.length || values.includes(row.bankAccountId ?? "__empty__"),
+      values: (row) => [row.bankAccountId ?? "__empty__"],
+    },
+    {
+      key: "order", value: fOrder, setValue: setFOrder,
+      matches: (row, values) => !values.length || values.includes(row.orderId ?? "__empty__"),
+      values: (row) => [row.orderId ?? "__empty__"],
+    },
+    {
+      key: "status", value: fStatus, setValue: setFStatus,
+      matches: (row, values) => !values.length || values.includes(row.status),
+      values: (row) => [row.status],
+    },
+    {
+      key: "client", value: fClient, setValue: setFClient,
+      matches: (row, values) => !values.length || values.includes(row.order?.project?.client?.id ?? "__empty__"),
+      values: (row) => [row.order?.project?.client?.id ?? "__empty__"],
+    },
+    {
+      key: "project", value: fProject, setValue: setFProject,
+      matches: (row, values) => !values.length || values.includes(row.order?.project?.id ?? "__empty__"),
+      values: (row) => [row.order?.project?.id ?? "__empty__"],
+    },
+    {
+      key: "week", value: fWeek, setValue: setFWeek,
+      matches: (row, values) => !values.length || values.includes(payWeekKey(row)),
+      values: (row) => [payWeekKey(row)],
+    },
+  ]);
+
   const clientOptions = React.useMemo(() => {
     const map = new Map<string, string>();
-    // Полный список клиентов берём из заказов (стабильный источник),
-    // чтобы лейбл резолвился даже когда таблица начислений отфильтрована/пуста.
-    for (const o of orders) {
-      if (o.project?.client) map.set(o.project.client.id, o.project.client.name);
+    for (const row of rows) {
+      if (row.order?.project?.client) {
+        map.set(row.order.project.client.id, row.order.project.client.name);
+      }
     }
     if (rows.some((r) => !r.order?.project?.client)) map.set("__empty__", "Пусто");
     return Array.from(map.entries())
+      .filter(([value]) => compatibleValues.client?.has(value))
       .sort((a, b) => a[1].localeCompare(b[1], "ru"))
       .map(([value, label]) => ({ value, label }));
-  }, [orders, rows]);
+  }, [rows, compatibleValues.client]);
 
   const projectOptions = React.useMemo(() => {
     const map = new Map<string, string>();
-    for (const o of orders) {
-      if (o.project) map.set(o.project.id, o.project.name);
+    for (const row of rows) {
+      if (row.order?.project) {
+        map.set(row.order.project.id, row.order.project.name);
+      }
     }
     if (rows.some((r) => !r.order?.project)) map.set("__empty__", "Пусто");
     return Array.from(map.entries())
+      .filter(([value]) => compatibleValues.project?.has(value))
       .sort((a, b) => a[1].localeCompare(b[1], "ru"))
       .map(([value, label]) => ({ value, label }));
-  }, [orders, rows]);
+  }, [rows, compatibleValues.project]);
+
+  const bankAccountOptions = React.useMemo(() => {
+    const map = new Map<string, string>();
+    for (const row of rows) {
+      if (row.bankAccount) map.set(row.bankAccount.id, row.bankAccount.name);
+    }
+    if (rows.some((row) => !row.bankAccountId)) map.set("__empty__", "Пусто");
+    return Array.from(map.entries())
+      .filter(([value]) => compatibleValues.bank?.has(value))
+      .sort((a, b) => a[1].localeCompare(b[1], "ru"))
+      .map(([value, label]) => ({ value, label }));
+  }, [rows, compatibleValues.bank]);
+
+  const orderOptions = React.useMemo(() => {
+    const map = new Map<string, string>();
+    for (const row of rows) {
+      if (row.order) {
+        map.set(
+          row.order.id,
+          `№${row.order.orderNumber}${row.order.description ? ` ${row.order.description}` : ""}`
+        );
+      }
+    }
+    if (rows.some((row) => !row.orderId)) map.set("__empty__", "Пусто");
+    return Array.from(map.entries())
+      .filter(([value]) => compatibleValues.order?.has(value))
+      .sort((a, b) => a[1].localeCompare(b[1], "ru"))
+      .map(([value, label]) => ({ value, label }));
+  }, [rows, compatibleValues.order]);
 
   const weekOptions = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -756,9 +881,13 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
       if (!map.has(key)) map.set(key, payWeekGroupLabel(r));
     }
     return Array.from(map.entries())
+      .filter(([value]) => compatibleValues.week?.has(value))
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([value, label]) => ({ value, label }));
-  }, [rows]);
+      .map(([value, label]) => {
+        const [year, week] = value.split("-").map(Number);
+        return { value, label, ...getWeekFilterMetadata([{ year, week }]) };
+      });
+  }, [rows, compatibleValues.week]);
 
   async function patchInlineStatus(id: string, status: string) {
     const res = await fetch(`/api/charges/${id}`, {
@@ -825,6 +954,28 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
     setBulkStatus("");
   }
 
+  const handleDuplicate = useCallback(async (ids: string[], openEditor: boolean) => {
+    try {
+      const res = await fetch("/api/charges/duplicate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      const data = await res.json() as { created?: Charge[]; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Не удалось дублировать");
+      const created = data.created ?? [];
+      if (openEditor) {
+        setEditTarget(created[0] ?? null);
+      } else {
+        clearSelection();
+      }
+      toast.success(created.length === 1 ? "Начисление продублировано" : `Продублировано начислений: ${created.length}`);
+      silentLoad();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Не удалось дублировать");
+    }
+  }, [clearSelection, silentLoad]);
+
   async function handleDelete(row: Charge) {
     setDeleteTarget(null);
     setRows(prev => prev.filter(r => r.id !== row.id));
@@ -839,6 +990,10 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
   }
 
   const onEditCb = useCallback((row: Charge) => setEditTarget(row), []);
+  const onDuplicateCb = useCallback(
+    (row: Charge) => handleDuplicate([row.id], true),
+    [handleDuplicate]
+  );
   const onDeleteCb = useCallback((row: Charge) => setDeleteTarget(row), []);
   const onPatchStatusCb = useCallback((id: string, status: string) => patchInlineStatus(id, status), []);
   const onPatchDateCb = useCallback(
@@ -877,6 +1032,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
             checked={selectedIds.has(row.id)}
             onSelect={handleRowSelect}
             onEdit={onEditCb}
+            onDuplicate={onDuplicateCb}
             onDelete={onDeleteCb}
             onPatchStatus={onPatchStatusCb}
             onPatchDate={onPatchDateCb}
@@ -894,6 +1050,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
           checked={selectedIds.has(row.id)}
           onSelect={handleRowSelect}
           onEdit={onEditCb}
+          onDuplicate={onDuplicateCb}
           onDelete={onDeleteCb}
           onPatchStatus={onPatchStatusCb}
           onPatchDate={onPatchDateCb}
@@ -909,6 +1066,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
       handleRowSelect,
       toggleGroup,
       onEditCb,
+      onDuplicateCb,
       onDeleteCb,
       onPatchStatusCb,
       onPatchDateCb,
@@ -918,7 +1076,10 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
 
   return (
     <div className="flex flex-col gap-4 h-full min-h-0">
-      <PageHeader title="Начисления" />
+      <PageHeader
+        title="Начисления"
+        actions={<OverduePaymentSummary amount={overdueTotal} onClick={showOverdue} active={overdueOnly} />}
+      />
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -927,6 +1088,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
         </Button>
 
         <div className="ml-auto flex flex-wrap gap-2">
+          <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
           <GroupBySelect
             value={groupBy}
             onChange={handleGroupByChange}
@@ -934,7 +1096,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
           />
           <MultiSelectFilter
             label="Счёт получения"
-            options={bankAccounts.map(b => ({ value: b.id, label: b.name }))}
+            options={bankAccountOptions}
             value={fBankAccount}
             onChange={setFBankAccount}
           />
@@ -952,13 +1114,15 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
           />
           <MultiSelectFilter
             label="Заказ"
-            options={orders.map(o => ({ value: o.id, label: `№${o.orderNumber}${o.description ? ` ${o.description}` : ""}` }))}
+            options={orderOptions}
             value={fOrder}
             onChange={setFOrder}
           />
           <MultiSelectFilter
             label="Статус"
-            options={Object.entries(CHARGE_STATUSES).map(([v, s]) => ({ value: v, label: s.label }))}
+            options={Object.entries(CHARGE_STATUSES)
+              .map(([v, s]) => ({ value: v, label: s.label }))
+              .filter((option) => compatibleValues.status?.has(option.value))}
             value={fStatus}
             onChange={setFStatus}
           />
@@ -993,6 +1157,14 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
           </Select>
           <Button size="sm" className="h-7" onClick={handleBulkApply} disabled={!bulkStatus}>
             Применить
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7"
+            onClick={() => handleDuplicate(Array.from(selectedIds), false)}
+          >
+            <Copy className="mr-1 h-3.5 w-3.5" /> Дублировать
           </Button>
           <Button size="sm" variant="ghost" className="h-7 text-neutral-500" onClick={() => clearSelection()}>
             Сбросить
@@ -1138,9 +1310,11 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
         <ChargeFormDialog bankAccounts={bankAccounts} orders={orders}
           initial={editTarget}
           onClose={() => setEditTarget(null)}
-          onSaved={() => {
+          onSaved={async () => {
+            // Ждём обновления данных до закрытия — иначе при быстром повторном
+            // открытии той же записи форма показывает не обновлённый кэш.
+            await silentLoad();
             setEditTarget(null);
-            silentLoad();
             toast.success("Сохранено");
           }} />
       )}
@@ -1347,6 +1521,9 @@ function ChargeFormDialog({
             />
           </div>
         </div>
+        {initial && (
+          <EntityActivityHistory entityType="Charge" entityId={initial.id} />
+        )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Отмена</Button>
           <Button onClick={handleSave} disabled={saving}>{saving ? "Сохранение..." : isEdit ? "Сохранить" : "Создать"}</Button>

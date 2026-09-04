@@ -8,7 +8,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { getISOWeek, getISOWeekYear, firstVisibleCashflowWeek } from "@/lib/iso-weeks";
+import { getISOWeek, getISOWeekYear, firstVisibleCashflowWeek, isoWeekStart } from "@/lib/iso-weeks";
+import { formatMoneyWhole } from "@/lib/format";
 import { CashflowChart } from "./CashflowChart";
 import { CashflowCommentCell } from "@/components/ui-custom/CashflowCommentCell";
 import { useComparison } from "@/components/ComparisonProvider";
@@ -24,25 +25,34 @@ import {
 
 const fetcher = (url: string) => fetch(url).then(r => r.json());
 
+function cashflowCommentHistoryUrl(year: number, week: number, rowKey: string) {
+  return `/api/activity/comment-history?${new URLSearchParams({
+    kind: "cashflow",
+    year: String(year),
+    week: String(week),
+    rowKey,
+  })}`;
+}
+
 function fmt(n: number) {
   if (n === 0) return "—";
-  return n.toLocaleString("ru-RU", { maximumFractionDigits: 0 });
+  return formatMoneyWhole(n);
 }
 
 function fmtSign(n: number) {
   if (n === 0) return "—";
-  return n.toLocaleString("ru-RU", { maximumFractionDigits: 0 });
+  return formatMoneyWhole(n);
 }
 
 function fmtNullable(n: number | null) {
   if (n === null) return "—";
   if (n === 0) return "—";
-  return n.toLocaleString("ru-RU", { maximumFractionDigits: 0 });
+  return formatMoneyWhole(n);
 }
 
 function fmtManualBalance(n: number | null) {
   if (n === null) return "—";
-  return n.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+  return formatMoneyWhole(n);
 }
 
 type WeekHeader = { week: number; month: number; monthName: string };
@@ -551,6 +561,7 @@ export function CashflowClient() {
         <CashflowCommentCell
           meta={meta}
           compact={compact}
+          historyUrl={cashflowCommentHistoryUrl(year, week, rowKey)}
           onSave={(payload) => saveCellMeta(rowKey, week, payload)}
         >
           {content}
@@ -559,10 +570,23 @@ export function CashflowClient() {
     );
   }
 
-  // Recompute month groups from visible weeks
+  // Месяц начинается над ISO-неделей, которая содержит его первое число.
   const visibleMonthGroups: { label: string; count: number }[] = [];
+  const calendarMonthStarts = new Map<number, string>();
+  const monthFormatter = new Intl.DateTimeFormat("ru-RU", { month: "short" });
+  for (let month = 0; month < 12; month++) {
+    calendarMonthStarts.set(
+      getISOWeek(new Date(year, month, 1)),
+      monthFormatter.format(new Date(year, month, 1))
+    );
+  }
+  let activeMonthLabel: string | null = null;
   for (const wh of visibleWeeks) {
-    const label = wh.monthName;
+    const label: string =
+      calendarMonthStarts.get(wh.week) ??
+      activeMonthLabel ??
+      monthFormatter.format(isoWeekStart(year, wh.week));
+    activeMonthLabel = label;
     const last = visibleMonthGroups[visibleMonthGroups.length - 1];
     if (last && last.label === label) last.count++;
     else visibleMonthGroups.push({ label, count: 1 });
@@ -661,7 +685,7 @@ export function CashflowClient() {
                 </th>
                 <th rowSpan={2} className={stickyTotalHdr}>Итого</th>
                 {visibleMonthGroups.map((mg, i) => (
-                  <th key={i} colSpan={mg.count} className={cn(thCls, "bg-neutral-50")}>
+                  <th key={i} colSpan={mg.count} className={cn(thCls, "bg-neutral-50 text-left")}>
                     {mg.label}
                   </th>
                 ))}
@@ -733,6 +757,7 @@ export function CashflowClient() {
                             <CashflowCommentCell
                               meta={meta}
                               compact
+                              historyUrl={cashflowCommentHistoryUrl(year, week, `summary:${def.key}`)}
                               onSave={(payload) => saveCellMeta(`summary:${def.key}`, week, payload)}
                             >
                               {comparison.readOnly ? (
@@ -782,6 +807,7 @@ export function CashflowClient() {
                       <CashflowCommentCell
                         meta={meta}
                         compact
+                        historyUrl={cashflowCommentHistoryUrl(year, week, rowKey)}
                         onSave={(payload) => saveCellMeta(rowKey, week, payload)}
                       >
                         {comparison.readOnly ? (
@@ -827,6 +853,7 @@ export function CashflowClient() {
                       <CashflowCommentCell
                         meta={meta}
                         compact
+                        historyUrl={cashflowCommentHistoryUrl(year, week, "summary:balanceInAccounts")}
                         onSave={(payload) => saveCellMeta("summary:balanceInAccounts", week, payload)}
                       >
                         {fmtNullable(val)}
@@ -861,6 +888,7 @@ export function CashflowClient() {
                       <CashflowCommentCell
                         meta={meta}
                         compact
+                        historyUrl={cashflowCommentHistoryUrl(year, week, "summary:discrepancy")}
                         onSave={(payload) => saveCellMeta("summary:discrepancy", week, payload)}
                       >
                         <span className={cn(isNonZero && "text-red-600 font-medium")}>
@@ -938,6 +966,7 @@ export function CashflowClient() {
                       <CashflowCommentCell
                         meta={meta}
                         compact
+                        historyUrl={cashflowCommentHistoryUrl(year, week, "summary:discrepancyDPFact")}
                         onSave={(payload) => saveCellMeta("summary:discrepancyDPFact", week, payload)}
                       >
                         <button

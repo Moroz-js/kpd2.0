@@ -12,6 +12,7 @@ import { prisma } from "@/lib/db";
 export type ActivityAction =
   | "create"
   | "update"
+  | "auto_update"
   | "delete"
   | "archive"
   | "unarchive"
@@ -35,6 +36,8 @@ export type ActivityEntityType =
   | "VacationEntry"
   | "Task"
   | "SpendingPlanLine"
+  | "SpendingPlanLineComment"
+  | "CashflowCellComment"
   | "CashflowManualBalance"
   | "User";
 

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useSearchParams } from "next/navigation";
 import { signOutAction } from "@/app/(dashboard)/actions";
 import {
@@ -196,7 +197,16 @@ export function Sidebar({
           collapsed ? "px-2 py-3 justify-center" : "px-4 py-5 justify-between gap-2"
         )}
       >
-        {!collapsed && <span className="text-xl font-bold text-neutral-800">КПД</span>}
+        {!collapsed && (
+          <Image
+            src="/logo.png"
+            alt="СУП.КПД"
+            width={128}
+            height={26}
+            className="h-auto w-32"
+            priority
+          />
+        )}
         <Button
           type="button"
           variant="ghost"

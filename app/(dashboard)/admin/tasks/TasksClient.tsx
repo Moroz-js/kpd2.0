@@ -7,6 +7,7 @@ import { Trash2 } from "lucide-react";
 import Link from "next/link";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
+import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
 import { ConfirmDialog } from "@/components/ui-custom/ConfirmDialog";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,8 @@ import {
   usePersistedInterfaceState,
   usePersistedScroll,
 } from "@/components/PersistedInterfaceState";
+import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
+import { useCompatibleFilterOptions } from "@/lib/useCompatibleFilterOptions";
 
 type Row = {
   id: string;
@@ -50,6 +53,15 @@ export function TasksClient() {
     field: "createdAt",
     dir: "desc",
   });
+  const hasActiveFilters = fExecutor.length > 0 || fStatus.length > 0;
+  const resetFilters = () => {
+    setFExecutor([]);
+    setFStatus([]);
+  };
+  const urlFilters = useUrlSyncedFilters([
+    { stateKey: "fExecutor", param: "executor", kind: "array", value: fExecutor, defaultValue: [], setValue: setFExecutor },
+    { stateKey: "fStatus", param: "status", kind: "array", value: fStatus, defaultValue: [], setValue: setFStatus },
+  ]);
   const [deleteTarget, setDeleteTarget] = React.useState<Row | null>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
 
@@ -57,8 +69,7 @@ export function TasksClient() {
     "tasks",
     { fExecutor, fStatus, sort },
     (stored) => {
-      if (stored.fExecutor) setFExecutor(stored.fExecutor);
-      if (stored.fStatus) setFStatus(stored.fStatus);
+      urlFilters.restorePersisted(stored);
       if (stored.sort) setSort(stored.sort);
     }
   );
@@ -90,6 +101,23 @@ export function TasksClient() {
     });
   }, [allRows, fExecutor, fStatus, sort]);
 
+  const compatibleValues = useCompatibleFilterOptions(data, [
+    {
+      key: "executor",
+      value: fExecutor,
+      setValue: setFExecutor,
+      matches: (row, value) => !value.length || value.includes(row.executor.id),
+      values: (row) => [row.executor.id],
+    },
+    {
+      key: "status",
+      value: fStatus,
+      setValue: setFStatus,
+      matches: (row, value) => !value.length || value.includes(row.status),
+      values: (row) => [row.status],
+    },
+  ]);
+
   function handleSort(field: string, dir: SortDir) {
     setSort({ field: field as SortField, dir });
   }
@@ -115,15 +143,16 @@ export function TasksClient() {
       <PageHeader title="Задачи" />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
+        <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
         <MultiSelectFilter
           label="Исполнитель"
-          options={executorOptions}
+          options={executorOptions.filter((option) => compatibleValues.executor?.has(option.value))}
           value={fExecutor}
           onChange={setFExecutor}
         />
         <MultiSelectFilter
           label="Статус"
-          options={statusOptions}
+          options={statusOptions.filter((option) => compatibleValues.status?.has(option.value))}
           value={fStatus}
           onChange={setFStatus}
         />

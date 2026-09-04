@@ -4,9 +4,11 @@ import * as React from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { toast } from "sonner";
-import { CheckCircle2, MessageSquare, ArrowUp, ArrowDown, ArrowUpDown, ExternalLink } from "lucide-react";
+import { CheckCircle2, MessageSquare, ArrowUp, ArrowDown, ArrowUpDown, ExternalLink, Pencil } from "lucide-react";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
+import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
+import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
 import { WORK_STATUSES, WORK_STATUSES_SETTABLE } from "@/lib/statuses";
 import { formatMoney, formatDateShort, monthLabel } from "@/lib/format";
 import { getISOWeek, weekLabel } from "@/lib/iso-weeks";
@@ -26,6 +28,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import {
   Table,
   TableCell,
@@ -38,6 +42,8 @@ import {
   usePersistedInterfaceState,
   usePersistedScroll,
 } from "@/components/PersistedInterfaceState";
+import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
+import { useCompatibleFilterOptions } from "@/lib/useCompatibleFilterOptions";
 import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner } from "@/lib/table-styles";
 import { isUnknownExecutorName } from "@/lib/executor-names";
@@ -202,6 +208,7 @@ export function WorksReviewTable({
   showProjectColumn = true,
   showExecutorFilter = true,
   showExecutorLinks = false,
+  showEditAction = false,
 }: {
   fetchUrl: string;
   stateKey: string;
@@ -209,6 +216,7 @@ export function WorksReviewTable({
   showProjectColumn?: boolean;
   showExecutorFilter?: boolean;
   showExecutorLinks?: boolean;
+  showEditAction?: boolean;
 }) {
   const { data, isLoading, mutate } = useSWR<ReviewRow[]>(fetchUrl, fetcher);
   const { data: permanentExecutors } = useSWR<ExecutorRef[]>(
@@ -226,7 +234,29 @@ export function WorksReviewTable({
   const [busyIds, setBusyIds] = React.useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = React.useState(false);
   const [sort, setSort] = React.useState<SortState>(null);
+  const [editing, setEditing] = React.useState<ReviewRow | null>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  const hasActiveFilters =
+    executorFilter.length > 0 || statusFilter.length > 0 || projectFilter.length > 0 ||
+    workTypeFilter.length > 0 || weekFilter.length > 0 || monthFilter.length > 0 || hidePaid;
+  const resetFilters = () => {
+    setExecutorFilter([]);
+    setStatusFilter([]);
+    setProjectFilter([]);
+    setWorkTypeFilter([]);
+    setWeekFilter([]);
+    setMonthFilter([]);
+    setHidePaid(false);
+  };
+  const urlFilters = useUrlSyncedFilters([
+    { stateKey: "executorFilter", param: "executor", kind: "array", value: executorFilter, defaultValue: [], setValue: setExecutorFilter },
+    { stateKey: "statusFilter", param: "status", kind: "array", value: statusFilter, defaultValue: [], setValue: setStatusFilter },
+    { stateKey: "projectFilter", param: "project", kind: "array", value: projectFilter, defaultValue: [], setValue: setProjectFilter },
+    { stateKey: "workTypeFilter", param: "workType", kind: "array", value: workTypeFilter, defaultValue: [], setValue: setWorkTypeFilter },
+    { stateKey: "weekFilter", param: "week", kind: "array", value: weekFilter, defaultValue: [], setValue: setWeekFilter },
+    { stateKey: "monthFilter", param: "month", kind: "array", value: monthFilter, defaultValue: [], setValue: setMonthFilter },
+    { stateKey: "hidePaid", param: "hidePaid", kind: "boolean", value: hidePaid, defaultValue: false, setValue: setHidePaid },
+  ]);
 
   usePersistedInterfaceState(
     `works-review:${stateKey}`,
@@ -241,13 +271,7 @@ export function WorksReviewTable({
       sort,
     },
     (stored) => {
-      if (stored.executorFilter) setExecutorFilter(stored.executorFilter);
-      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
-      if (stored.projectFilter) setProjectFilter(stored.projectFilter);
-      if (stored.workTypeFilter) setWorkTypeFilter(stored.workTypeFilter);
-      if (stored.weekFilter) setWeekFilter(stored.weekFilter);
-      if (stored.monthFilter) setMonthFilter(stored.monthFilter);
-      if ("hidePaid" in stored) setHidePaid(Boolean(stored.hidePaid));
+      urlFilters.restorePersisted(stored);
       if ("sort" in stored) setSort(stored.sort ?? null);
     }
   );
@@ -274,6 +298,61 @@ export function WorksReviewTable({
   }
 
   const allRows = React.useMemo(() => data ?? [], [data]);
+  const optionRows = React.useMemo(
+    () => data?.filter((row) => !hidePaid || !PAID.has(row.workStatus)),
+    [data, hidePaid]
+  );
+
+  const compatibleValues = useCompatibleFilterOptions(optionRows, [
+    {
+      key: "executor",
+      value: executorFilter,
+      setValue: setExecutorFilter,
+      matches: (row, value) => !value.length || value.includes(row.executorId),
+      values: (row) => [row.executorId],
+    },
+    {
+      key: "status",
+      value: statusFilter,
+      setValue: setStatusFilter,
+      matches: (row, value) => !value.length || value.includes(row.workStatus),
+      values: (row) => [row.workStatus],
+    },
+    {
+      key: "project",
+      value: projectFilter,
+      setValue: setProjectFilter,
+      matches: (row, value) => !value.length || value.includes(row.projectId),
+      values: (row) => [row.projectId],
+    },
+    {
+      key: "workType",
+      value: workTypeFilter,
+      setValue: setWorkTypeFilter,
+      matches: (row, value) => !value.length || value.includes(row.workTypeId),
+      values: (row) => [row.workTypeId],
+    },
+    {
+      key: "week",
+      value: weekFilter,
+      setValue: setWeekFilter,
+      matches: (row, value) => {
+        if (!value.length) return true;
+        if (!row.plannedPayAt) return false;
+        return value.includes(String(getISOWeek(new Date(row.plannedPayAt))).padStart(2, "0"));
+      },
+      values: (row) => row.plannedPayAt
+        ? [String(getISOWeek(new Date(row.plannedPayAt))).padStart(2, "0")]
+        : [],
+    },
+    {
+      key: "month",
+      value: monthFilter,
+      setValue: setMonthFilter,
+      matches: (row, value) => !value.length || value.includes(String(row.executionMonth)),
+      values: (row) => [String(row.executionMonth)],
+    },
+  ]);
 
   const executorOptions = React.useMemo(
     () =>
@@ -423,6 +502,7 @@ export function WorksReviewTable({
         </Button>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
           <label className="flex items-center gap-1.5 text-xs text-neutral-600 cursor-pointer select-none">
             <Checkbox checked={hidePaid} onCheckedChange={(v) => setHidePaid(Boolean(v))} />
             Свернуть оплаченные
@@ -430,21 +510,21 @@ export function WorksReviewTable({
           {showProjectColumn && projectOptions.length > 1 && (
             <MultiSelectFilter
               label="Проект"
-              options={projectOptions}
+              options={projectOptions.filter((option) => compatibleValues.project?.has(option.value))}
               value={projectFilter}
               onChange={setProjectFilter}
             />
           )}
           <MultiSelectFilter
             label="Вид работ"
-            options={workTypeOptions}
+            options={workTypeOptions.filter((option) => compatibleValues.workType?.has(option.value))}
             value={workTypeFilter}
             onChange={setWorkTypeFilter}
           />
           {monthOptions.length > 0 && (
             <MultiSelectFilter
               label="Месяц выполнения"
-              options={monthOptions}
+              options={monthOptions.filter((option) => compatibleValues.month?.has(option.value))}
               value={monthFilter}
               onChange={setMonthFilter}
             />
@@ -452,7 +532,7 @@ export function WorksReviewTable({
           {weekOptions.length > 0 && (
             <MultiSelectFilter
               label="Неделя оплаты"
-              options={weekOptions}
+              options={weekOptions.filter((option) => compatibleValues.week?.has(option.value))}
               value={weekFilter}
               onChange={setWeekFilter}
             />
@@ -460,14 +540,16 @@ export function WorksReviewTable({
           {showExecutorFilter && (
             <MultiSelectFilter
               label="Исполнитель"
-              options={executorOptions}
+              options={executorOptions.filter((option) => compatibleValues.executor?.has(option.value))}
               value={executorFilter}
               onChange={setExecutorFilter}
             />
           )}
           <MultiSelectFilter
             label="Статус"
-            options={Object.entries(WORK_STATUSES).map(([value, { label }]) => ({ value, label }))}
+            options={Object.entries(WORK_STATUSES)
+              .map(([value, { label }]) => ({ value, label }))
+              .filter((option) => compatibleValues.status?.has(option.value))}
             value={statusFilter}
             onChange={setStatusFilter}
           />
@@ -647,6 +729,17 @@ export function WorksReviewTable({
                           <CheckCircle2 className="h-3.5 w-3.5" />
                         </Button>
                       )}
+                      {showEditAction && !isPaid && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={busy}
+                          onClick={() => setEditing(r)}
+                          title="Редактировать"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -655,7 +748,98 @@ export function WorksReviewTable({
           )}
         </BulkSelectTableBody>
       </Table>
+      {editing && (
+        <ProjectWorkEditDialog
+          row={editing}
+          executors={permanentExecutors ?? []}
+          onClose={() => setEditing(null)}
+          onSave={async (patch) => {
+            await patchRow(editing, patch);
+            setEditing(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function ProjectWorkEditDialog({
+  row,
+  executors,
+  onClose,
+  onSave,
+}: {
+  row: ReviewRow;
+  executors: ExecutorRef[];
+  onClose: () => void;
+  onSave: (patch: Record<string, unknown>) => Promise<void>;
+}) {
+  const [responsibleExecutorId, setResponsibleExecutorId] = React.useState(
+    row.responsibleExecutorId ?? ""
+  );
+  const [workStatus, setWorkStatus] = React.useState(row.workStatus);
+  const [comment, setComment] = React.useState(row.comment ?? "");
+  const [saving, setSaving] = React.useState(false);
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    await onSave({
+      responsibleExecutorId: responsibleExecutorId || null,
+      workStatus,
+      comment: comment || null,
+    });
+    setSaving(false);
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>
+            Редактировать работу · {row.sourceType === "personal" ? "Личная смета" : "Прочие траты"}
+          </DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSave} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Ответственный</Label>
+            <SearchableSelect
+              value={responsibleExecutorId}
+              onValueChange={setResponsibleExecutorId}
+              options={executors.map((executor) => ({ value: executor.id, label: executor.name }))}
+              placeholder="Не указан"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Статус</Label>
+            <Select value={workStatus} onValueChange={(value) => setWorkStatus(value ?? "")}>
+              <SelectTrigger>
+                <SelectValue>
+                  {WORK_STATUSES[workStatus as keyof typeof WORK_STATUSES]?.label ?? workStatus}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {WORK_STATUSES_SETTABLE.map((value) => (
+                  <SelectItem key={value} value={value}>{WORK_STATUSES[value].label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Комментарий</Label>
+            <Textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={3} />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose} disabled={saving}>Отмена</Button>
+            <Button type="submit" disabled={saving}>{saving ? "Сохранение..." : "Сохранить"}</Button>
+          </DialogFooter>
+        </form>
+        <EntityActivityHistory
+          entityType={row.sourceType === "personal" ? "Work" : "OtherExpense"}
+          entityId={row.sourceId}
+        />
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import { Plus, Pencil, Archive, ArchiveRestore } from "lucide-react";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
+import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
+import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
 import { ConfirmDialog } from "@/components/ui-custom/ConfirmDialog";
 import { ENTITY_STATUSES, PROJECT_TYPES } from "@/lib/statuses";
@@ -39,6 +41,8 @@ import {
   usePersistedInterfaceState,
   usePersistedScroll,
 } from "@/components/PersistedInterfaceState";
+import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
+import { useCompatibleFilterOptions } from "@/lib/useCompatibleFilterOptions";
 
 type Row = {
   id: string;
@@ -105,6 +109,21 @@ export function ProjectsClient({ scope }: { scope: "all" | "mine" }) {
     field: "createdAt",
     dir: "desc",
   });
+  const hasActiveFilters =
+    responsibleFilter.length > 0 || clientFilter.length > 0 ||
+    typeFilter.length > 0 || statusFilter.length > 0;
+  const resetFilters = () => {
+    setResponsibleFilter([]);
+    setClientFilter([]);
+    setTypeFilter([]);
+    setStatusFilter([]);
+  };
+  const urlFilters = useUrlSyncedFilters([
+    { stateKey: "responsibleFilter", param: "responsible", kind: "array", value: responsibleFilter, defaultValue: [], setValue: setResponsibleFilter },
+    { stateKey: "clientFilter", param: "client", kind: "array", value: clientFilter, defaultValue: [], setValue: setClientFilter },
+    { stateKey: "typeFilter", param: "type", kind: "array", value: typeFilter, defaultValue: [], setValue: setTypeFilter },
+    { stateKey: "statusFilter", param: "status", kind: "array", value: statusFilter, defaultValue: [], setValue: setStatusFilter },
+  ]);
 
   const [editing, setEditing] = React.useState<Row | "new" | null>(null);
   const [archiveTarget, setArchiveTarget] = React.useState<Row | null>(null);
@@ -141,6 +160,37 @@ export function ProjectsClient({ scope }: { scope: "all" | "mine" }) {
     return list;
   }, [data, responsibleFilter, statusFilter, clientFilter, typeFilter, sort]);
 
+  const compatibleValues = useCompatibleFilterOptions(data, [
+    {
+      key: "responsible",
+      value: responsibleFilter,
+      setValue: setResponsibleFilter,
+      matches: (row, value) => !value.length || value.includes(row.responsibleUserId ?? "__none__"),
+      values: (row) => [row.responsibleUserId ?? "__none__"],
+    },
+    {
+      key: "client",
+      value: clientFilter,
+      setValue: setClientFilter,
+      matches: (row, value) => !value.length || value.includes(row.clientId ?? "__empty__"),
+      values: (row) => [row.clientId ?? "__empty__"],
+    },
+    {
+      key: "type",
+      value: typeFilter,
+      setValue: setTypeFilter,
+      matches: (row, value) => !value.length || value.includes(row.type),
+      values: (row) => [row.type],
+    },
+    {
+      key: "status",
+      value: statusFilter,
+      setValue: setStatusFilter,
+      matches: (row, value) => !value.length || value.includes(row.status),
+      values: (row) => [row.status],
+    },
+  ]);
+
   function handleSort(field: string, dir: SortDir) {
     setSort({ field: field as SortField, dir });
   }
@@ -169,8 +219,9 @@ export function ProjectsClient({ scope }: { scope: "all" | "mine" }) {
     }
     return Array.from(map.entries())
       .sort((a, b) => a[1].localeCompare(b[1], "ru"))
-      .map(([value, label]) => ({ value, label }));
-  }, [data]);
+      .map(([value, label]) => ({ value, label }))
+      .filter((option) => compatibleValues.responsible?.has(option.value));
+  }, [compatibleValues, data]);
 
   const clientOptions = React.useMemo(() => {
     const list = data ?? [];
@@ -181,8 +232,9 @@ export function ProjectsClient({ scope }: { scope: "all" | "mine" }) {
     }
     return Array.from(map.entries())
       .sort((a, b) => a[1].localeCompare(b[1], "ru"))
-      .map(([value, label]) => ({ value, label }));
-  }, [data]);
+      .map(([value, label]) => ({ value, label }))
+      .filter((option) => compatibleValues.client?.has(option.value));
+  }, [compatibleValues, data]);
 
   const isAdmin = scope === "all";
   const [activeTab, setActiveTab] = React.useState<"projects" | "verification">("projects");
@@ -198,10 +250,7 @@ export function ProjectsClient({ scope }: { scope: "all" | "mine" }) {
       activeTab,
     },
     (stored) => {
-      if (stored.responsibleFilter) setResponsibleFilter(stored.responsibleFilter);
-      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
-      if (stored.clientFilter) setClientFilter(stored.clientFilter);
-      if (stored.typeFilter) setTypeFilter(stored.typeFilter);
+      urlFilters.restorePersisted(stored);
       if (stored.sort) setSort(stored.sort);
       if (stored.activeTab !== undefined) setActiveTab(stored.activeTab);
     }
@@ -263,6 +312,7 @@ export function ProjectsClient({ scope }: { scope: "all" | "mine" }) {
       {(!isAdmin || activeTab === "projects") && (
       <>
       <div className="flex flex-wrap items-center gap-2 mb-4">
+        <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
         <MultiSelectFilter
           label="Руководитель"
           options={responsibleOptions}
@@ -277,13 +327,17 @@ export function ProjectsClient({ scope }: { scope: "all" | "mine" }) {
         />
         <MultiSelectFilter
           label="Тип"
-          options={Object.entries(PROJECT_TYPES).map(([value, label]) => ({ value, label }))}
+          options={Object.entries(PROJECT_TYPES)
+            .map(([value, label]) => ({ value, label }))
+            .filter((option) => compatibleValues.type?.has(option.value))}
           value={typeFilter}
           onChange={setTypeFilter}
         />
         <MultiSelectFilter
           label="Статус"
-          options={Object.entries(ENTITY_STATUSES).map(([value, { label }]) => ({ value, label }))}
+          options={Object.entries(ENTITY_STATUSES)
+            .map(([value, { label }]) => ({ value, label }))
+            .filter((option) => compatibleValues.status?.has(option.value))}
           value={statusFilter}
           onChange={setStatusFilter}
         />
@@ -629,6 +683,9 @@ function ProjectEditDialog({
                   <span className="font-medium">{previewType}</span>
                 </div>
               </div>
+            )}
+            {row && (
+              <EntityActivityHistory entityType="Project" entityId={row.id} />
             )}
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>

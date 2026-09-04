@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Archive, ArchiveRestore } from "lucide-react";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
+import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
 import { ConfirmDialog } from "@/components/ui-custom/ConfirmDialog";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,8 @@ import {
   usePersistedInterfaceState,
   usePersistedScroll,
 } from "@/components/PersistedInterfaceState";
+import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
+import { useCompatibleFilterOptions } from "@/lib/useCompatibleFilterOptions";
 
 type Row = {
   id: string;
@@ -41,6 +44,11 @@ export function ResponsiblesClient() {
     field: "fullName",
     dir: "asc",
   });
+  const hasActiveFilters = statusFilter.length > 0;
+  const resetFilters = () => setStatusFilter([]);
+  const urlFilters = useUrlSyncedFilters([
+    { stateKey: "statusFilter", param: "status", kind: "array", value: statusFilter, defaultValue: [], setValue: setStatusFilter },
+  ]);
   const [archiveTarget, setArchiveTarget] = React.useState<Row | null>(null);
   const [unarchiveTarget, setUnarchiveTarget] = React.useState<Row | null>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
@@ -49,7 +57,7 @@ export function ResponsiblesClient() {
     "responsibles",
     { statusFilter, sort },
     (stored) => {
-      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
+      urlFilters.restorePersisted(stored);
       if (stored.sort) setSort(stored.sort);
     }
   );
@@ -75,6 +83,16 @@ export function ResponsiblesClient() {
     });
     return list;
   }, [data, statusFilter, sort]);
+
+  const compatibleValues = useCompatibleFilterOptions(data, [
+    {
+      key: "status",
+      value: statusFilter,
+      setValue: setStatusFilter,
+      matches: (row, value) => !value.length || value.includes(row.isActive ? "active" : "archived"),
+      values: (row) => [row.isActive ? "active" : "archived"],
+    },
+  ]);
 
   function handleSort(field: string, dir: SortDir) {
     setSort({ field: field as SortField, dir });
@@ -102,12 +120,13 @@ export function ResponsiblesClient() {
       <PageHeader title="Руководители проекта" />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
+        <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
         <MultiSelectFilter
           label="Статус"
           options={[
             { value: "active", label: "Активный" },
             { value: "archived", label: "Архивный" },
-          ]}
+          ].filter((option) => compatibleValues.status?.has(option.value))}
           value={statusFilter}
           onChange={setStatusFilter}
         />

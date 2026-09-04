@@ -33,6 +33,20 @@ model User {
   @@map("users")
 }
 
+// Счётчики неудачных входов: ключ — SHA-256 от email или IP.
+model LoginRateLimit {
+  id              String   @id @default(cuid())
+  key             String   @unique
+  attempts        Int      @default(0)
+  windowStartedAt DateTime
+  lockedUntil     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([lockedUntil])
+  @@map("login_rate_limits")
+}
+
 // ─────────────────── ИСПОЛНИТЕЛИ ───────────────────
 
 model Executor {

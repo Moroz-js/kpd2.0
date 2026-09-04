@@ -9,7 +9,7 @@
 
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
-import { isAdmin, isSuperAdmin } from "@/lib/permissions";
+import { canResetUserPassword } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { logActivity } from "@/lib/audit/log";
 import bcrypt from "bcryptjs";
@@ -23,13 +23,9 @@ export async function POST(
 
   const { id } = await ctx.params;
 
-  // Супер-админ может сбрасывать любой пароль включая свой.
-  // Обычный админ — только чужие пароли.
-  const isSelf = me.id === id;
-  if (isSelf && !isSuperAdmin(me)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-  if (!isSelf && !isAdmin(me)) {
+  const target = await prisma.user.findUnique({ where: { id } });
+  if (!target) return NextResponse.json({ error: "User not found" }, { status: 404 });
+  if (!canResetUserPassword(me, id, target.isSuperAdmin)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -37,9 +33,6 @@ export async function POST(
   if (!body?.password || body.password.length < 6) {
     return NextResponse.json({ error: "Password too short (min 6)" }, { status: 400 });
   }
-
-  const target = await prisma.user.findUnique({ where: { id } });
-  if (!target) return NextResponse.json({ error: "User not found" }, { status: 404 });
 
   const hash = await bcrypt.hash(body.password, 10);
   await prisma.user.update({ where: { id }, data: { password: hash } });

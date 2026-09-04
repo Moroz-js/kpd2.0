@@ -3,7 +3,7 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, CheckCircle, RotateCcw, X, CircleDollarSign } from "lucide-react";
+import { Plus, Pencil, Trash2, CheckCircle, RotateCcw, X, CircleDollarSign, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -26,10 +26,15 @@ import {
 import { VirtualizedTableBody } from "@/components/ui-custom/VirtualizedTableBody";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
+import { OverduePaymentSummary } from "@/components/ui-custom/OverduePaymentSummary";
+import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
+import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
+import { MoreFilters } from "@/components/ui-custom/MoreFilters";
 import { SortableHead } from "@/components/ui-custom/SortableHead";
 import { WORK_STATUSES, PAYMENT_STATUSES } from "@/lib/statuses";
 import { formatMoney, formatMoneyRub, formatDateShort, MONTHS } from "@/lib/format";
+import { isOverduePayment, overduePaymentTotal } from "@/lib/overdue-payments";
 import { getISOWeek, getISOWeekYear, weekLabel, nearestPaymentDate, toLocalDateString, resolvePlannedPayAtOnCheck } from "@/lib/iso-weeks";
 import { cn } from "@/lib/utils";
 import { RowSelectCheckbox } from "@/components/ui-custom/RowSelectCheckbox";
@@ -37,15 +42,21 @@ import { useTableRowSelection } from "@/lib/useTableRowSelection";
 import { ExpandableListCell } from "@/components/ui-custom/ExpandableListCell";
 import { stickyActionsHead, stickyActionsCell, compactHead, compactPeriodHead } from "@/lib/table-styles";
 import { sortByNameRu } from "@/lib/sort";
+import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
+import { useCompatibleFilterOptions } from "@/lib/useCompatibleFilterOptions";
+import {
+  getMonthFilterMetadata,
+  getWeekFilterMetadata,
+} from "@/lib/period-filter-options";
 import {
   usePersistedInterfaceState,
   usePersistedScroll,
 } from "@/components/PersistedInterfaceState";
 
-/** Ширины колонок (19) — table-fixed, иначе правые колонки сжимаются и наезжают друг на друга */
-const ACTIONS_COL_WIDTH = 128;
+/** Ширины колонок (20) — table-fixed, иначе правые колонки сжимаются и наезжают друг на друга */
+const ACTIONS_COL_WIDTH = 152;
 const COL_WIDTHS = [
-  40, 96, 112, 72, 192, 116, 124, 104, 100, 124, 104, 192, 148, 208, 140, 140, 124, 84, ACTIONS_COL_WIDTH,
+  40, 96, 112, 72, 192, 116, 124, 104, 100, 104, 124, 104, 192, 148, 208, 140, 140, 124, 84, ACTIONS_COL_WIDTH,
 ] as const;
 const COL_COUNT = COL_WIDTHS.length;
 const TABLE_MIN_WIDTH = COL_WIDTHS.reduce((s, w) => s + w, 0);
@@ -81,6 +92,7 @@ type OtherExpense = {
   description: string;
   amount: number;
   paymentAmount: number | null;
+  payoutNumber: string | null;
   preferredPayMethod: string | null;
   plannedPayAt: string | null;
   paidAt: string | null;
@@ -255,6 +267,7 @@ type OtherExpenseTableRowProps = {
   onRework: (row: OtherExpense) => void;
   onPay: (row: OtherExpense) => void;
   onEdit: (row: OtherExpense) => void;
+  onDuplicate: (row: OtherExpense) => void;
   onDelete: (row: OtherExpense) => void;
 };
 
@@ -276,8 +289,14 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
   onRework,
   onPay,
   onEdit,
+  onDuplicate,
   onDelete,
 }: OtherExpenseTableRowProps) {
+  const overdue = isOverduePayment({
+    status: row.paymentStatus,
+    paidAt: row.paidAt,
+    plannedPayAt: row.plannedPayAt,
+  });
   return (
     <TableRow className={checked ? "bg-blue-50" : ""}>
       <TableCell>
@@ -314,7 +333,7 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
       <TableCell className={cn(cellClip, "whitespace-nowrap")}>
         <StatusBadge dict={WORK_STATUSES} value={row.workStatus} />
       </TableCell>
-      <TableCell className={cn(cellClip, "whitespace-nowrap")}>
+      <TableCell className={cn(cellClip, "whitespace-nowrap", !row.paidAt && overdue && "bg-red-100 text-red-700")}>
         {inlineActive === "plannedPayAt" ? (
           <input
             autoFocus
@@ -353,7 +372,10 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
           <span className="text-neutral-300">—</span>
         )}
       </TableCell>
-      <TableCell className={cn(cellClip, "whitespace-nowrap")}>
+      <TableCell className={cn(cellClip, "tabular-nums whitespace-nowrap")} title={row.payoutNumber ?? undefined}>
+        <div className="truncate">{row.payoutNumber ?? "—"}</div>
+      </TableCell>
+      <TableCell className={cn(cellClip, "whitespace-nowrap", !!row.paidAt && overdue && "bg-red-100 text-red-700")}>
         {inlineActive === "paidAt" ? (
           <input
             autoFocus
@@ -419,7 +441,7 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
       <TableCell
         className={cn(
           stickyActionsCell,
-          "min-w-[128px] w-[128px] max-w-[128px]",
+          "min-w-[152px] w-[152px] max-w-[152px]",
           checked && "bg-blue-50"
         )}
       >
@@ -437,6 +459,11 @@ const OtherExpenseTableRow = React.memo(function OtherExpenseTableRow({
           {isAdmin && row.paymentStatus === "planned" && (
             <Button size="sm" variant="ghost" className="h-6 w-6 p-0" title="Оплатить" onClick={() => onPay(row)}>
               <CircleDollarSign className="h-3.5 w-3.5 text-green-600" />
+            </Button>
+          )}
+          {canEditRow && (
+            <Button size="sm" variant="ghost" className="h-6 w-6 p-0" title="Дублировать" onClick={() => onDuplicate(row)}>
+              <Copy className="h-3.5 w-3.5" />
             </Button>
           )}
           {canEditRow && (
@@ -494,7 +521,46 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
   const [fResponsible, setFResponsible] = useState<string[]>([]);
   const [fWorkStatus, setFWorkStatus] = useState<string[]>([]);
   const [fPayStatus, setFPayStatus] = useState<string[]>([]);
+  const [overdueOnly, setOverdueOnly] = useState(false);
   const [sort, setSort] = useState<{ field: SortField; dir: SortDir } | null>(null);
+  const overdueTotal = React.useMemo(
+    () => overduePaymentTotal(rows.map((row) => ({
+      status: row.paymentStatus,
+      paidAt: row.paidAt,
+      plannedPayAt: row.plannedPayAt,
+      amount: row.paymentAmount,
+    }))),
+    [rows]
+  );
+  const hasActiveFilters =
+    fMonth.length > 0 || fPayWeek.length > 0 || fProject.length > 0 ||
+    fExecutor.length > 0 || fWorkType.length > 0 || fResponsible.length > 0 ||
+    fWorkStatus.length > 0 || fPayStatus.length > 0 || overdueOnly;
+  const resetFilters = () => {
+    setFMonth([]); setFPayWeek([]); setFProject([]); setFExecutor([]);
+    setFWorkType([]); setFResponsible([]); setFWorkStatus([]); setFPayStatus([]); setOverdueOnly(false);
+  };
+  const showOverdue = () => {
+    // Агрегат считается по всем строкам, поэтому выбираем все доступные годы:
+    // в таблице остаются все и только записи, учтённые в сумме.
+    setFYear(Array.from(new Set(rows.map((row) => String(row.executionYear)))));
+    setFMonth([]); setFPayWeek([]); setFProject([]); setFExecutor([]);
+    setFWorkType([]); setFResponsible([]); setFWorkStatus([]); setFPayStatus([]);
+    setOverdueOnly(true);
+  };
+
+  const urlFilters = useUrlSyncedFilters([
+    { stateKey: "fYear", param: "year", kind: "array", value: fYear, defaultValue: [], setValue: setFYear },
+    { stateKey: "fMonth", param: "month", kind: "array", value: fMonth, defaultValue: [], setValue: setFMonth },
+    { stateKey: "fPayWeek", param: "week", kind: "array", value: fPayWeek, defaultValue: [], setValue: setFPayWeek },
+    { stateKey: "fProject", param: "project", kind: "array", value: fProject, defaultValue: [], setValue: setFProject },
+    { stateKey: "fExecutor", param: "executor", kind: "array", value: fExecutor, defaultValue: [], setValue: setFExecutor },
+    { stateKey: "fWorkType", param: "workType", kind: "array", value: fWorkType, defaultValue: [], setValue: setFWorkType },
+    { stateKey: "fResponsible", param: "responsible", kind: "array", value: fResponsible, defaultValue: [], setValue: setFResponsible },
+    { stateKey: "fWorkStatus", param: "workStatus", kind: "array", value: fWorkStatus, defaultValue: [], setValue: setFWorkStatus },
+    { stateKey: "fPayStatus", param: "payStatus", kind: "array", value: fPayStatus, defaultValue: [], setValue: setFPayStatus },
+    { stateKey: "overdueOnly", param: "overdue", kind: "boolean", value: overdueOnly, defaultValue: false, setValue: setOverdueOnly },
+  ]);
 
   usePersistedInterfaceState(
     `other-expenses:${stateScope}`,
@@ -508,18 +574,11 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
       fResponsible,
       fWorkStatus,
       fPayStatus,
+      overdueOnly,
       sort,
     },
     (stored) => {
-      if (stored.fYear) setFYear(stored.fYear);
-      if (stored.fMonth) setFMonth(stored.fMonth);
-      if (stored.fPayWeek) setFPayWeek(stored.fPayWeek);
-      if (stored.fProject) setFProject(stored.fProject);
-      if (stored.fExecutor) setFExecutor(stored.fExecutor);
-      if (stored.fWorkType) setFWorkType(stored.fWorkType);
-      if (stored.fResponsible) setFResponsible(stored.fResponsible);
-      if (stored.fWorkStatus) setFWorkStatus(stored.fWorkStatus);
-      if (stored.fPayStatus) setFPayStatus(stored.fPayStatus);
+      urlFilters.restorePersisted(stored);
       if ("sort" in stored) setSort(stored.sort ?? null);
     }
   );
@@ -535,6 +594,7 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
       fResponsible,
       fWorkStatus,
       fPayStatus,
+      overdueOnly,
       sort,
     },
   });
@@ -551,7 +611,10 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
     finally { setLoading(false); }
   }, [fetchData]);
 
-  const silentLoad = useCallback(() => { fetchData().then(setRows).catch(() => {}); }, [fetchData]);
+  const silentLoad = useCallback(
+    () => fetchData().then(setRows).catch(() => {}),
+    [fetchData]
+  );
 
   useEffect(() => { load(); }, [load]);
 
@@ -574,6 +637,89 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
 
   const allYears = [...new Set(rows.map(r => r.executionYear))].sort();
 
+  const compatibleValues = useCompatibleFilterOptions(rows, [
+    {
+      key: "year", value: fYear, setValue: setFYear,
+      matches: (row, values) => !values.length || values.includes(String(row.executionYear)),
+      values: (row) => [String(row.executionYear)],
+      protectedFromAutoClear: true,
+    },
+    {
+      key: "month", value: fMonth, setValue: setFMonth,
+      matches: (row, values) => !values.length || values.includes(String(row.executionMonth)),
+      values: (row) => [String(row.executionMonth)],
+    },
+    {
+      key: "payWeek", value: fPayWeek, setValue: setFPayWeek,
+      matches: (row, values) => !values.length || values.includes(payWeekKey(row.plannedPayAt, row.paidAt)),
+      values: (row) => [payWeekKey(row.plannedPayAt, row.paidAt)],
+    },
+    {
+      key: "project", value: fProject, setValue: setFProject,
+      matches: (row, values) => !values.length || values.includes(row.projectId),
+      values: (row) => [row.projectId],
+    },
+    {
+      key: "executor", value: fExecutor, setValue: setFExecutor,
+      matches: (row, values) => !values.length || values.includes(row.executorId),
+      values: (row) => [row.executorId],
+    },
+    {
+      key: "workType", value: fWorkType, setValue: setFWorkType,
+      matches: (row, values) => !values.length || values.includes(row.workTypeId),
+      values: (row) => [row.workTypeId],
+    },
+    {
+      key: "responsible", value: fResponsible, setValue: setFResponsible,
+      matches: (row, values) => !values.length || values.includes(row.responsibleExecutorId ?? "__empty__"),
+      values: (row) => [row.responsibleExecutorId ?? "__empty__"],
+    },
+    {
+      key: "workStatus", value: fWorkStatus, setValue: setFWorkStatus,
+      matches: (row, values) => !values.length || values.includes(row.workStatus),
+      values: (row) => [row.workStatus],
+    },
+    {
+      key: "payStatus", value: fPayStatus, setValue: setFPayStatus,
+      matches: (row, values) => !values.length || values.includes(row.paymentStatus ?? "__empty__"),
+      values: (row) => [row.paymentStatus ?? "__empty__"],
+    },
+  ]);
+
+  const monthOptions = React.useMemo(() => {
+    // Серость месяца — в контексте выбранного года, а не всех лет вперемешку.
+    const yearScoped = fYear.length
+      ? rows.filter((row) => fYear.includes(String(row.executionYear)))
+      : rows;
+    return MONTHS
+      .filter((month) => rows.some((row) => String(row.executionMonth) === month.value))
+      .filter((month) => compatibleValues.month?.has(month.value))
+      .map((month) => ({
+        ...month,
+        ...getMonthFilterMetadata(
+          yearScoped
+            .filter((row) => String(row.executionMonth) === month.value)
+            .map((row) => ({ year: row.executionYear, month: row.executionMonth })),
+        ),
+      }));
+  }, [rows, compatibleValues.month, fYear]);
+
+  const projectOptions = React.useMemo(
+    () => Array.from(new Map(rows.map((row) => [row.projectId, row.project.name])).entries())
+      .filter(([value]) => compatibleValues.project?.has(value))
+      .sort((a, b) => a[1].localeCompare(b[1], "ru"))
+      .map(([value, label]) => ({ value, label })),
+    [rows, compatibleValues.project]
+  );
+
+  const executorOptions = React.useMemo(
+    () => Array.from(new Map(rows.map((row) => [row.executorId, row.executor.name])).entries())
+      .filter(([value]) => compatibleValues.executor?.has(value))
+      .sort((a, b) => a[1].localeCompare(b[1], "ru"))
+      .map(([value, label]) => ({ value, label })),
+    [rows, compatibleValues.executor]
+  );
+
   const filtered = React.useMemo(() => {
     let list = rows.filter(r => {
       if (fYear.length && !fYear.includes(String(r.executionYear))) return false;
@@ -587,13 +733,18 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
       if (fResponsible.length && !fResponsible.includes(r.responsibleExecutorId ?? "__empty__")) return false;
       if (fWorkStatus.length && !fWorkStatus.includes(r.workStatus)) return false;
       if (fPayStatus.length && !fPayStatus.includes(r.paymentStatus ?? "__empty__")) return false;
+      if (overdueOnly && !isOverduePayment({
+        status: r.paymentStatus,
+        paidAt: r.paidAt,
+        plannedPayAt: r.plannedPayAt,
+      })) return false;
       return true;
     });
     if (sort) {
       list = [...list].sort((a, b) => compareOtherExpenses(a, b, sort.field, sort.dir));
     }
     return list;
-  }, [rows, fYear, fMonth, fPayWeek, fProject, fExecutor, fWorkType, fResponsible, fWorkStatus, fPayStatus, sort]);
+  }, [rows, fYear, fMonth, fPayWeek, fProject, fExecutor, fWorkType, fResponsible, fWorkStatus, fPayStatus, overdueOnly, sort]);
 
   function handleSort(field: string, dir: SortDir) {
     setSort({ field: field as SortField, dir });
@@ -772,6 +923,30 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
     silentLoad();
   }
 
+  const handleDuplicate = useCallback(async (ids: string[], openEditor: boolean) => {
+    try {
+      const res = await fetch("/api/other-expenses/duplicate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) {
+        const data = await readApiJson<{ error?: string }>(res);
+        throw new Error(data.error ?? "Не удалось дублировать");
+      }
+      const { created } = await readApiJson<{ created: OtherExpense[] }>(res);
+      if (openEditor) {
+        setEditTarget(created[0] ?? null);
+      } else {
+        clearSelection();
+      }
+      toast.success(created.length === 1 ? "Трата продублирована" : `Продублировано трат: ${created.length}`);
+      silentLoad();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Не удалось дублировать");
+    }
+  }, [clearSelection, silentLoad]);
+
   const th = "border border-neutral-200 px-2 py-1.5 text-left font-medium text-neutral-600 bg-neutral-50 text-xs whitespace-nowrap";
   const thr = th + " text-right";
   const td = "border border-neutral-200 px-2 py-1.5 text-xs";
@@ -785,12 +960,13 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
       }
     }
     return Array.from(map.entries())
+      .filter(([value]) => compatibleValues.workType?.has(value))
       .sort((a, b) =>
         (a[1].group ?? "").localeCompare(b[1].group ?? "", "ru") ||
         a[1].label.localeCompare(b[1].label, "ru")
       )
       .map(([value, { label, group }]) => ({ value, label, group }));
-  }, [rows]);
+  }, [rows, compatibleValues.workType]);
 
   const payWeekOpts = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -804,10 +980,16 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
       if (!map.has(key)) map.set(key, payWeekFilterLabel(r.plannedPayAt, r.paidAt));
     }
     const opts = Array.from(map.entries())
+      .filter(([value]) => compatibleValues.payWeek?.has(value))
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([value, label]) => ({ value, label }));
-    return hasEmpty ? [{ value: "__empty__", label: "Не указано" }, ...opts] : opts;
-  }, [rows]);
+      .map(([value, label]) => {
+        const [year, week] = value.split("-").map(Number);
+        return { value, label, ...getWeekFilterMetadata([{ year, week }]) };
+      });
+    return hasEmpty && compatibleValues.payWeek?.has("__empty__")
+      ? [{ value: "__empty__", label: "Не указано" }, ...opts]
+      : opts;
+  }, [rows, compatibleValues.payWeek]);
 
   const responsibleOpts = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -825,10 +1007,13 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
       if (!map.has(e.id)) map.set(e.id, e.name);
     }
     const opts = Array.from(map.entries())
+      .filter(([value]) => compatibleValues.responsible?.has(value))
       .sort((a, b) => a[1].localeCompare(b[1], "ru"))
       .map(([value, label]) => ({ value, label }));
-    return hasEmpty ? [{ value: "__empty__", label: "Не указано" }, ...opts] : opts;
-  }, [rows, permanentExecutors]);
+    return hasEmpty && compatibleValues.responsible?.has("__empty__")
+      ? [{ value: "__empty__", label: "Не указано" }, ...opts]
+      : opts;
+  }, [rows, permanentExecutors, compatibleValues.responsible]);
 
   const selectedSum = React.useMemo(() => {
     return filtered.filter(r => selectedIds.has(r.id)).reduce((s, r) => s + (r.amount ?? 0), 0);
@@ -844,6 +1029,10 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
     setPayTarget(row);
   }, []);
   const onEditCb = useCallback((row: OtherExpense) => setEditTarget(row), []);
+  const onDuplicateCb = useCallback(
+    (row: OtherExpense) => handleDuplicate([row.id], true),
+    [handleDuplicate]
+  );
   const onDeleteCb = useCallback((row: OtherExpense) => setDeleteTarget(row), []);
   const startInlineCb = useCallback(startInline, [isAdmin]);
   const commitInlineCb = useCallback(commitInline, [inlineEdit, inlineVal]);
@@ -876,6 +1065,7 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
           onRework={onReworkCb}
           onPay={onPayCb}
           onEdit={onEditCb}
+          onDuplicate={onDuplicateCb}
           onDelete={onDeleteCb}
         />
       );
@@ -895,6 +1085,7 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
       onReworkCb,
       onPayCb,
       onEditCb,
+      onDuplicateCb,
       onDeleteCb,
       userId,
       executorId,
@@ -903,7 +1094,10 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
 
   return (
     <div className="flex flex-col gap-4 h-full min-h-0">
-      <PageHeader title="Прочие траты" />
+      <PageHeader
+        title="Прочие траты"
+        actions={<OverduePaymentSummary amount={overdueTotal} onClick={showOverdue} active={overdueOnly} />}
+      />
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -913,15 +1107,10 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
 
         <div className="ml-auto flex flex-wrap gap-2">
           {/* Фильтры */}
-          <MultiSelectFilter
-            label="Год"
-            options={allYears.map(y => ({ value: String(y), label: `${y} год` }))}
-            value={fYear}
-            onChange={setFYear}
-          />
+          <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
           <MultiSelectFilter
             label="Месяц"
-            options={MONTHS.map(m => ({ value: m.value, label: m.label }))}
+            options={monthOptions}
             value={fMonth}
             onChange={setFMonth}
           />
@@ -933,7 +1122,7 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
           />
           <MultiSelectFilter
             label="Проект"
-            options={projects.map(p => ({ value: p.id, label: p.name }))}
+            options={projectOptions}
             value={fProject}
             onChange={setFProject}
             popoverClassName="w-auto min-w-72 max-w-lg"
@@ -941,7 +1130,7 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
           />
           <MultiSelectFilter
             label="Исполнитель"
-            options={executors.map(e => ({ value: e.id, label: e.name }))}
+            options={executorOptions}
             value={fExecutor}
             onChange={setFExecutor}
           />
@@ -959,16 +1148,29 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
           />
           <MultiSelectFilter
             label="Статус работы"
-            options={Object.entries(WORK_STATUSES).map(([v, { label: l }]) => ({ value: v, label: l }))}
+            options={Object.entries(WORK_STATUSES)
+              .map(([v, { label: l }]) => ({ value: v, label: l }))
+              .filter((option) => compatibleValues.workStatus?.has(option.value))}
             value={fWorkStatus}
             onChange={setFWorkStatus}
           />
           <MultiSelectFilter
             label="Статус выплаты"
-            options={[{ value: "__empty__", label: "Пусто" }, ...Object.entries(PAYMENT_STATUSES).map(([v, { label: l }]) => ({ value: v, label: l }))]}
+            options={[{ value: "__empty__", label: "Пусто" }, ...Object.entries(PAYMENT_STATUSES).map(([v, { label: l }]) => ({ value: v, label: l }))]
+              .filter((option) => compatibleValues.payStatus?.has(option.value))}
             value={fPayStatus}
             onChange={setFPayStatus}
           />
+          <MoreFilters activeCount={fYear.length}>
+            <MultiSelectFilter
+              label="Год"
+              options={allYears
+                .map(y => ({ value: String(y), label: `${y} год` }))
+                .filter((option) => compatibleValues.year?.has(option.value))}
+              value={fYear}
+              onChange={setFYear}
+            />
+          </MoreFilters>
         </div>
       </div>
 
@@ -1008,6 +1210,15 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
           </div>
           <Button size="sm" className="h-7 text-xs" onClick={handleBulkApply} disabled={bulkSaving}>
             {bulkSaving ? "..." : "Применить"}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={() => handleDuplicate(Array.from(selectedIds), false)}
+            disabled={bulkSaving}
+          >
+            <Copy className="mr-1 h-3.5 w-3.5" /> Дублировать
           </Button>
           <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => { clearSelection(); setBulkWorkStatus(""); setBulkPlannedPayAt(""); setBulkPaidAt(""); setBulkBankId(""); }}>
             <X className="h-3.5 w-3.5" />
@@ -1065,6 +1276,7 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
               <SortableHead field="paymentStatus" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
                 Статус выплаты
               </SortableHead>
+              <TableHead className={compactHead}>Выплата</TableHead>
               <SortableHead field="paidAt" sortBy={sort?.field ?? ""} sortDir={sort?.dir ?? "asc"} onSort={handleSort} className={compactHead}>
                 <span className="inline-flex items-center gap-1">
                   Дата оплаты факт
@@ -1088,7 +1300,7 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
                 Способ оплаты
               </SortableHead>
               <TableHead className={compactPeriodHead}>Год выполнения</TableHead>
-              <TableHead className={cn(stickyActionsHead, "w-[128px] min-w-[128px] max-w-[128px]")} />
+              <TableHead className={cn(stickyActionsHead, "w-[152px] min-w-[152px] max-w-[152px]")} />
             </TableRow>
           </TableHeader>
           <VirtualizedTableBody
@@ -1130,7 +1342,11 @@ export function OtherExpensesClient({ stateScope, isAdmin, userId, executorId, p
           permanentExecutors={permanentExecutors} bankAccounts={bankAccounts}
           initial={editTarget}
           onClose={() => setEditTarget(null)}
-          onSaved={() => { setEditTarget(null); silentLoad(); toast.success("Сохранено"); }}
+          onSaved={async () => {
+            await silentLoad();
+            setEditTarget(null);
+            toast.success("Сохранено");
+          }}
         />
       )}
 
@@ -1623,6 +1839,12 @@ function OtherExpenseFormDialog({
             <Input value={comment} onChange={(e) => setComment(e.target.value)} />
           </div>
         </div>
+        {isAdmin && initial && (
+          <EntityActivityHistory
+            entityType="OtherExpense"
+            entityId={initial.id}
+          />
+        )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Отмена</Button>
           <Button

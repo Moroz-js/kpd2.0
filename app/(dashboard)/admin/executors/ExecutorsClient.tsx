@@ -42,6 +42,9 @@ import {
   usePersistedInterfaceState,
   usePersistedScroll,
 } from "@/components/PersistedInterfaceState";
+import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
+import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
+import { useCompatibleFilterOptions } from "@/lib/useCompatibleFilterOptions";
 type Row = {
   id: string;
   name: string;
@@ -112,6 +115,32 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
     field: "name",
     dir: "asc",
   });
+  const hasActiveFilters =
+    typeFilter.length > 0 || workTypeFilter.length > 0 || projectFilter.length > 0 ||
+    responsibleFilter.length > 0 || bankFilter.length > 0 || recipientFilter.length > 0 ||
+    companyStatusFilter.length > 0 || statusFilter.length > 0 || nameSearch.trim().length > 0;
+  const resetFilters = () => {
+    setTypeFilter([]);
+    setWorkTypeFilter([]);
+    setProjectFilter([]);
+    setResponsibleFilter([]);
+    setBankFilter([]);
+    setRecipientFilter([]);
+    setCompanyStatusFilter([]);
+    setStatusFilter([]);
+    setNameSearch("");
+  };
+  const urlFilters = useUrlSyncedFilters([
+    { stateKey: "typeFilter", param: "type", kind: "array", value: typeFilter, defaultValue: [], setValue: setTypeFilter },
+    { stateKey: "workTypeFilter", param: "workType", kind: "array", value: workTypeFilter, defaultValue: [], setValue: setWorkTypeFilter },
+    { stateKey: "projectFilter", param: "project", kind: "array", value: projectFilter, defaultValue: [], setValue: setProjectFilter },
+    { stateKey: "responsibleFilter", param: "responsible", kind: "array", value: responsibleFilter, defaultValue: [], setValue: setResponsibleFilter },
+    { stateKey: "bankFilter", param: "bank", kind: "array", value: bankFilter, defaultValue: [], setValue: setBankFilter },
+    { stateKey: "recipientFilter", param: "recipient", kind: "array", value: recipientFilter, defaultValue: [], setValue: setRecipientFilter },
+    { stateKey: "companyStatusFilter", param: "companyStatus", kind: "array", value: companyStatusFilter, defaultValue: [], setValue: setCompanyStatusFilter },
+    { stateKey: "statusFilter", param: "status", kind: "array", value: statusFilter, defaultValue: [], setValue: setStatusFilter },
+    { stateKey: "nameSearch", param: "search", kind: "string", value: nameSearch, defaultValue: "", setValue: setNameSearch },
+  ]);
 
   const [wizardOpen, setWizardOpen] = React.useState(false);
   const [archiveTarget, setArchiveTarget] = React.useState<Row | null>(null);
@@ -137,15 +166,7 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
       sort,
     },
     (stored) => {
-      if (stored.typeFilter) setTypeFilter(stored.typeFilter);
-      if (stored.workTypeFilter) setWorkTypeFilter(stored.workTypeFilter);
-      if (stored.projectFilter) setProjectFilter(stored.projectFilter);
-      if (stored.responsibleFilter) setResponsibleFilter(stored.responsibleFilter);
-      if (stored.bankFilter) setBankFilter(stored.bankFilter);
-      if (stored.recipientFilter) setRecipientFilter(stored.recipientFilter);
-      if (stored.companyStatusFilter) setCompanyStatusFilter(stored.companyStatusFilter);
-      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
-      if (stored.nameSearch !== undefined) setNameSearch(stored.nameSearch);
+      urlFilters.restorePersisted(stored);
       if (stored.sort) setSort(stored.sort);
     }
   );
@@ -257,6 +278,85 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
     sort,
   ]);
 
+  const optionRows = React.useMemo(() => {
+    const query = nameSearch.trim().toLowerCase();
+    return data?.filter((row) => !query || row.name.toLowerCase().includes(query));
+  }, [data, nameSearch]);
+
+  const compatibleValues = useCompatibleFilterOptions(optionRows, [
+    {
+      key: "type",
+      value: typeFilter,
+      setValue: setTypeFilter,
+      matches: (row, value) => !value.length || value.some((group) =>
+        (EXECUTOR_TYPE_FILTER_GROUPS[group as keyof typeof EXECUTOR_TYPE_FILTER_GROUPS] ?? [])
+          .includes(normalizeExecutorType(row.type))
+      ),
+      values: (row) => Object.entries(EXECUTOR_TYPE_FILTER_GROUPS)
+        .filter(([, types]) => types.includes(normalizeExecutorType(row.type)))
+        .map(([group]) => group),
+    },
+    {
+      key: "workType",
+      value: workTypeFilter,
+      setValue: setWorkTypeFilter,
+      matches: (row, value) => !value.length || (
+        value.includes("__empty__") && row.workTypeIds.length === 0
+      ) || row.workTypeIds.some((id) => value.includes(id)),
+      values: (row) => row.workTypeIds.length ? row.workTypeIds : ["__empty__"],
+    },
+    {
+      key: "project",
+      value: projectFilter,
+      setValue: setProjectFilter,
+      matches: (row, value) => !value.length || (
+        value.includes("__empty__") && row.projectNames.length === 0
+      ) || row.projectNames.some((name) => value.includes(name)),
+      values: (row) => row.projectNames.length ? row.projectNames : ["__empty__"],
+    },
+    {
+      key: "responsible",
+      value: responsibleFilter,
+      setValue: setResponsibleFilter,
+      matches: (row, value) => !value.length || value.includes(row.responsibleUserId ?? "__none__"),
+      values: (row) => [row.responsibleUserId ?? "__none__"],
+    },
+    {
+      key: "bank",
+      value: bankFilter,
+      setValue: setBankFilter,
+      matches: (row, value) => !value.length || value.includes(row.defaultBankAccountId ?? "__none__"),
+      values: (row) => [row.defaultBankAccountId ?? "__none__"],
+    },
+    {
+      key: "recipient",
+      value: recipientFilter,
+      setValue: setRecipientFilter,
+      matches: (row, value) => !value.length || (
+        value.includes("__none__") && row.recipientTypes.length === 0
+      ) || row.recipientTypes.some((type) => value.includes(type)),
+      values: (row) => row.recipientTypes.length ? row.recipientTypes : ["__none__"],
+    },
+    {
+      key: "companyStatus",
+      value: companyStatusFilter,
+      setValue: setCompanyStatusFilter,
+      matches: (row, value) => !value.length || (
+        value.includes("__none__") && !row.companyStatus
+      ) || (row.companyStatus ?? "").split(",").some((status) => value.includes(status.trim())),
+      values: (row) => row.companyStatus
+        ? row.companyStatus.split(",").map((status) => status.trim())
+        : ["__none__"],
+    },
+    {
+      key: "status",
+      value: statusFilter,
+      setValue: setStatusFilter,
+      matches: (row, value) => !value.length || value.includes(row.status),
+      values: (row) => [row.status],
+    },
+  ]);
+
   function handleSort(field: string, dir: SortDir) {
     setSort({ field: field as SortField, dir });
   }
@@ -353,6 +453,7 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
       />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
+        <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
         <div className="relative w-56">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-neutral-400 pointer-events-none" />
           <Input
@@ -362,46 +463,48 @@ export function ExecutorsClient({ mode = "admin", canAdd = true }: ExecutorsClie
             className="h-8 pl-8 text-xs"
           />
         </div>
-        <MultiSelectFilter label="Тип" options={typeFilterOpts} value={typeFilter} onChange={setTypeFilter} />
+        <MultiSelectFilter label="Тип" options={typeFilterOpts.filter((option) => compatibleValues.type?.has(option.value))} value={typeFilter} onChange={setTypeFilter} />
         <MultiSelectFilter
           label="Статус в компании"
-          options={companyStatusOpts}
+          options={companyStatusOpts.filter((option) => compatibleValues.companyStatus?.has(option.value))}
           value={companyStatusFilter}
           onChange={setCompanyStatusFilter}
         />
         <MultiSelectFilter
           label="Виды работ"
-          options={workTypeOpts}
+          options={workTypeOpts.filter((option) => compatibleValues.workType?.has(option.value))}
           value={workTypeFilter}
           onChange={setWorkTypeFilter}
         />
         <MultiSelectFilter
           label="Проекты"
-          options={projectOptions}
+          options={projectOptions.filter((option) => compatibleValues.project?.has(option.value))}
           value={projectFilter}
           onChange={setProjectFilter}
         />
         <MultiSelectFilter
           label="Ответственный"
-          options={responsibleOpts}
+          options={responsibleOpts.filter((option) => compatibleValues.responsible?.has(option.value))}
           value={responsibleFilter}
           onChange={setResponsibleFilter}
         />
         <MultiSelectFilter
           label="Источник оплаты"
-          options={bankOpts}
+          options={bankOpts.filter((option) => compatibleValues.bank?.has(option.value))}
           value={bankFilter}
           onChange={setBankFilter}
         />
         <MultiSelectFilter
           label="Тип получателя"
-          options={recipientOpts}
+          options={recipientOpts.filter((option) => compatibleValues.recipient?.has(option.value))}
           value={recipientFilter}
           onChange={setRecipientFilter}
         />
         <MultiSelectFilter
           label="Статус"
-          options={Object.entries(ENTITY_STATUSES).map(([value, { label }]) => ({ value, label }))}
+          options={Object.entries(ENTITY_STATUSES)
+            .map(([value, { label }]) => ({ value, label }))
+            .filter((option) => compatibleValues.status?.has(option.value))}
           value={statusFilter}
           onChange={setStatusFilter}
         />

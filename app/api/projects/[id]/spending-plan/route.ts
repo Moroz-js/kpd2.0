@@ -2,9 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
-import { logActivity } from "@/lib/audit/log";
+import { diff, logActivity } from "@/lib/audit/log";
+import {
+  AUTOMATIC_ACTIVITY_ACTION,
+  SPENDING_PLAN_COMMENT_ACTIVITY_ENTITY_TYPE,
+  spendingPlanCommentActivityId,
+} from "@/lib/comment-history";
 import { withSerializableTransaction } from "@/lib/services/entity-numbering";
 import { mergeSpendingPlanValues } from "@/lib/spending-plan";
+import {
+  captureCashflowCommentValues,
+  logCashflowCommentValueChanges,
+} from "@/lib/cashflow-comment-activity";
 import { z } from "zod";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -43,8 +52,9 @@ export async function POST(req: NextRequest, { params }: Ctx) {
   if (!parsed.success) return NextResponse.json({ error: "Validation", details: parsed.error.flatten() }, { status: 422 });
 
   const { executorId, workTypeId, year, week, amount, comment, sourceType } = parsed.data;
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
-  const { line, action } = await withSerializableTransaction(async (tx) => {
+  const { line, action, changes, collapsedDuplicates } = await withSerializableTransaction(async (tx) => {
     const existingRows = await tx.spendingPlanLine.findMany({
       where: { projectId, executorId, workTypeId, year, week },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
@@ -57,6 +67,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
         comment,
         sourceType,
       });
+      const changes = diff(mergeSpendingPlanValues(existingRows, {}), merged);
       const duplicateIds = existingRows.slice(1).map((row) => row.id);
       if (duplicateIds.length > 0) {
         await tx.spendingPlanLine.deleteMany({
@@ -69,6 +80,8 @@ export async function POST(req: NextRequest, { params }: Ctx) {
           data: merged,
         }),
         action: "update" as const,
+        changes,
+        collapsedDuplicates: duplicateIds.length,
       };
     }
 
@@ -88,16 +101,61 @@ export async function POST(req: NextRequest, { params }: Ctx) {
         },
       }),
       action: "create" as const,
+      changes: diff(
+        {
+          amount: null as number | null,
+          comment: null as string | null,
+          sourceType: null as string | null,
+        },
+        {
+          amount: amount ?? 0,
+          comment: comment?.trim() || null,
+          sourceType: sourceType ?? null,
+        }
+      ),
+      collapsedDuplicates: 0,
     };
   });
 
+  const commentEntityId = spendingPlanCommentActivityId({
+    projectId,
+    executorId,
+    workTypeId,
+    year,
+    week,
+  });
+  const entityLabel = `План расходов · нед. ${week} / ${year}`;
   await logActivity({
     userId: user.id,
     action,
     entityType: "SpendingPlanLine",
     entityId: line.id,
     entityLabel: `Нед. ${week} / ${year}`,
+    changes,
   });
+  if (Object.keys(changes).length > 0) {
+    await logActivity({
+      userId: user.id,
+      action,
+      entityType: SPENDING_PLAN_COMMENT_ACTIVITY_ENTITY_TYPE,
+      entityId: commentEntityId,
+      entityLabel,
+      changes,
+    });
+  }
+  if (collapsedDuplicates > 0) {
+    await logActivity({
+      userId: user.id,
+      action: AUTOMATIC_ACTIVITY_ACTION,
+      entityType: SPENDING_PLAN_COMMENT_ACTIVITY_ENTITY_TYPE,
+      entityId: commentEntityId,
+      entityLabel,
+      changes: {
+        duplicateRows: { from: collapsedDuplicates + 1, to: 1 },
+      },
+    });
+  }
+  await logCashflowCommentValueChanges(cashflowCommentValues, user.id);
 
   return NextResponse.json(line);
 }
@@ -115,6 +173,8 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
   const parsed = deleteSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Validation" }, { status: 422 });
 
+  const cashflowCommentValues = await captureCashflowCommentValues();
   await prisma.spendingPlanLine.delete({ where: { id: parsed.data.id } });
+  await logCashflowCommentValueChanges(cashflowCommentValues, user.id);
   return NextResponse.json({ ok: true });
 }

@@ -7,9 +7,13 @@ import { toast } from "sonner";
 import { Pencil, CheckCircle2, X } from "lucide-react";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
+import { MoreFilters } from "@/components/ui-custom/MoreFilters";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
+import { OverduePaymentSummary } from "@/components/ui-custom/OverduePaymentSummary";
+import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
 import { WORK_STATUSES, WORK_STATUSES_SETTABLE } from "@/lib/statuses";
 import { formatMoney, formatMoneyRub, formatDateShort, weekLabel, monthLabel, MONTHS } from "@/lib/format";
+import { isOverduePayment, overduePaymentTotal } from "@/lib/overdue-payments";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DateInput } from "@/components/ui-custom/DateInput";
@@ -36,7 +40,15 @@ import { useTableRowSelection } from "@/lib/useTableRowSelection";
 import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner, compactTable, compactHead, compactPeriodHead, compactCell, compactCellClip } from "@/lib/table-styles";
 import { IssuedWorkEditDialog, type SmetaType } from "./IssuedWorkEditDialog";
+import { PayoutEditDialog } from "../payouts/PayoutEditDialog";
+import type { PayoutRowDTO } from "../payouts/PayoutsClient";
 import { isUnknownExecutorName } from "@/lib/executor-names";
+import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
+import { useCompatibleFilterOptions } from "@/lib/useCompatibleFilterOptions";
+import {
+  getMonthFilterMetadata,
+  getWeekFilterMetadata,
+} from "@/lib/period-filter-options";
 import {
   usePersistedInterfaceState,
   usePersistedScroll,
@@ -44,7 +56,7 @@ import {
 
 const periodYearMonthClass = "w-20 max-w-20 px-1";
 const weekPayClass = "w-20 max-w-20 px-1";
-const COL_WIDTHS = [40, 96, 104, 80, 160, 110, 130, 112, 112, 112, 180, 150, 220, 150, 120, 84, 128] as const;
+const COL_WIDTHS = [40, 96, 104, 80, 160, 110, 130, 112, 112, 112, 180, 150, 220, 150, 120, 100, 84, 128] as const;
 const COL_COUNT = COL_WIDTHS.length;
 const TABLE_MIN_WIDTH = COL_WIDTHS.reduce((sum, width) => sum + width, 0);
 
@@ -74,6 +86,9 @@ type Row = {
   amount: number;
   description: string | null;
   workStatus: string;
+  paymentId: string | null;
+  payoutNumber: string | null;
+  paymentStatus: string | null;
   checkedAt: string | null;
   paidAt: string | null;
   plannedPayAt: string | null;
@@ -157,6 +172,7 @@ type IssuedWorkRowProps = {
   onSelect: (index: number, id: string, shiftKey: boolean) => void;
   onEdit: (row: Row) => void;
   onCheck: (row: Row) => void;
+  onOpenPayment: (row: Row) => void;
 };
 
 const IssuedWorkRow = React.memo(function IssuedWorkRow({
@@ -166,8 +182,14 @@ const IssuedWorkRow = React.memo(function IssuedWorkRow({
   onSelect,
   onEdit,
   onCheck,
+  onOpenPayment,
 }: IssuedWorkRowProps) {
   const id = issuedWorkRowId(r);
+  const overdue = isOverduePayment({
+    status: r.workStatus,
+    paidAt: r.paidAt,
+    plannedPayAt: r.plannedPayAt,
+  });
   return (
     <TableRow
       className={`${checked ? "bg-blue-50" : ""} ${r.workStatus === "archived" ? "bg-neutral-50 text-neutral-400" : ""}`.trim()}
@@ -197,8 +219,8 @@ const IssuedWorkRow = React.memo(function IssuedWorkRow({
         <StatusBadge dict={WORK_STATUSES} value={r.workStatus} />
       </TableCell>
       <TableCell className={compactCell}>{formatDateShort(r.checkedAt)}</TableCell>
-      <TableCell className={compactCell}>{formatDateShort(r.plannedPayAt)}</TableCell>
-      <TableCell className={cn(compactCell, r.workStatus === "paid" && !r.paidAt && "bg-red-100 text-red-700")}>
+      <TableCell className={cn(compactCell, !r.paidAt && overdue && "bg-red-100 text-red-700")}>{formatDateShort(r.plannedPayAt)}</TableCell>
+      <TableCell className={cn(compactCell, (r.workStatus === "paid" && !r.paidAt || (!!r.paidAt && overdue)) && "bg-red-100 text-red-700")}>
         {formatDateShort(r.paidAt)}
       </TableCell>
       <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>{r.projectName}</TableCell>
@@ -208,6 +230,18 @@ const IssuedWorkRow = React.memo(function IssuedWorkRow({
       </TableCell>
       <TableCell className={cn(compactCell, compactCellClip, "whitespace-normal")}>
         {r.responsibleExecutorName ?? "—"}
+      </TableCell>
+      <TableCell className={cn(compactCell, compactCellClip, "tabular-nums")}>
+        {r.paymentId && r.payoutNumber ? (
+          <button
+            type="button"
+            title={r.payoutNumber}
+            className="block w-full truncate text-left text-blue-600 hover:underline"
+            onClick={() => onOpenPayment(r)}
+          >
+            {r.payoutNumber}
+          </button>
+        ) : "—"}
       </TableCell>
       <TableCell className={compactCell}>{smetaTypeCell(r)}</TableCell>
       <TableCell className={cn(compactCell, "tabular-nums text-left", periodYearMonthClass)}>
@@ -245,6 +279,8 @@ export function IssuedWorksClient() {
   const { data: projects } = useSWR<ProjectOption[]>("/api/projects/options", fetcher);
   const { data: executors } = useSWR<ExecutorOption[]>("/api/executors", fetcher);
   const { data: workTypes } = useSWR<WorkTypeOption[]>("/api/work-types", fetcher);
+  const { data: payouts, mutate: mutatePayouts } = useSWR<PayoutRowDTO[]>("/api/payouts", fetcher);
+  const { data: banks } = useSWR<{ id: string; name: string; status: string }[]>("/api/bank-accounts", fetcher);
 
   const [yearPlanFactFilter, setYearPlanFactFilter] = React.useState<string[]>([String(new Date().getFullYear())]);
   const [executionYearFilter, setExecutionYearFilter] = React.useState<string[]>([]);
@@ -256,6 +292,7 @@ export function IssuedWorksClient() {
   const [workTypeFilter, setWorkTypeFilter] = React.useState<string[]>([]);
   const [statusFilter, setStatusFilter] = React.useState<string[]>([]);
   const [smetaFilter, setSmetaFilter] = React.useState<string[]>([]);
+  const [overdueOnly, setOverdueOnly] = React.useState(false);
   const [groupBy, setGroupBy] = React.useState<"" | "executor" | "week" | "project" | "workType">("");
   const [collapsedGroups, setCollapsedGroups] = React.useState<Set<string>>(() => new Set());
 
@@ -267,6 +304,48 @@ export function IssuedWorksClient() {
   ]);
 
   const [editing, setEditing] = React.useState<Row | null>(null);
+  const [editingPayment, setEditingPayment] = React.useState<PayoutRowDTO | null>(null);
+  const hasActiveFilters =
+    executionYearFilter.length > 0 || executionMonthFilter.length > 0 ||
+    weekFilter.length > 0 || executorFilter.length > 0 || responsibleExecutorFilter.length > 0 ||
+    projectFilter.length > 0 || workTypeFilter.length > 0 || statusFilter.length > 0 ||
+    smetaFilter.length > 0 || overdueOnly;
+  const resetFilters = () => {
+    setExecutionYearFilter([]); setExecutionMonthFilter([]); setWeekFilter([]);
+    setExecutorFilter([]); setResponsibleExecutorFilter([]); setProjectFilter([]);
+    setWorkTypeFilter([]); setStatusFilter([]); setSmetaFilter([]); setOverdueOnly(false);
+  };
+  const showOverdue = () => {
+    // Сумма в шапке не ограничена годом и прочими фильтрами, поэтому показываем
+    // ровно те строки, которые в неё входят.
+    setYearPlanFactFilter(
+      Array.from(
+        new Set(
+          (data ?? []).map((row) =>
+            row.yearPlanFact === null ? "__empty__" : String(row.yearPlanFact)
+          )
+        )
+      )
+    );
+    setExecutionYearFilter([]); setExecutionMonthFilter([]); setWeekFilter([]);
+    setExecutorFilter([]); setResponsibleExecutorFilter([]); setProjectFilter([]);
+    setWorkTypeFilter([]); setStatusFilter([]); setSmetaFilter([]);
+    setOverdueOnly(true);
+  };
+
+  const urlFilters = useUrlSyncedFilters([
+    { stateKey: "yearPlanFactFilter", param: "planYear", kind: "array", value: yearPlanFactFilter, defaultValue: [String(new Date().getFullYear())], setValue: setYearPlanFactFilter },
+    { stateKey: "executionYearFilter", param: "execYear", kind: "array", value: executionYearFilter, defaultValue: [], setValue: setExecutionYearFilter },
+    { stateKey: "executionMonthFilter", param: "execMonth", kind: "array", value: executionMonthFilter, defaultValue: [], setValue: setExecutionMonthFilter },
+    { stateKey: "weekFilter", param: "week", kind: "array", value: weekFilter, defaultValue: [], setValue: setWeekFilter },
+    { stateKey: "executorFilter", param: "executor", kind: "array", value: executorFilter, defaultValue: [], setValue: setExecutorFilter },
+    { stateKey: "responsibleExecutorFilter", param: "responsible", kind: "array", value: responsibleExecutorFilter, defaultValue: [], setValue: setResponsibleExecutorFilter },
+    { stateKey: "projectFilter", param: "project", kind: "array", value: projectFilter, defaultValue: [], setValue: setProjectFilter },
+    { stateKey: "workTypeFilter", param: "workType", kind: "array", value: workTypeFilter, defaultValue: [], setValue: setWorkTypeFilter },
+    { stateKey: "statusFilter", param: "status", kind: "array", value: statusFilter, defaultValue: [], setValue: setStatusFilter },
+    { stateKey: "smetaFilter", param: "smeta", kind: "array", value: smetaFilter, defaultValue: [], setValue: setSmetaFilter },
+    { stateKey: "overdueOnly", param: "overdue", kind: "boolean", value: overdueOnly, defaultValue: false, setValue: setOverdueOnly },
+  ]);
 
   // Bulk
   const [bulkStatus, setBulkStatus] = React.useState("");
@@ -288,21 +367,13 @@ export function IssuedWorksClient() {
       workTypeFilter,
       statusFilter,
       smetaFilter,
+      overdueOnly,
       groupBy,
       collapsedGroups,
       sort,
     },
     (stored) => {
-      if (stored.yearPlanFactFilter) setYearPlanFactFilter(stored.yearPlanFactFilter);
-      if (stored.executionYearFilter) setExecutionYearFilter(stored.executionYearFilter);
-      if (stored.executionMonthFilter) setExecutionMonthFilter(stored.executionMonthFilter);
-      if (stored.weekFilter) setWeekFilter(stored.weekFilter);
-      if (stored.executorFilter) setExecutorFilter(stored.executorFilter);
-      if (stored.responsibleExecutorFilter) setResponsibleExecutorFilter(stored.responsibleExecutorFilter);
-      if (stored.projectFilter) setProjectFilter(stored.projectFilter);
-      if (stored.workTypeFilter) setWorkTypeFilter(stored.workTypeFilter);
-      if (stored.statusFilter) setStatusFilter(stored.statusFilter);
-      if (stored.smetaFilter) setSmetaFilter(stored.smetaFilter);
+      urlFilters.restorePersisted(stored);
       if (stored.groupBy !== undefined) setGroupBy(stored.groupBy);
       if (stored.collapsedGroups instanceof Set) setCollapsedGroups(stored.collapsedGroups);
       if (stored.sort) setSort(stored.sort);
@@ -321,6 +392,7 @@ export function IssuedWorksClient() {
       workTypeFilter,
       statusFilter,
       smetaFilter,
+      overdueOnly,
       groupBy,
       collapsedGroups,
       sort,
@@ -353,35 +425,135 @@ export function IssuedWorksClient() {
   }
 
   const allRows = data ?? [];
+  const overdueTotal = React.useMemo(
+    () => overduePaymentTotal(allRows.map((row) => ({
+      status: row.workStatus,
+      paidAt: row.paidAt,
+      plannedPayAt: row.plannedPayAt,
+      amount: row.amount,
+    }))),
+    [allRows]
+  );
+
+  const compatibleValues = useCompatibleFilterOptions(allRows, [
+    {
+      key: "yearPlanFact", value: yearPlanFactFilter, setValue: setYearPlanFactFilter,
+      matches: (row, values) => !values.length || values.includes(row.yearPlanFact === null ? "__empty__" : String(row.yearPlanFact)),
+      values: (row) => [row.yearPlanFact === null ? "__empty__" : String(row.yearPlanFact)],
+      protectedFromAutoClear: true,
+    },
+    {
+      key: "execYear", value: executionYearFilter, setValue: setExecutionYearFilter,
+      matches: (row, values) => !values.length || values.includes(String(row.executionYear)),
+      values: (row) => [String(row.executionYear)],
+    },
+    {
+      key: "execMonth", value: executionMonthFilter, setValue: setExecutionMonthFilter,
+      matches: (row, values) => !values.length || values.includes(String(row.executionMonth)),
+      values: (row) => [String(row.executionMonth)],
+    },
+    {
+      key: "week", value: weekFilter, setValue: setWeekFilter,
+      matches: (row, values) => !values.length || values.includes(issuedWorkWeekKey(row)),
+      values: (row) => [issuedWorkWeekKey(row)],
+    },
+    {
+      key: "executor", value: executorFilter, setValue: setExecutorFilter,
+      matches: (row, values) => !values.length || values.includes(row.executorId),
+      values: (row) => [row.executorId],
+    },
+    {
+      key: "responsible", value: responsibleExecutorFilter, setValue: setResponsibleExecutorFilter,
+      matches: (row, values) => !values.length || values.includes(row.responsibleExecutorId ?? "__empty__"),
+      values: (row) => [row.responsibleExecutorId ?? "__empty__"],
+    },
+    {
+      key: "project", value: projectFilter, setValue: setProjectFilter,
+      matches: (row, values) => !values.length || values.includes(row.projectId),
+      values: (row) => [row.projectId],
+    },
+    {
+      key: "workType", value: workTypeFilter, setValue: setWorkTypeFilter,
+      matches: (row, values) => !values.length || values.includes(row.workTypeId),
+      values: (row) => [row.workTypeId],
+    },
+    {
+      key: "status", value: statusFilter, setValue: setStatusFilter,
+      matches: (row, values) => !values.length || values.includes(row.workStatus),
+      values: (row) => [row.workStatus],
+    },
+    {
+      key: "smeta", value: smetaFilter, setValue: setSmetaFilter,
+      matches: (row, values) => !values.length || values.includes(row.sourceType),
+      values: (row) => [row.sourceType],
+    },
+  ]);
 
   const yearOptions = React.useMemo(() => {
     const opts = Array.from(
       new Set(allRows.map((r) => r.yearPlanFact).filter((v): v is number => v != null))
-    ).sort((a, b) => b - a).map((y) => ({ value: String(y), label: String(y) }));
+    ).sort((a, b) => b - a).map((y) => ({ value: String(y), label: String(y) }))
+      .filter((option) => compatibleValues.yearPlanFact?.has(option.value));
     const hasEmpty = allRows.some((r) => r.yearPlanFact === null);
-    return hasEmpty ? [{ value: "__empty__", label: "Пусто" }, ...opts] : opts;
-  }, [allRows]);
+    return hasEmpty && compatibleValues.yearPlanFact?.has("__empty__")
+      ? [{ value: "__empty__", label: "Пусто" }, ...opts]
+      : opts;
+  }, [allRows, compatibleValues.yearPlanFact]);
   const execYearOptions = React.useMemo(
     () =>
       Array.from(new Set(allRows.map((r) => r.executionYear)))
         .sort((a, b) => b - a)
-        .map((y) => ({ value: String(y), label: String(y) })),
-    [allRows]
+        .map((y) => ({ value: String(y), label: String(y) }))
+        .filter((option) => compatibleValues.execYear?.has(option.value)),
+    [allRows, compatibleValues.execYear]
   );
-  const monthOptions = MONTHS;
+  const monthOptions = React.useMemo(() => {
+    // Серость месяца — в контексте выбранного года выполнения, а не всех лет вперемешку.
+    const yearScoped = executionYearFilter.length
+      ? allRows.filter((row) => executionYearFilter.includes(String(row.executionYear)))
+      : allRows;
+    return MONTHS
+      .filter((month) => allRows.some((row) => String(row.executionMonth) === month.value))
+      .filter((month) => compatibleValues.execMonth?.has(month.value))
+      .map((month) => ({
+        ...month,
+        ...getMonthFilterMetadata(
+          yearScoped
+            .filter((row) => String(row.executionMonth) === month.value)
+            .map((row) => ({ year: row.executionYear, month: row.executionMonth })),
+        ),
+      }));
+  }, [allRows, compatibleValues.execMonth, executionYearFilter]);
   const weekOptions = React.useMemo(() => {
-    const opts = Array.from(
-      new Set(allRows.map((r) => r.weekPlanFact).filter((v): v is number => v != null))
-    ).sort((a, b) => a - b).map((w) => ({ value: String(w), label: weekLabel(w) }));
+    // Ключ включает год ("YYYY-WW"): неделя №2 2025-го и неделя №2 2026-го — это
+    // разные календарные периоды и не должны схлопываться в один вариант фильтра
+    // (иначе «прошлое» и «будущее» смешиваются под одним номером недели).
+    const map = new Map<string, { year: number; week: number }>();
+    for (const row of allRows) {
+      if (row.weekPlanFact == null || row.yearPlanFact == null) continue;
+      const key = issuedWorkWeekKey(row);
+      if (!map.has(key)) map.set(key, { year: row.yearPlanFact, week: row.weekPlanFact });
+    }
+    const opts = Array.from(map.entries())
+      .filter(([key]) => compatibleValues.week?.has(key))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, period]) => ({
+        value: key,
+        label: `${weekLabel(period.week)} ${period.year}`,
+        ...getWeekFilterMetadata([period]),
+      }));
     const hasEmpty = allRows.some((r) => r.weekPlanFact === null);
-    return hasEmpty ? [{ value: "__empty__", label: "Пусто" }, ...opts] : opts;
-  }, [allRows]);
+    return hasEmpty && compatibleValues.week?.has("__empty__")
+      ? [{ value: "__empty__", label: "Пусто" }, ...opts]
+      : opts;
+  }, [allRows, compatibleValues.week]);
   const executorOptions = React.useMemo(
     () =>
       Array.from(new Map(allRows.map((r) => [r.executorId, r.executorName])).entries())
+        .filter(([value]) => compatibleValues.executor?.has(value))
         .sort((a, b) => a[1].localeCompare(b[1], "ru"))
         .map(([value, label]) => ({ value, label })),
-    [allRows]
+    [allRows, compatibleValues.executor]
   );
   const responsibleExecutorOptions = React.useMemo(() => {
     const optionsById = new Map<string, string>();
@@ -397,16 +569,20 @@ export function IssuedWorksClient() {
       }
     }
     const options = Array.from(optionsById.entries())
+      .filter(([value]) => compatibleValues.responsible?.has(value))
       .sort((a, b) => a[1].localeCompare(b[1], "ru"))
       .map(([value, label]) => ({ value, label }));
-    return hasEmpty ? [{ value: "__empty__", label: "Не указано" }, ...options] : options;
-  }, [allRows]);
+    return hasEmpty && compatibleValues.responsible?.has("__empty__")
+      ? [{ value: "__empty__", label: "Не указано" }, ...options]
+      : options;
+  }, [allRows, compatibleValues.responsible]);
   const projectOptions = React.useMemo(
     () =>
       Array.from(new Map(allRows.map((r) => [r.projectId, r.projectName])).entries())
+        .filter(([value]) => compatibleValues.project?.has(value))
         .sort((a, b) => a[1].localeCompare(b[1], "ru"))
         .map(([value, label]) => ({ value, label })),
-    [allRows]
+    [allRows, compatibleValues.project]
   );
   const workTypeOptions = React.useMemo(() => {
     const map = new Map<string, { label: string; group: string }>();
@@ -416,12 +592,13 @@ export function IssuedWorksClient() {
       }
     }
     return Array.from(map.entries())
+      .filter(([value]) => compatibleValues.workType?.has(value))
       .sort((a, b) =>
         (a[1].group ?? "").localeCompare(b[1].group ?? "", "ru") ||
         a[1].label.localeCompare(b[1].label, "ru")
       )
       .map(([value, { label, group }]) => ({ value, label, group }));
-  }, [allRows]);
+  }, [allRows, compatibleValues.workType]);
 
   const rows = React.useMemo(() => {
     let list = allRows;
@@ -431,7 +608,7 @@ export function IssuedWorksClient() {
       list = list.filter((r) => executionYearFilter.includes(String(r.executionYear)));
     if (executionMonthFilter.length)
       list = list.filter((r) => executionMonthFilter.includes(String(r.executionMonth)));
-    if (weekFilter.length) list = list.filter((r) => weekFilter.includes(r.weekPlanFact === null ? "__empty__" : String(r.weekPlanFact)));
+    if (weekFilter.length) list = list.filter((r) => weekFilter.includes(issuedWorkWeekKey(r)));
     if (executorFilter.length) list = list.filter((r) => executorFilter.includes(r.executorId));
     if (responsibleExecutorFilter.length)
       list = list.filter((r) =>
@@ -441,6 +618,13 @@ export function IssuedWorksClient() {
     if (workTypeFilter.length) list = list.filter((r) => workTypeFilter.includes(r.workTypeId));
     if (statusFilter.length) list = list.filter((r) => statusFilter.includes(r.workStatus));
     if (smetaFilter.length) list = list.filter((r) => smetaFilter.includes(r.sourceType));
+    if (overdueOnly) {
+      list = list.filter((r) => isOverduePayment({
+        status: r.workStatus,
+        paidAt: r.paidAt,
+        plannedPayAt: r.plannedPayAt,
+      }));
+    }
     return [...list].sort(compareRows);
   }, [
     allRows,
@@ -454,6 +638,7 @@ export function IssuedWorksClient() {
     workTypeFilter,
     statusFilter,
     smetaFilter,
+    overdueOnly,
     sort,
   ]);
 
@@ -531,6 +716,17 @@ export function IssuedWorksClient() {
   }, [rows, selectedIds]);
 
   const handleEdit = React.useCallback((row: Row) => setEditing(row), []);
+  const handleOpenPayment = React.useCallback((row: Row) => {
+    // Для «Личной сметы» Payout.sourceId — это id выплаты (Payment.id), а не id работы,
+    // поэтому сопоставляем по row.paymentId; для «Прочих трат» sourceId совпадает.
+    const targetId = row.sourceType === "personal" ? row.paymentId : row.sourceId;
+    if (!targetId) return toast.error("Выплата не найдена");
+    const payment = payouts?.find(
+      (item) => item.sourceType === row.sourceType && item.sourceId === targetId
+    );
+    if (!payment) return toast.error("Выплата не найдена");
+    setEditingPayment(payment);
+  }, [payouts]);
 
   const handleCheckRow = React.useCallback(
     async (row: Row) => {
@@ -573,6 +769,7 @@ export function IssuedWorksClient() {
             onSelect={handleRowSelect}
             onEdit={handleEdit}
             onCheck={handleCheckRow}
+            onOpenPayment={handleOpenPayment}
           />
         );
       }
@@ -588,10 +785,11 @@ export function IssuedWorksClient() {
           onSelect={handleRowSelect}
           onEdit={handleEdit}
           onCheck={handleCheckRow}
+          onOpenPayment={handleOpenPayment}
         />
       );
     },
-    [flatItems, rows, rowIndexById, selectedIds, handleRowSelect, handleEdit, handleCheckRow, toggleGroup]
+    [flatItems, rows, rowIndexById, selectedIds, handleRowSelect, handleEdit, handleCheckRow, handleOpenPayment, toggleGroup]
   );
 
   async function handleBulkApply() {
@@ -626,25 +824,17 @@ export function IssuedWorksClient() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <PageHeader title="Выставленные работы" />
+      <PageHeader
+        title="Выставленные работы"
+        actions={<OverduePaymentSummary amount={overdueTotal} onClick={showOverdue} active={overdueOnly} />}
+      />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
+        <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
         <GroupBySelect
           value={groupBy}
           onChange={handleGroupByChange}
           options={[...ISSUED_WORK_GROUP_OPTIONS]}
-        />
-        <MultiSelectFilter
-          label="Год оплаты план-факт"
-          options={yearOptions}
-          value={yearPlanFactFilter}
-          onChange={setYearPlanFactFilter}
-        />
-        <MultiSelectFilter
-          label="Год выполнения"
-          options={execYearOptions}
-          value={executionYearFilter}
-          onChange={setExecutionYearFilter}
         />
         <MultiSelectFilter
           label="Месяц"
@@ -684,7 +874,9 @@ export function IssuedWorksClient() {
         />
         <MultiSelectFilter
           label="Статус"
-          options={Object.entries(WORK_STATUSES).map(([value, { label }]) => ({ value, label }))}
+          options={Object.entries(WORK_STATUSES)
+            .map(([value, { label }]) => ({ value, label }))
+            .filter((option) => compatibleValues.status?.has(option.value))}
           value={statusFilter}
           onChange={setStatusFilter}
         />
@@ -693,10 +885,24 @@ export function IssuedWorksClient() {
           options={[
             { value: "personal", label: "Личная смета" },
             { value: "other-expense", label: "Прочие траты" },
-          ]}
+          ].filter((option) => compatibleValues.smeta?.has(option.value))}
           value={smetaFilter}
           onChange={setSmetaFilter}
         />
+        <MoreFilters activeCount={yearPlanFactFilter.length + executionYearFilter.length}>
+          <MultiSelectFilter
+            label="Год оплаты план-факт"
+            options={yearOptions}
+            value={yearPlanFactFilter}
+            onChange={setYearPlanFactFilter}
+          />
+          <MultiSelectFilter
+            label="Год выполнения"
+            options={execYearOptions}
+            value={executionYearFilter}
+            onChange={setExecutionYearFilter}
+          />
+        </MoreFilters>
       </div>
 
       {(rows.length > 0 || selectedIds.size > 0) && (
@@ -844,6 +1050,7 @@ export function IssuedWorksClient() {
               >
                 Ответственный
               </SortableHead>
+              <TableHead className={cn(compactHead, "w-24 max-w-24")}>Выплата</TableHead>
               <TableHead className={cn(compactHead, "w-32")}>Тип сметы</TableHead>
               <SortableHead
                 field="executionYear"
@@ -893,9 +1100,23 @@ export function IssuedWorksClient() {
           executors={executors ?? []}
           workTypes={workTypes ?? []}
           onClose={() => setEditing(null)}
-          onSaved={() => {
+          onSaved={async () => {
+            // Ждём обновления данных до закрытия — иначе при быстром повторном
+            // открытии форма показывает не обновлённый кэш SWR.
+            await mutate();
             setEditing(null);
-            mutate();
+          }}
+        />
+      )}
+      {editingPayment && (
+        <PayoutEditDialog
+          row={editingPayment}
+          executors={executors ?? []}
+          banks={banks ?? []}
+          onClose={() => setEditingPayment(null)}
+          onSaved={async () => {
+            await Promise.all([mutate(), mutatePayouts()]);
+            setEditingPayment(null);
           }}
         />
       )}

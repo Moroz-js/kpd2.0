@@ -8,6 +8,10 @@
 
 import { prisma } from "@/lib/db";
 import { logActivity, diff } from "@/lib/audit/log";
+import {
+  captureCashflowCommentValues,
+  logCashflowCommentValueChanges,
+} from "@/lib/cashflow-comment-activity";
 
 const ORDER_NUMBER_START = 3000;
 
@@ -102,6 +106,7 @@ export type UpdateOrderInput = {
 export async function updateOrder(id: string, patch: UpdateOrderInput, userId: string) {
   const before = await prisma.order.findUnique({ where: { id } });
   if (!before) throw new Error("Order not found");
+  const cashflowCommentValues = await captureCashflowCommentValues();
 
   const updated = await prisma.order.update({
     where: { id },
@@ -139,6 +144,7 @@ export async function updateOrder(id: string, patch: UpdateOrderInput, userId: s
       changes,
     });
   }
+  await logCashflowCommentValueChanges(cashflowCommentValues, userId);
 
   return updated;
 }
