@@ -17,6 +17,7 @@ export type BankOperation = {
   bankAccountId: string;
   bankAccountName: string;
   currency: string;
+  statementFormat: string;
   transferSource: string | null;
   amount: number;
   date: string;
@@ -79,7 +80,7 @@ export type ChargeCandidate = {
   paymentPurpose: string | null;
 };
 
-export type OptionRow = { id: string; name: string };
+export type OptionRow = { id: string; name: string; statementFormat?: string };
 
 /** Контрагент для выбора в операции: ищем по имени, написаниям из выписки и реквизитам. */
 export type CounterpartyOption = {
@@ -88,6 +89,8 @@ export type CounterpartyOption = {
   kind: string;
   status: string;
   legalType: string | null;
+  uniqueProjectId: string | null;
+  uniqueWorkTypeId: string | null;
   searchText: string;
 };
 

@@ -19,6 +19,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { logActivity, diff } from "@/lib/audit/log";
 import { normalizeMatchValue } from "@/lib/counterparty-match";
+import { inferPaymentMethod } from "@/lib/counterparty-requisites";
 import { hasPersonalSmeta } from "@/lib/executor-personal-estimate";
 import type { CounterpartyKind } from "@/lib/statuses";
 
@@ -54,6 +55,10 @@ export type CounterpartyListRow = {
   clientName: string | null;
   bankAccountId: string | null;
   bankAccountName: string | null;
+  uniqueProjectId: string | null;
+  uniqueProjectName: string | null;
+  uniqueWorkTypeId: string | null;
+  uniqueWorkTypeName: string | null;
   /** Ссылка на личную смету исполнителя — только если смета существует. */
   personalEstimateUrl: string | null;
   requisites: CounterpartyRequisiteRow[];
@@ -66,6 +71,8 @@ const COUNTERPARTY_INCLUDE = {
   executor: { select: { id: true, name: true, type: true, accessEmail: true } },
   client: { select: { id: true, name: true } },
   bankAccount: { select: { id: true, name: true } },
+  uniqueProject: { select: { id: true, name: true } },
+  uniqueWorkType: { select: { id: true, name: true } },
   requisites: { orderBy: { createdAt: "asc" } },
   aliases: { orderBy: { value: "asc" } },
   _count: { select: { bankOperations: true } },
@@ -75,7 +82,7 @@ type CounterpartyWithRelations = Prisma.CounterpartyGetPayload<{
   include: typeof COUNTERPARTY_INCLUDE;
 }>;
 
-/** Вкладка справочника: клиент → «Клиенты», свой счёт → «Наши счета», иначе тип исполнителя. */
+/** Вкладка справочника: клиент → «Клиенты», свой счёт → «Счета КПД», иначе тип исполнителя. */
 export function resolveCounterpartyKind(row: {
   clientId: string | null;
   bankAccountId: string | null;
@@ -102,6 +109,10 @@ function toRow(cp: CounterpartyWithRelations): CounterpartyListRow {
     clientName: cp.client?.name ?? null,
     bankAccountId: cp.bankAccountId,
     bankAccountName: cp.bankAccount?.name ?? null,
+    uniqueProjectId: cp.uniqueProjectId,
+    uniqueProjectName: cp.uniqueProject?.name ?? null,
+    uniqueWorkTypeId: cp.uniqueWorkTypeId,
+    uniqueWorkTypeName: cp.uniqueWorkType?.name ?? null,
     personalEstimateUrl:
       cp.executor && hasPersonalSmeta(cp.executor) ? `/admin/executors/${cp.executor.id}` : null,
     requisites: cp.requisites.map((r) => ({
@@ -121,8 +132,21 @@ function toRow(cp: CounterpartyWithRelations): CounterpartyListRow {
   };
 }
 
-export async function listCounterparties(): Promise<CounterpartyListRow[]> {
+export type ListCounterpartiesFilter = {
+  executorId?: string;
+  clientId?: string;
+  bankAccountId?: string;
+};
+
+export async function listCounterparties(
+  filter?: ListCounterpartiesFilter
+): Promise<CounterpartyListRow[]> {
   const rows = await prisma.counterparty.findMany({
+    where: {
+      ...(filter?.executorId && { executorId: filter.executorId }),
+      ...(filter?.clientId && { clientId: filter.clientId }),
+      ...(filter?.bankAccountId && { bankAccountId: filter.bankAccountId }),
+    },
     orderBy: { name: "asc" },
     include: COUNTERPARTY_INCLUDE,
   });
@@ -141,6 +165,8 @@ export type CounterpartyOption = {
   kind: CounterpartyKind;
   status: string;
   legalType: string | null;
+  uniqueProjectId: string | null;
+  uniqueWorkTypeId: string | null;
   /** Имена из выписки и реквизиты — чтобы поиск находил по ИНН и написанию. */
   searchText: string;
 };
@@ -156,6 +182,8 @@ export async function listCounterpartyOptions(): Promise<CounterpartyOption[]> {
       legalType: true,
       clientId: true,
       bankAccountId: true,
+      uniqueProjectId: true,
+      uniqueWorkTypeId: true,
       executor: { select: { type: true } },
       aliases: { select: { value: true } },
       requisites: { select: { taxId: true, accountNumber: true, cardNumber: true } },
@@ -168,6 +196,8 @@ export async function listCounterpartyOptions(): Promise<CounterpartyOption[]> {
     kind: resolveCounterpartyKind(r),
     status: r.status,
     legalType: r.legalType,
+    uniqueProjectId: r.uniqueProjectId,
+    uniqueWorkTypeId: r.uniqueWorkTypeId,
     searchText: [
       r.name,
       ...r.aliases.map((a) => a.value),
@@ -188,6 +218,8 @@ export type CreateCounterpartyInput = CounterpartyLinkInput & {
   name: string;
   legalType?: string | null;
   comment?: string | null;
+  uniqueProjectId?: string | null;
+  uniqueWorkTypeId?: string | null;
   requisites?: RequisiteInput[];
   aliases?: { value: string; source?: string }[];
 };
@@ -214,6 +246,8 @@ export async function createCounterparty(input: CreateCounterpartyInput, userId:
         executorId: input.executorId ?? null,
         clientId: input.clientId ?? null,
         bankAccountId: input.bankAccountId ?? null,
+        uniqueProjectId: input.uniqueProjectId ?? null,
+        uniqueWorkTypeId: input.uniqueWorkTypeId ?? null,
       },
     });
 
@@ -252,6 +286,8 @@ export type UpdateCounterpartyInput = CounterpartyLinkInput & {
   legalType?: string | null;
   comment?: string | null;
   status?: string;
+  uniqueProjectId?: string | null;
+  uniqueWorkTypeId?: string | null;
 };
 
 export async function updateCounterparty(
@@ -285,6 +321,8 @@ export async function updateCounterparty(
       ...(patch.executorId !== undefined && { executorId: patch.executorId }),
       ...(patch.clientId !== undefined && { clientId: patch.clientId }),
       ...(patch.bankAccountId !== undefined && { bankAccountId: patch.bankAccountId }),
+      ...(patch.uniqueProjectId !== undefined && { uniqueProjectId: patch.uniqueProjectId }),
+      ...(patch.uniqueWorkTypeId !== undefined && { uniqueWorkTypeId: patch.uniqueWorkTypeId }),
     },
   });
 
@@ -339,7 +377,7 @@ export async function unarchiveCounterparty(id: string, userId: string) {
 // ─── Реквизиты ───────────────────────────────────────────────
 
 export type RequisiteInput = {
-  paymentMethod: string;
+  paymentMethod?: string;
   taxId?: string | null;
   bic?: string | null;
   bankName?: string | null;
@@ -351,7 +389,7 @@ export type RequisiteInput = {
 
 function requisiteData(input: RequisiteInput) {
   return {
-    paymentMethod: input.paymentMethod,
+    paymentMethod: input.paymentMethod ?? inferPaymentMethod(input),
     taxId: input.taxId?.trim() || null,
     bic: input.bic?.trim() || null,
     bankName: input.bankName?.trim() || null,

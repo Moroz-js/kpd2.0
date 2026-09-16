@@ -255,8 +255,10 @@ export function BankTransactionsClient({
   const hasActiveFilters =
     fAccount.length + fProject.length + fCounterparty.length + fStatus.length +
       fMonth.length + fYear.length > 0;
-  const tableColumnCount =
-    14 + (activeTab === "incoming" ? 1 : activeTab === "outgoing" || activeTab === "internal" ? 2 : 0);
+  const showCharges = activeTab === "all" || activeTab === "incoming";
+  const extraColumns =
+    activeTab === "incoming" ? 1 : activeTab === "outgoing" || activeTab === "internal" ? 2 : 0;
+  const tableColumnCount = 13 + (showCharges ? 1 : 0) + extraColumns;
 
   function resetFilters() {
     setFAccount([]);
@@ -314,7 +316,12 @@ export function BankTransactionsClient({
       </div>
 
       {activeTab === "rules" ? (
-        <RulesTab counterparties={counterparties} projects={projects} workTypes={workTypes} />
+        <RulesTab
+          counterparties={counterparties}
+          projects={projects}
+          workTypes={workTypes}
+          bankAccounts={bankAccounts}
+        />
       ) : (
         <>
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -422,7 +429,7 @@ export function BankTransactionsClient({
             </SortableHead>
             <TableHead className={cn(compactHead, "w-24")}>Месяц</TableHead>
             <TableHead className={cn(compactHead, "w-16")}>Год</TableHead>
-            <TableHead className={cn(compactHead, "w-40")}>Начисления</TableHead>
+            {showCharges && <TableHead className={cn(compactHead, "w-40")}>Начисления</TableHead>}
             <TableHead className={cn(compactHead, "w-44")}>Проект</TableHead>
             <SortableHead
               field="counterpartyName"
@@ -514,9 +521,11 @@ export function BankTransactionsClient({
                   </TableCell>
                   <TableCell className={compactCell}>{monthFullLabel(r.month)}</TableCell>
                   <TableCell className={cn(compactCell, "tabular-nums")}>{r.year}</TableCell>
-                  <TableCell className={compactCell}>
-                    <ChargeCell operation={r} />
-                  </TableCell>
+                  {showCharges && (
+                    <TableCell className={compactCell}>
+                      <ChargeCell operation={r} />
+                    </TableCell>
+                  )}
                   <TableCell className={cn(compactCell, "truncate")}>
                     {r.projectName ?? <span className="text-neutral-400">—</span>}
                   </TableCell>

@@ -23,6 +23,8 @@ const patchSchema = z.object({
     .nullable()
     .optional(),
   comment: z.string().nullable().optional(),
+  uniqueProjectId: z.string().nullable().optional(),
+  uniqueWorkTypeId: z.string().nullable().optional(),
   status: z.enum(["active", "archived"]).optional(),
   executorId: z.string().nullable().optional(),
   clientId: z.string().nullable().optional(),

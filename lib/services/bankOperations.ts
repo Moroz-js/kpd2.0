@@ -39,6 +39,7 @@ export type BankOperationRow = {
   bankAccountId: string;
   bankAccountName: string;
   currency: string;
+  statementFormat: string;
   transferSource: string | null;
   amount: number;
   date: Date;
@@ -91,12 +92,14 @@ export type BankOperationRow = {
 };
 
 const OPERATION_INCLUDE = {
-  bankAccount: { select: { name: true, currency: true } },
+  bankAccount: { select: { name: true, currency: true, statementFormat: true } },
   counterparty: {
     select: {
       name: true,
       clientId: true,
       bankAccountId: true,
+      uniqueProjectId: true,
+      uniqueWorkTypeId: true,
       executor: { select: { type: true } },
     },
   },
@@ -129,6 +132,7 @@ function toRow(op: OperationWithRelations): BankOperationRow {
     bankAccountId: op.bankAccountId,
     bankAccountName: op.bankAccount.name,
     currency: op.bankAccount.currency,
+    statementFormat: op.bankAccount.statementFormat,
     transferSource: op.transferSource,
     amount: op.amount,
     date: op.date,
@@ -292,12 +296,21 @@ export async function updateBankOperation(
             name: true,
             clientId: true,
             bankAccountId: true,
+            uniqueProjectId: true,
+            uniqueWorkTypeId: true,
             executor: { select: { type: true } },
           },
         })
       : null;
 
     data.counterpartyType = linked ? resolveCounterpartyKind(linked) : null;
+
+    if (linked?.uniqueProjectId && !fields.projectId && !before.projectId) {
+      data.projectId = linked.uniqueProjectId;
+    }
+    if (linked?.uniqueWorkTypeId && !fields.workTypeId && !before.workTypeId) {
+      data.workTypeId = linked.uniqueWorkTypeId;
+    }
 
     const rememberValue = rememberBy
       ? {
@@ -330,11 +343,28 @@ export async function updateBankOperation(
     data.traceCounterparty = "введён вручную, разово";
   }
 
-  if (fields.projectId !== undefined && fields.projectId !== before.projectId) {
-    data.traceProject = fields.projectId ? "проставлен вручную" : null;
+  const nextProjectId = (
+    data.projectId !== undefined ? data.projectId : before.projectId
+  ) as string | null;
+  const nextWorkTypeId = (
+    data.workTypeId !== undefined ? data.workTypeId : before.workTypeId
+  ) as string | null;
+
+  if (nextProjectId !== before.projectId) {
+    const fromCard = Boolean(data.projectId) && data.projectId !== fields.projectId;
+    data.traceProject = !nextProjectId
+      ? null
+      : fromCard
+        ? "проект из карточки контрагента"
+        : "проставлен вручную";
   }
-  if (fields.workTypeId !== undefined && fields.workTypeId !== before.workTypeId) {
-    data.traceWorkType = fields.workTypeId ? "проставлен вручную" : null;
+  if (nextWorkTypeId !== before.workTypeId) {
+    const fromCard = Boolean(data.workTypeId) && data.workTypeId !== fields.workTypeId;
+    data.traceWorkType = !nextWorkTypeId
+      ? null
+      : fromCard
+        ? "вид работ из карточки контрагента"
+        : "проставлен вручную";
   }
 
   if (fields.status === "confirmed") {

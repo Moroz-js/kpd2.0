@@ -3,10 +3,13 @@ import { z } from "zod";
 import { getSessionUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/permissions";
 import { addRequisite } from "@/lib/services/counterparties";
+import { inferPaymentMethod } from "@/lib/counterparty-requisites";
 import { COUNTERPARTY_PAYMENT_METHODS } from "@/lib/statuses";
 
 const createSchema = z.object({
-  paymentMethod: z.enum(Object.keys(COUNTERPARTY_PAYMENT_METHODS) as [string, ...string[]]),
+  paymentMethod: z
+    .enum(Object.keys(COUNTERPARTY_PAYMENT_METHODS) as [string, ...string[]])
+    .optional(),
   taxId: z.string().nullable().optional(),
   bic: z.string().nullable().optional(),
   bankName: z.string().nullable().optional(),
@@ -32,7 +35,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
 
   try {
-    const created = await addRequisite(id, parsed.data, me.id);
+    const created = await addRequisite(
+      id,
+      {
+        ...parsed.data,
+        paymentMethod: parsed.data.paymentMethod ?? inferPaymentMethod(parsed.data),
+      },
+      me.id
+    );
     return NextResponse.json(created, { status: 201 });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Error";

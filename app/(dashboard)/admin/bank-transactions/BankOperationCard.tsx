@@ -37,6 +37,7 @@ import {
 } from "@/lib/statuses";
 import { formatDate, formatMoney, monthFullLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { determineOperationKind, statementFieldLabels } from "@/lib/statement-formats";
 import type { BankOperation, ChargeCandidate, CounterpartyOption, OptionRow } from "./types";
 import { ChargeLinkDialog } from "./ChargeLinkDialog";
 import { CounterpartyDialog } from "../counterparties/CounterpartyDialog";
@@ -89,6 +90,11 @@ export function BankOperationCard({
 
   const counterpartyChanged = counterpartyId !== (operation.counterpartyId ?? NONE);
   const selectedCounterparty = counterparties.find((c) => c.id === counterpartyId) ?? null;
+  const rawLabels = statementFieldLabels(operation.statementFormat);
+  const suggestedKind = determineOperationKind(operation.statementFormat, {
+    operationType: operation.raw.operationType,
+    amount: operation.raw.amount,
+  });
 
   // Запоминать можно только по тем признакам, которые есть в самой операции.
   const rememberOptions: { value: RememberBy; label: string; hint: string }[] = [
@@ -200,11 +206,11 @@ export function BankOperationCard({
                     : null
                 }
               />
-              <RawField label="Тип операции" value={operation.raw.operationType} />
+              <RawField label={rawLabels.operationType} value={operation.raw.operationType} />
               <RawField label="Контрагент" value={operation.raw.counterparty} />
-              <RawField label="ИНН" value={operation.raw.inn} />
-              <RawField label="Счёт" value={operation.raw.account} />
-              <RawField label="БИК" value={operation.raw.bik} />
+              <RawField label={rawLabels.taxId} value={operation.raw.inn} />
+              <RawField label={rawLabels.account} value={operation.raw.account} />
+              <RawField label={rawLabels.bic} value={operation.raw.bik} />
               <RawField label="Назначение" value={operation.raw.purpose} />
               <RawField label="Категория банка" value={operation.raw.category} />
               <RawField
@@ -231,6 +237,12 @@ export function BankOperationCard({
                     label,
                   }))}
                 />
+                {suggestedKind && suggestedKind !== kind && (
+                  <p className="text-[11px] text-amber-700">
+                    По формату выписки это{" "}
+                    {BANK_OPERATION_KINDS[suggestedKind]}
+                  </p>
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label>Статус</Label>
@@ -268,7 +280,16 @@ export function BankOperationCard({
               </div>
               <SearchableSelect
                 value={counterpartyId}
-                onValueChange={setCounterpartyId}
+                onValueChange={(value) => {
+                  setCounterpartyId(value);
+                  const picked = counterparties.find((c) => c.id === value);
+                  if (picked?.uniqueProjectId && projectId === NONE) {
+                    setProjectId(picked.uniqueProjectId);
+                  }
+                  if (picked?.uniqueWorkTypeId && workTypeId === NONE) {
+                    setWorkTypeId(picked.uniqueWorkTypeId);
+                  }
+                }}
                 options={[
                   { value: NONE, label: "Не определён" },
                   ...counterparties.map((c) => ({

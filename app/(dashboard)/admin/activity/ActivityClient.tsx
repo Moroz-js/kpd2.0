@@ -35,6 +35,7 @@ const ACTION_LABELS: Record<string, string> = {
 
 // Порядок = алфавит русских label (используется в выпадашке фильтра).
 const ENTITY_LABELS: Record<string, string> = {
+  Bank: "Банк",
   BankOperation: "Банковская операция",
   BankAccount: "Банковский счёт",
   WorkType: "Вид работ",

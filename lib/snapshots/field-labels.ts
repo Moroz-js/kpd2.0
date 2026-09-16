@@ -96,6 +96,10 @@ export const FIELD_LABELS: Record<string, string> = {
   details: "Реквизиты",
   currency: "Валюта",
   isDefault: "По умолчанию",
+  statementFormat: "Формат выписки",
+  country: "Страна",
+  uniqueProjectId: "Уникальный проект",
+  uniqueWorkTypeId: "Уникальный вид работ",
   segment: "Сегмент",
 
   // Контрагенты и правила разбора
@@ -222,6 +226,7 @@ export const MODEL_LABELS: Record<string, string> = {
   ProjectExecutor: "Исполнители проекта",
   BankAccount: "Банковские счета",
   Currency: "Валюты",
+  Bank: "Банки",
   WorkType: "Виды работ",
   ExecutorWorkType: "Виды работ исполнителя",
   Work: "Выставленные работы",

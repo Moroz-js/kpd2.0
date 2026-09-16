@@ -339,6 +339,7 @@ function InlinePurposeCell({ value, onSave }: { value: string; onSave: (v: strin
         render={
           <button
             type="button"
+            title={value || "Задать назначение платежа"}
             className="inline-flex max-w-full rounded px-1 py-0.5 text-left text-xs text-neutral-600 hover:bg-neutral-100"
           />
         }

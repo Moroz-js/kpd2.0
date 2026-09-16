@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { Plus, Pencil, Archive, ArchiveRestore } from "lucide-react";
@@ -29,6 +30,7 @@ import {
 } from "@/components/PersistedInterfaceState";
 import { useUrlSyncedFilters } from "@/lib/useUrlSyncedFilters";
 import { useCompatibleFilterOptions } from "@/lib/useCompatibleFilterOptions";
+import { LinkedCounterpartiesSection } from "../counterparties/LinkedCounterpartiesSection";
 
 type Row = {
   id: string;
@@ -77,10 +79,14 @@ export function ClientsClient() {
     { stateKey: "companyFilter", param: "company", kind: "array", value: companyFilter, defaultValue: [], setValue: setCompanyFilter },
     { stateKey: "statusFilter", param: "status", kind: "array", value: statusFilter, defaultValue: [], setValue: setStatusFilter },
   ]);
-  const [editing, setEditing] = React.useState<Row | "new" | null>(null);
+  const [editing, setEditing] = React.useState<Row | "new" | null | undefined>(undefined);
   const [archiveTarget, setArchiveTarget] = React.useState<Row | null>(null);
   const [unarchiveTarget, setUnarchiveTarget] = React.useState<Row | null>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  const searchParams = useSearchParams();
+  const openId = searchParams.get("open");
+  const urlRow = openId ? (data?.find((item) => item.id === openId) ?? null) : null;
+  const currentEditing = editing === undefined ? urlRow : editing;
 
   usePersistedInterfaceState(
     "clients",
@@ -295,9 +301,10 @@ export function ClientsClient() {
           </TableBody>
         </Table>
 
-      {editing && (
+      {currentEditing && (
         <ClientEditDialog
-          row={editing === "new" ? null : editing}
+          key={currentEditing === "new" ? "new" : currentEditing.id}
+          row={currentEditing === "new" ? null : currentEditing}
           existingDepartments={existingDepartments}
           departmentUsage={departmentUsage}
           onClose={() => setEditing(null)}
@@ -362,14 +369,7 @@ function ClientEditDialog({
     return Array.from(set)
       .filter((d) => !hiddenDepartments.has(d))
       .sort((a, b) => a.localeCompare(b, "ru"));
-  }, [existingDepartments, extraDepartments, hiddenDepartments, row?.department]);
-
-  React.useEffect(() => {
-    setCompany(row?.company ?? "");
-    setDepartment(row?.department ?? "");
-    setExtraDepartments([]);
-    setHiddenDepartments(new Set());
-  }, [row]);
+  }, [existingDepartments, extraDepartments, hiddenDepartments, row]);
 
   function handleAddDepartment(name: string) {
     setExtraDepartments((prev) => (prev.includes(name) ? prev : [...prev, name]));
@@ -411,7 +411,7 @@ function ClientEditDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{row ? "Редактировать клиента" : "Новый клиент"}</DialogTitle>
         </DialogHeader>
@@ -443,6 +443,7 @@ function ClientEditDialog({
               <span className="font-medium">{preview}</span>
             </div>
           )}
+          {row && <LinkedCounterpartiesSection linkKind="client" linkId={row.id} />}
           {row && (
             <EntityActivityHistory entityType="Client" entityId={row.id} />
           )}

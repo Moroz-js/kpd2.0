@@ -3,12 +3,14 @@ import { z } from "zod";
 import { getSessionUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/permissions";
 import { updateBankAccount } from "@/lib/services/bankAccounts";
+import { STATEMENT_FORMATS } from "@/lib/statuses";
 
 const patchSchema = z.object({
   name: z.string().min(1).optional(),
   details: z.string().nullable().optional(),
   comment: z.string().nullable().optional(),
   currency: z.string().regex(/^[A-Za-z]{3,6}$/, "Код валюты: 3–6 латинских букв").optional(),
+  statementFormat: z.enum(Object.keys(STATEMENT_FORMATS) as [string, ...string[]]).optional(),
   isDefault: z.boolean().optional(),
 });
 

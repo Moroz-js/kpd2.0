@@ -31,6 +31,7 @@ import { RULE_MATCH_FIELDS, RULE_TARGETS } from "@/lib/statuses";
 import { formatDate } from "@/lib/format";
 import { compactCell, compactHead, compactTable, stickyActionsCell, stickyActionsHead, stickyActionsInner } from "@/lib/table-styles";
 import { cn } from "@/lib/utils";
+import { STATEMENT_FORMAT_RULES, resolveStatementFormat } from "@/lib/statement-formats";
 import type { CounterpartyOption, OptionRow, RecognitionRule } from "./types";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -39,10 +40,12 @@ export function RulesTab({
   counterparties,
   projects,
   workTypes,
+  bankAccounts,
 }: {
   counterparties: CounterpartyOption[];
   projects: OptionRow[];
   workTypes: OptionRow[];
+  bankAccounts: OptionRow[];
 }) {
   const { data, isLoading, mutate } = useSWR<RecognitionRule[]>("/api/recognition-rules", fetcher);
   const rules = React.useMemo(() => data ?? [], [data]);
@@ -95,6 +98,7 @@ export function RulesTab({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <StatementFormatsPanel bankAccounts={bankAccounts} />
       <div className="mb-3 flex items-center justify-between gap-3">
         <p className="text-xs text-neutral-500">
           Правило срабатывает, когда поле выписки совпадает со значением. Меньший приоритет
@@ -219,6 +223,60 @@ export function RulesTab({
           if (deleteTarget) await remove(deleteTarget);
         }}
       />
+    </div>
+  );
+}
+
+function StatementFormatsPanel({ bankAccounts }: { bankAccounts: OptionRow[] }) {
+  const byFormat = React.useMemo(() => {
+    const groups = Object.fromEntries(
+      Object.keys(STATEMENT_FORMAT_RULES).map((id) => [id, [] as string[]])
+    ) as Record<string, string[]>;
+    for (const account of bankAccounts) {
+      groups[resolveStatementFormat(account.statementFormat)].push(account.name);
+    }
+    return groups;
+  }, [bankAccounts]);
+
+  return (
+    <div className="mb-4 rounded-md border bg-white p-3">
+      <h3 className="text-sm font-semibold text-neutral-800">Правила определения ветки</h3>
+      <p className="mt-1 text-xs text-neutral-500">
+        Формат выписки задаётся у банковского счёта. Казахстан и Черногория приходят другой
+        структурой — ветка (поступление / списание) читается из их колонок, а не из российских.
+      </p>
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead>
+            <tr className="text-neutral-400">
+              <th className="pb-1 pr-3 font-medium">Формат</th>
+              <th className="pb-1 pr-3 font-medium">ИНН / ИИК / IBAN</th>
+              <th className="pb-1 pr-3 font-medium">Счёт</th>
+              <th className="pb-1 pr-3 font-medium">БИК</th>
+              <th className="pb-1 pr-3 font-medium">Поступление</th>
+              <th className="pb-1 pr-3 font-medium">Списание</th>
+              <th className="pb-1 font-medium">Счета</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.values(STATEMENT_FORMAT_RULES).map((rule) => (
+              <tr key={rule.id} className="align-top text-neutral-700">
+                <td className="py-1.5 pr-3 font-medium">{rule.label}</td>
+                <td className="py-1.5 pr-3">{rule.fields.taxId}</td>
+                <td className="py-1.5 pr-3">{rule.fields.account}</td>
+                <td className="py-1.5 pr-3">{rule.fields.bic}</td>
+                <td className="py-1.5 pr-3">{rule.incomingMarkers.slice(0, 3).join(", ")}</td>
+                <td className="py-1.5 pr-3">{rule.outgoingMarkers.slice(0, 3).join(", ")}</td>
+                <td className="py-1.5">
+                  {byFormat[rule.id]?.length
+                    ? byFormat[rule.id].join(", ")
+                    : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

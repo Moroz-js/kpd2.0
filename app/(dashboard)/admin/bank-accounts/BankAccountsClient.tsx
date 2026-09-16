@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import * as React from "react";
+import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { Plus, Pencil, Archive, ArchiveRestore } from "lucide-react";
@@ -10,7 +11,10 @@ import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
 import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
 import { ConfirmDialog } from "@/components/ui-custom/ConfirmDialog";
-import { ENTITY_STATUSES } from "@/lib/statuses";
+import { ENTITY_STATUSES, STATEMENT_FORMATS } from "@/lib/statuses";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { EditableTextCell } from "@/components/ui-custom/EditableTextCell";
+import { LinkedCounterpartiesSection } from "../counterparties/LinkedCounterpartiesSection";
 import { formatMoney } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -36,6 +40,7 @@ type Row = {
   details: string | null;
   comment: string | null;
   currency: string;
+  statementFormat: string;
   status: string;
   isDefault: boolean;
   paymentCount: number;
@@ -80,12 +85,14 @@ export function BankAccountsClient() {
     { stateKey: "statusFilter", param: "status", kind: "array", value: statusFilter, defaultValue: [], setValue: setStatusFilter },
   ]);
 
-  const [editing, setEditing] = React.useState<Row | "new" | null>(null);
+  const [editing, setEditing] = React.useState<Row | "new" | null | undefined>(undefined);
   const [archiveTarget, setArchiveTarget] = React.useState<Row | null>(null);
   const [unarchiveTarget, setUnarchiveTarget] = React.useState<Row | null>(null);
-  const [commentEditId, setCommentEditId] = React.useState<string | null>(null);
-  const [commentDraft, setCommentDraft] = React.useState("");
+  const searchParams = useSearchParams();
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  const openId = searchParams.get("open");
+  const urlRow = openId ? (data?.find((item) => item.id === openId) ?? null) : null;
+  const currentEditing = editing === undefined ? urlRow : editing;
 
   usePersistedInterfaceState(
     "bank-accounts",
@@ -149,25 +156,17 @@ export function BankAccountsClient() {
     mutate();
   }
 
-  function startCommentEdit(row: Row) {
-    setCommentEditId(row.id);
-    setCommentDraft(row.comment ?? "");
-  }
-
-  async function commitCommentEdit(row: Row) {
-    const next = commentDraft.trim();
-    setCommentEditId(null);
-    if (next === (row.comment ?? "")) return;
+  async function saveComment(row: Row, next: string | null) {
     const res = await fetch(`/api/bank-accounts/${row.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ comment: next || null }),
+      body: JSON.stringify({ comment: next }),
     });
     if (!res.ok) {
       toast.error("Не удалось сохранить комментарий");
-      return;
+      throw new Error("comment");
     }
-    mutate();
+    await mutate();
   }
 
   return (
@@ -252,6 +251,7 @@ export function BankAccountsClient() {
               >
                 Сумма начислений
               </SortableHead>
+              <TableHead>Формат выписки</TableHead>
               <SortableHead field="status" sortBy={sort.field} sortDir={sort.dir} onSort={handleSort}>
                 Статус
               </SortableHead>
@@ -262,13 +262,13 @@ export function BankAccountsClient() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={10} className="text-center text-neutral-500 py-8">
+                <TableCell colSpan={11} className="text-center text-neutral-500 py-8">
                   Загрузка...
                 </TableCell>
               </TableRow>
             ) : rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="text-center text-neutral-500 py-8">
+                <TableCell colSpan={11} className="text-center text-neutral-500 py-8">
                   Нет счетов
                 </TableCell>
               </TableRow>
@@ -285,32 +285,18 @@ export function BankAccountsClient() {
                   <TableCell className="text-right tabular-nums"><MoneyWithCurrency amount={r.operationSum} currency={r.currency} /></TableCell>
                   <TableCell className="text-right tabular-nums"><MoneyWithCurrency amount={r.chargeSum} currency={r.currency} /></TableCell>
                   <TableCell>
+                    {STATEMENT_FORMATS[(r.statementFormat ?? "ru") as keyof typeof STATEMENT_FORMATS] ??
+                      r.statementFormat}
+                  </TableCell>
+                  <TableCell>
                     <StatusBadge dict={ENTITY_STATUSES} value={r.status} />
                   </TableCell>
                   <TableCell className="max-w-72">
-                    {commentEditId === r.id ? (
-                      <input
-                        autoFocus
-                        value={commentDraft}
-                        onChange={(e) => setCommentDraft(e.target.value)}
-                        onBlur={() => commitCommentEdit(r)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") commitCommentEdit(r);
-                          if (e.key === "Escape") setCommentEditId(null);
-                        }}
-                        placeholder="Подключение к роботу, почта, за какие годы есть операции"
-                        className="h-6 w-full rounded border border-blue-300 bg-blue-50 px-1 text-xs focus:outline-none"
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => startCommentEdit(r)}
-                        title={r.comment ?? "Добавить комментарий"}
-                        className="block w-full truncate text-left text-xs text-neutral-600 hover:text-blue-700 hover:underline"
-                      >
-                        {r.comment ?? "—"}
-                      </button>
-                    )}
+                    <EditableTextCell
+                      value={r.comment}
+                      placeholder="Подключение к роботу, почта, за какие годы есть операции"
+                      onSave={(next) => saveComment(r, next)}
+                    />
                   </TableCell>
                   <TableCell className={cn(stickyActionsCell)}>
                     <div className={stickyActionsInner}>
@@ -349,9 +335,10 @@ export function BankAccountsClient() {
           </TableBody>
         </Table>
 
-      {editing && (
+      {currentEditing && (
         <BankAccountEditDialog
-          row={editing === "new" ? null : editing}
+          key={currentEditing === "new" ? "new" : currentEditing.id}
+          row={currentEditing === "new" ? null : currentEditing}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -405,17 +392,10 @@ function BankAccountEditDialog({
   const [details, setDetails] = React.useState(row?.details ?? "");
   const [comment, setComment] = React.useState(row?.comment ?? "");
   const [currency, setCurrency] = React.useState(row?.currency ?? "RUB");
+  const [statementFormat, setStatementFormat] = React.useState(row?.statementFormat ?? "ru");
   const [currencyOptions, setCurrencyOptions] = React.useState<string[]>([...DEFAULT_CURRENCIES]);
-  const [isDefault, setIsDefault] = React.useState(row?.isDefault ?? false);
+  const isDefault = row?.isDefault ?? false;
   const [submitting, setSubmitting] = React.useState(false);
-
-  React.useEffect(() => {
-    setName(row?.name ?? "");
-    setDetails(row?.details ?? "");
-    setComment(row?.comment ?? "");
-    setCurrency(row?.currency ?? "RUB");
-    setIsDefault(row?.isDefault ?? false);
-  }, [row]);
 
   React.useEffect(() => {
     fetch("/api/bank-accounts/currencies")
@@ -455,6 +435,7 @@ function BankAccountEditDialog({
         details: details.trim() || null,
         comment: comment.trim() || null,
         currency,
+        statementFormat,
         isDefault,
       }),
     });
@@ -470,7 +451,7 @@ function BankAccountEditDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{row ? "Редактировать счёт" : "Новый счёт"}</DialogTitle>
         </DialogHeader>
@@ -513,6 +494,21 @@ function BankAccountEditDialog({
               onAddOption={handleAddCurrency}
             />
           </div>
+          <div className="space-y-2">
+            <Label>Формат выписки</Label>
+            <SearchableSelect
+              value={statementFormat}
+              onValueChange={setStatementFormat}
+              options={Object.entries(STATEMENT_FORMATS).map(([value, label]) => ({
+                value,
+                label,
+              }))}
+            />
+            <p className="text-xs text-neutral-500">
+              Казахстан и Черногория приходят другой структурой — от формата зависит определение ветки.
+            </p>
+          </div>
+          {row && <LinkedCounterpartiesSection linkKind="bankAccount" linkId={row.id} />}
           {row && (
             <EntityActivityHistory entityType="BankAccount" entityId={row.id} />
           )}

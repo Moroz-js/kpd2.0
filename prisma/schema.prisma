@@ -143,6 +143,7 @@ model Project {
   verificationResults ProjectVerificationResult[]
   bankOperations      BankOperation[]
   recognitionRules    RecognitionRule[]
+  uniqueForCounterparties Counterparty[] @relation("CounterpartyUniqueProject")
 
   @@unique([clientId, shortName])
   @@index([responsibleUserId])
@@ -178,6 +179,7 @@ model BankAccount {
   details   String?
   comment   String? // заметка бухгалтера: подключение к роботу, почта выписок, за какие годы есть операции
   currency  String   @default("RUB") // код валюты: RUB | USD | EUR | GEL | ...
+  statementFormat String @default("ru") // ru | kz | me — структура выписки, от неё зависит определение ветки
   isDefault Boolean  @default(false) // единственный active с true (см. TDNB-23)
   status    String   @default("active") // active | archived
   createdAt DateTime @default(now())
@@ -203,6 +205,21 @@ model Currency {
   @@map("currencies")
 }
 
+// ─────────────────── БАНКИ (справочник для реквизитов) ───────────────────
+
+model Bank {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  country   String // ru | kz | me
+  status    String   @default("active") // active | archived
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([country])
+  @@map("banks")
+}
+
 // ─────────────────── ВИДЫ РАБОТ ───────────────────
 
 model WorkType {
@@ -218,6 +235,7 @@ model WorkType {
   spendingPlanLines SpendingPlanLine[]
   bankOperations    BankOperation[]
   recognitionRules  RecognitionRule[]
+  uniqueForCounterparties Counterparty[] @relation("CounterpartyUniqueWorkType")
 
   @@map("work_types")
 }
@@ -546,6 +564,11 @@ model Counterparty {
   bankAccountId String?
   bankAccount   BankAccount? @relation(fields: [bankAccountId], references: [id])
 
+  uniqueProjectId  String?
+  uniqueProject    Project?  @relation("CounterpartyUniqueProject", fields: [uniqueProjectId], references: [id])
+  uniqueWorkTypeId String?
+  uniqueWorkType   WorkType? @relation("CounterpartyUniqueWorkType", fields: [uniqueWorkTypeId], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -558,6 +581,8 @@ model Counterparty {
   @@index([executorId])
   @@index([clientId])
   @@index([bankAccountId])
+  @@index([uniqueProjectId])
+  @@index([uniqueWorkTypeId])
   @@map("counterparties")
 }
 

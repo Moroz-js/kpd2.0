@@ -9,6 +9,7 @@ import { WorksTab } from "./WorksTab";
 import { VacationsTab } from "./VacationsTab";
 import { TasksTab } from "./TasksTab";
 import { SettingsTab } from "./SettingsTab";
+import { LinkedCounterpartiesSection } from "../../counterparties/LinkedCounterpartiesSection";
 import { EXECUTOR_TYPES } from "@/lib/statuses";
 import { normalizeExecutorType } from "@/lib/executor-type";
 import { hasPersonalSmeta } from "@/lib/executor-personal-estimate";
@@ -52,7 +53,7 @@ const TABS = [
   { id: "tasks", label: "Задачи" },
 ] as const;
 
-type TabId = (typeof TABS)[number]["id"] | "settings";
+type TabId = (typeof TABS)[number]["id"] | "settings" | "counterparties";
 
 type Props = {
   executorId: string;
@@ -87,7 +88,7 @@ export function ExecutorEstimateClient({
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabId>(() => {
-    if (initialTab === "settings") return "settings";
+    if (initialTab === "settings" || initialTab === "counterparties") return initialTab;
     return "works";
   });
   const [openTaskCount, setOpenTaskCount] = useState(0);
@@ -101,7 +102,8 @@ export function ExecutorEstimateClient({
         stored.activeTab === "works" ||
         stored.activeTab === "vacations" ||
         stored.activeTab === "tasks" ||
-        stored.activeTab === "settings"
+        stored.activeTab === "settings" ||
+        stored.activeTab === "counterparties"
       ) {
         setActiveTab(stored.activeTab);
       }
@@ -193,13 +195,17 @@ export function ExecutorEstimateClient({
     );
   }
 
+  const counterpartiesTab = isAdmin
+    ? [{ id: "counterparties" as TabId, label: "Контрагенты" }]
+    : [];
   const visibleTabs: { id: TabId; label: string }[] = settingsOnly
     ? canSeeSettings
-      ? [{ id: "settings" as TabId, label: "Настройки" }]
+      ? [{ id: "settings" as TabId, label: "Настройки" }, ...counterpartiesTab]
       : []
     : [
         ...TABS.filter((t) => !(t.id === "vacations" && isExternalOwner)),
         ...(canSeeSettings ? [{ id: "settings" as TabId, label: "Настройки" }] : []),
+        ...counterpartiesTab,
       ];
   const selectedTab = visibleTabs.some((tab) => tab.id === activeTab)
     ? activeTab
@@ -302,6 +308,11 @@ export function ExecutorEstimateClient({
               viewerIsSuperAdmin={viewerIsSuperAdmin}
               canEdit={isAdmin || isPermanentType}
             />
+          </div>
+        )}
+        {selectedTab === "counterparties" && isAdmin && (
+          <div className="flex-1 min-h-0 overflow-y-auto p-1">
+            <LinkedCounterpartiesSection linkKind="executor" linkId={executorId} />
           </div>
         )}
       </div>

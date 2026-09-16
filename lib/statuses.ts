@@ -100,7 +100,7 @@ export const BANK_COUNTERPARTY_TYPES = {
   bank: "Банк",
   executor: "Исполнитель",
   client: "Клиент",
-  own_account: "Наш счёт",
+  own_account: "Счёт КПД",
   service: "Сервис",
 } as const;
 export type BankCounterpartyType = keyof typeof BANK_COUNTERPARTY_TYPES;
@@ -123,7 +123,7 @@ export const COUNTERPARTY_LEGAL_TYPES = {
 } as const;
 export type CounterpartyLegalType = keyof typeof COUNTERPARTY_LEGAL_TYPES;
 
-/** Способ оплаты реквизита — «куда перевести». */
+/** Способ оплаты реквизита — внутренний признак, в карточке больше не редактируется. */
 export const COUNTERPARTY_PAYMENT_METHODS = {
   bank_transfer: "Банковский перевод",
   crypto: "Криптокошелёк",
@@ -131,6 +131,14 @@ export const COUNTERPARTY_PAYMENT_METHODS = {
   service: "Через сервис",
 } as const;
 export type CounterpartyPaymentMethod = keyof typeof COUNTERPARTY_PAYMENT_METHODS;
+
+/** Формат банковской выписки. От него зависит, как определить ветку операции. */
+export const STATEMENT_FORMATS = {
+  ru: "Россия",
+  kz: "Казахстан",
+  me: "Черногория",
+} as const;
+export type StatementFormat = keyof typeof STATEMENT_FORMATS;
 
 /** Откуда взялось написание контрагента в выписке. */
 export const COUNTERPARTY_ALIAS_SOURCES = {

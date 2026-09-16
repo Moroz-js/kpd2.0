@@ -29,6 +29,10 @@ export type Counterparty = {
   clientName: string | null;
   bankAccountId: string | null;
   bankAccountName: string | null;
+  uniqueProjectId: string | null;
+  uniqueProjectName: string | null;
+  uniqueWorkTypeId: string | null;
+  uniqueWorkTypeName: string | null;
   personalEstimateUrl: string | null;
   requisites: Requisite[];
   aliases: Alias[];
@@ -36,7 +40,7 @@ export type Counterparty = {
   createdAt: string;
 };
 
-export type LinkOption = { id: string; name: string; status: string };
+export type LinkOption = { id: string; name: string; status: string; type?: string };
 
 /** Что заполнено у контрагента: ссылка ровно одна. */
 export type LinkKind = "executor" | "client" | "bankAccount";
@@ -44,16 +48,24 @@ export type LinkKind = "executor" | "client" | "bankAccount";
 export const LINK_LABELS: Record<LinkKind, string> = {
   executor: "Исполнитель",
   client: "Клиент",
-  bankAccount: "Банковский счёт",
+  bankAccount: "Счёт КПД",
 };
 
-/** Уникальные непустые значения реквизитов — для колонок таблицы. */
-export function requisiteValues(
-  requisites: Requisite[],
-  field: keyof Requisite
-): string[] {
-  const values = requisites
-    .map((r) => r[field])
-    .filter((v): v is string => typeof v === "string" && v.trim() !== "");
-  return [...new Set(values)];
+export function linkedEntityHref(row: {
+  executorId: string | null;
+  clientId: string | null;
+  bankAccountId: string | null;
+}): string | null {
+  if (row.executorId) return `/admin/executors/${row.executorId}?tab=settings`;
+  if (row.clientId) return `/admin/clients?open=${row.clientId}`;
+  if (row.bankAccountId) return `/admin/bank-accounts?open=${row.bankAccountId}`;
+  return null;
+}
+
+export function linkedEntityLabel(row: {
+  executorName: string | null;
+  clientName: string | null;
+  bankAccountName: string | null;
+}): string | null {
+  return row.executorName ?? row.clientName ?? row.bankAccountName;
 }

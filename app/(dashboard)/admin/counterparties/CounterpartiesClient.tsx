@@ -4,44 +4,43 @@ import * as React from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { Plus, Pencil, Archive, ArchiveRestore } from "lucide-react";
+import { Archive, ArchiveRestore, ExternalLink, Pencil, Plus } from "lucide-react";
 import { PageHeader } from "@/components/ui-custom/PageHeader";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
 import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
 import { SortableHead } from "@/components/ui-custom/SortableHead";
 import { ConfirmDialog } from "@/components/ui-custom/ConfirmDialog";
-import { ExpandableListCell } from "@/components/ui-custom/ExpandableListCell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { compactCell, compactHead, compactTable, stickyActionsCell, stickyActionsHead, stickyActionsInner } from "@/lib/table-styles";
 import { matchesSearchText } from "@/lib/search";
-import {
-  COUNTERPARTY_KINDS,
-  COUNTERPARTY_LEGAL_TYPES,
-  COUNTERPARTY_PAYMENT_METHODS,
-  ENTITY_STATUSES,
-} from "@/lib/statuses";
+import { COUNTERPARTY_LEGAL_TYPES, ENTITY_STATUSES } from "@/lib/statuses";
 import {
   usePersistedInterfaceState,
   usePersistedScroll,
 } from "@/components/PersistedInterfaceState";
 import { CounterpartyDialog } from "./CounterpartyDialog";
-import { requisiteValues, type Counterparty, type LinkOption } from "./types";
+import {
+  linkedEntityHref,
+  linkedEntityLabel,
+  type Counterparty,
+  type LinkOption,
+} from "./types";
 
 const TABS = [
   { id: "all", label: "Все" },
-  { id: "client", label: "Клиенты" },
   { id: "executor", label: "Исполнители" },
   { id: "service", label: "Сервисы" },
   { id: "bank", label: "Банки" },
-  { id: "own_account", label: "Наши счета" },
+  { id: "client", label: "Клиенты" },
+  { id: "own_account", label: "Счета КПД" },
 ] as const;
 type Tab = (typeof TABS)[number]["id"];
 
-type SortField = "name" | "status" | "operationCount";
+type SortField = "name" | "status";
 type SortDir = "asc" | "desc";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json() as Promise<Counterparty[]>);
@@ -62,7 +61,6 @@ export function CounterpartiesClient({
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<string[]>(["active"]);
   const [legalTypeFilter, setLegalTypeFilter] = React.useState<string[]>([]);
-  const [methodFilter, setMethodFilter] = React.useState<string[]>([]);
   const [sort, setSort] = React.useState<{ field: SortField; dir: SortDir }>({
     field: "name",
     dir: "asc",
@@ -74,32 +72,27 @@ export function CounterpartiesClient({
   const scrollRef = React.useRef<HTMLDivElement>(null);
 
   const hasActiveFilters =
-    search.trim() !== "" ||
-    statusFilter.length > 0 ||
-    legalTypeFilter.length > 0 ||
-    methodFilter.length > 0;
+    search.trim() !== "" || statusFilter.length > 0 || legalTypeFilter.length > 0;
 
   function resetFilters() {
     setSearch("");
     setStatusFilter([]);
     setLegalTypeFilter([]);
-    setMethodFilter([]);
   }
 
   usePersistedInterfaceState(
     "counterparties",
-    { activeTab, statusFilter, legalTypeFilter, methodFilter, sort },
+    { activeTab, statusFilter, legalTypeFilter, sort },
     (stored) => {
       if (stored.activeTab !== undefined) setActiveTab(stored.activeTab);
       if (stored.statusFilter) setStatusFilter(stored.statusFilter);
       if (stored.legalTypeFilter) setLegalTypeFilter(stored.legalTypeFilter);
-      if (stored.methodFilter) setMethodFilter(stored.methodFilter);
       if (stored.sort) setSort(stored.sort);
     }
   );
   usePersistedScroll(scrollRef, `counterparties-table:${activeTab}`, {
     enabled: !isLoading && !!data,
-    signature: { activeTab, statusFilter, legalTypeFilter, methodFilter, sort },
+    signature: { activeTab, statusFilter, legalTypeFilter, sort },
   });
 
   const tabCounts = React.useMemo(
@@ -119,11 +112,7 @@ export function CounterpartiesClient({
     if (statusFilter.length) list = list.filter((r) => statusFilter.includes(r.status));
     if (legalTypeFilter.length)
       list = list.filter((r) => r.legalType && legalTypeFilter.includes(r.legalType));
-    if (methodFilter.length)
-      list = list.filter((r) => r.requisites.some((q) => methodFilter.includes(q.paymentMethod)));
 
-    // Поиск идёт и по написаниям из выписки, и по реквизитам: бухгалтер ищет по тому,
-    // что видит в банке, а не по нашему названию.
     if (search.trim()) {
       list = list.filter((r) =>
         matchesSearchText(
@@ -133,6 +122,8 @@ export function CounterpartiesClient({
             r.executorName,
             r.clientName,
             r.bankAccountName,
+            r.uniqueProjectName,
+            r.uniqueWorkTypeName,
             ...r.aliases.map((a) => a.value),
             ...r.requisites.flatMap((q) => [q.taxId, q.accountNumber, q.cardNumber, q.bankName]),
           ]
@@ -143,15 +134,10 @@ export function CounterpartiesClient({
     }
 
     return [...list].sort((a, b) => {
-      const av = a[sort.field];
-      const bv = b[sort.field];
-      const cmp =
-        typeof av === "number" && typeof bv === "number"
-          ? av - bv
-          : String(av).localeCompare(String(bv), "ru");
+      const cmp = String(a[sort.field]).localeCompare(String(b[sort.field]), "ru");
       return sort.dir === "asc" ? cmp : -cmp;
     });
-  }, [rowsAll, activeTab, statusFilter, legalTypeFilter, methodFilter, search, sort]);
+  }, [rowsAll, activeTab, statusFilter, legalTypeFilter, search, sort]);
 
   function handleSort(field: string, dir: SortDir) {
     setSort({ field: field as SortField, dir });
@@ -175,7 +161,7 @@ export function CounterpartiesClient({
     <div className="flex h-full min-h-0 min-w-0 flex-col">
       <PageHeader
         title="Контрагенты"
-        description="Строка — юридический получатель: конкретное физлицо, ИП или компания. Реквизиты и написания из выписки лежат внутри карточки."
+        description="Строка — юридический получатель. Реквизиты и написания из выписки лежат внутри карточки."
         actions={
           <Button onClick={() => setEditing("new")}>
             <Plus className="mr-1 h-4 w-4" /> Добавить контрагента
@@ -222,15 +208,6 @@ export function CounterpartiesClient({
             onChange={setLegalTypeFilter}
           />
           <MultiSelectFilter
-            label="Способ оплаты"
-            options={Object.entries(COUNTERPARTY_PAYMENT_METHODS).map(([value, label]) => ({
-              value,
-              label,
-            }))}
-            value={methodFilter}
-            onChange={setMethodFilter}
-          />
-          <MultiSelectFilter
             label="Статус"
             options={Object.entries(ENTITY_STATUSES).map(([value, { label }]) => ({
               value,
@@ -254,11 +231,11 @@ export function CounterpartiesClient({
               sortBy={sort.field}
               sortDir={sort.dir}
               onSort={handleSort}
-              className={cn(compactHead, "w-56")}
+              className={cn(compactHead, "w-64")}
             >
               Контрагент
             </SortableHead>
-            <TableHead className={cn(compactHead, "w-24")}>Тип</TableHead>
+            <TableHead className={cn(compactHead, "w-52")}>Связан с</TableHead>
             <TableHead className={cn(compactHead, "w-20")}>Личная смета</TableHead>
             <TableHead className={cn(compactHead, "w-28")}>Юрлицо</TableHead>
             <SortableHead
@@ -270,74 +247,51 @@ export function CounterpartiesClient({
             >
               Статус
             </SortableHead>
-            <TableHead className={cn(compactHead, "w-32")}>Способ оплаты</TableHead>
-            <TableHead className={cn(compactHead, "w-32")}>ИНН / ИИК / IBAN</TableHead>
-            <TableHead className={cn(compactHead, "w-24")}>БИК</TableHead>
-            <TableHead className={cn(compactHead, "w-28")}>Банк</TableHead>
-            <TableHead className={cn(compactHead, "w-32")}>Номер счёта</TableHead>
-            <TableHead className={cn(compactHead, "w-28")}>Номер карты</TableHead>
-            <TableHead className={cn(compactHead, "w-32")}>Имена в выписке</TableHead>
-            <SortableHead
-              field="operationCount"
-              sortBy={sort.field}
-              sortDir={sort.dir}
-              onSort={handleSort}
-              className={cn(compactHead, "w-24 text-right")}
-            >
-              Операций
-            </SortableHead>
             <TableHead className={stickyActionsHead} />
           </TableRow>
         </TableHeader>
         <TableBody>
           {isLoading ? (
             <TableRow>
-              <TableCell colSpan={14} className="py-8 text-center text-neutral-500">
+              <TableCell colSpan={6} className="py-8 text-center text-neutral-500">
                 Загрузка...
               </TableCell>
             </TableRow>
           ) : rows.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={14} className="py-8 text-center text-neutral-500">
+              <TableCell colSpan={6} className="py-8 text-center text-neutral-500">
                 Нет контрагентов
               </TableCell>
             </TableRow>
           ) : (
             rows.map((r) => {
-              const linkedName = r.executorName ?? r.clientName ?? r.bankAccountName;
+              const linkedHref = linkedEntityHref(r);
+              const linkedName = linkedEntityLabel(r);
               return (
                 <TableRow key={r.id}>
                   <TableCell className={cn(compactCell, "font-medium")}>
-                    {r.executorId ? (
-                      <Link
-                        href={`/admin/executors/${r.executorId}`}
-                        className="block truncate text-blue-700 hover:underline"
-                        title={r.name}
-                      >
-                        {r.name}
-                      </Link>
-                    ) : r.clientId || r.bankAccountId ? (
-                      <button
-                        type="button"
-                        onClick={() => setEditing(r)}
-                        className="block w-full truncate text-left text-blue-700 hover:underline"
-                        title="Открыть карточку контрагента"
-                      >
-                        {r.name}
-                      </button>
-                    ) : (
-                      <span className="block truncate" title={r.name}>
-                        {r.name}
-                      </span>
-                    )}
-                    {linkedName && linkedName !== r.name && (
-                      <span className="block truncate text-[10px] text-neutral-400">
-                        {linkedName}
-                      </span>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => setEditing(r)}
+                      className="block w-full truncate text-left text-blue-700 hover:underline"
+                      title="Открыть карточку контрагента"
+                    >
+                      {r.name}
+                    </button>
                   </TableCell>
                   <TableCell className={cn(compactCell, "truncate")}>
-                    {COUNTERPARTY_KINDS[r.kind as keyof typeof COUNTERPARTY_KINDS] ?? r.kind}
+                    {linkedHref && linkedName ? (
+                      <Link
+                        href={linkedHref}
+                        className="inline-flex max-w-full items-center gap-1 text-blue-700 hover:underline"
+                        title="Открыть связанную сущность"
+                      >
+                        <span className="truncate">{linkedName}</span>
+                        <ExternalLink className="h-3 w-3 shrink-0" />
+                      </Link>
+                    ) : (
+                      "—"
+                    )}
                   </TableCell>
                   <TableCell className={compactCell}>
                     {r.personalEstimateUrl ? (
@@ -362,48 +316,13 @@ export function CounterpartiesClient({
                   <TableCell className={compactCell}>
                     <StatusBadge dict={ENTITY_STATUSES} value={r.status} />
                   </TableCell>
-                  <TableCell className={compactCell}>
-                    <ExpandableListCell
-                      items={[
-                        ...new Set(
-                          r.requisites.map(
-                            (q) =>
-                              COUNTERPARTY_PAYMENT_METHODS[
-                                q.paymentMethod as keyof typeof COUNTERPARTY_PAYMENT_METHODS
-                              ] ?? q.paymentMethod
-                          )
-                        ),
-                      ]}
-                    />
-                  </TableCell>
-                  <TableCell className={compactCell}>
-                    <ExpandableListCell items={requisiteValues(r.requisites, "taxId")} />
-                  </TableCell>
-                  <TableCell className={compactCell}>
-                    <ExpandableListCell items={requisiteValues(r.requisites, "bic")} />
-                  </TableCell>
-                  <TableCell className={compactCell}>
-                    <ExpandableListCell items={requisiteValues(r.requisites, "bankName")} />
-                  </TableCell>
-                  <TableCell className={compactCell}>
-                    <ExpandableListCell items={requisiteValues(r.requisites, "accountNumber")} />
-                  </TableCell>
-                  <TableCell className={compactCell}>
-                    <ExpandableListCell items={requisiteValues(r.requisites, "cardNumber")} />
-                  </TableCell>
-                  <TableCell className={compactCell}>
-                    <ExpandableListCell items={r.aliases.map((a) => a.value)} />
-                  </TableCell>
-                  <TableCell className={cn(compactCell, "text-right tabular-nums")}>
-                    {r.operationCount}
-                  </TableCell>
                   <TableCell className={cn(stickyActionsCell)}>
                     <div className={stickyActionsInner}>
                       <Button
                         size="sm"
                         variant="ghost"
                         onClick={() => setEditing(r)}
-                        title="Редактировать"
+                        title="Редактировать контрагента"
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
@@ -437,6 +356,7 @@ export function CounterpartiesClient({
 
       {editing && (
         <CounterpartyDialog
+          key={editing === "new" ? "new" : editing.id}
           row={editing === "new" ? null : editing}
           executors={executors}
           clients={clients}

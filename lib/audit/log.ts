@@ -31,6 +31,7 @@ export type ActivityEntityType =
   | "Project"
   | "Client"
   | "Executor"
+  | "Bank"
   | "BankAccount"
   | "BankOperation"
   | "Counterparty"

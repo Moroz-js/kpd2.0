@@ -12,7 +12,7 @@ export default async function Page() {
   // создать прямо из карточки операции.
   const [bankAccounts, projects, workTypes, executors, clients] = await Promise.all([
     prisma.bankAccount.findMany({
-      select: { id: true, name: true, status: true },
+      select: { id: true, name: true, status: true, statementFormat: true },
       orderBy: { name: "asc" },
     }),
     prisma.project.findMany({

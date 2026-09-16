@@ -273,6 +273,43 @@ async function seedWorkTypes() {
   }
 }
 
+async function seedBanks() {
+  const banks: { name: string; country: string }[] = [
+    { name: "Сбербанк", country: "ru" },
+    { name: "Тинькофф", country: "ru" },
+    { name: "Альфа-Банк", country: "ru" },
+    { name: "ВТБ", country: "ru" },
+    { name: "Газпромбанк", country: "ru" },
+    { name: "Райффайзенбанк", country: "ru" },
+    { name: "Открытие", country: "ru" },
+    { name: "Совкомбанк", country: "ru" },
+    { name: "ПСБ", country: "ru" },
+    { name: "Точка", country: "ru" },
+    { name: "Модульбанк", country: "ru" },
+    { name: "Озон Банк", country: "ru" },
+    { name: "Яндекс Банк", country: "ru" },
+    { name: "Kaspi Bank", country: "kz" },
+    { name: "Halyk Bank", country: "kz" },
+    { name: "Банк ЦентрКредит", country: "kz" },
+    { name: "ForteBank", country: "kz" },
+    { name: "Jusan Bank", country: "kz" },
+    { name: "Bereke Bank", country: "kz" },
+    { name: "CKB", country: "me" },
+    { name: "NLB Banka", country: "me" },
+    { name: "Hipotekarna banka", country: "me" },
+    { name: "Prva banka", country: "me" },
+    { name: "Adriatic Bank", country: "me" },
+    { name: "Erste Bank", country: "me" },
+    { name: "Lovćen banka", country: "me" },
+    { name: "Addiko Bank", country: "me" },
+  ];
+  for (const b of banks) {
+    const existing = await prisma.bank.findFirst({ where: { name: b.name } });
+    if (existing) continue;
+    await prisma.bank.create({ data: b });
+  }
+}
+
 async function seedClients() {
   const clients = [
     { company: "Базис",         department: "Контент – PR", status: "active"   },
@@ -1709,6 +1746,7 @@ async function main() {
   await seedUsers(hash);
   await seedBankAccounts();
   await seedWorkTypes();
+  await seedBanks();
   await seedResponsibleManagers(hash);
   await seedClients();
   await seedProjects();

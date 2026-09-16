@@ -9,6 +9,7 @@ import {
   EXECUTOR_TYPES,
   formatCompanyStatus,
   PROJECT_TYPES,
+  STATEMENT_FORMATS,
 } from "@/lib/statuses";
 import { formatRecipientTypes, parseRecipientTypes } from "@/lib/executor-recipient-type";
 
@@ -69,6 +70,7 @@ const FIELD_LABELS: Record<string, string> = {
   responsibleActive: "Статус ответственного",
   isDefault: "По умолчанию",
   currency: "Валюта",
+  country: "Страна",
   accountNumber: "Номер счёта",
   bik: "БИК",
   inn: "ИНН",
@@ -175,6 +177,10 @@ export function formatChangeValue(value: unknown, field: string): string {
 
   if (field === "recipientType") {
     return formatRecipientTypes(parseRecipientTypes(str));
+  }
+
+  if ((field === "country" || field === "statementFormat") && str in STATEMENT_FORMATS) {
+    return STATEMENT_FORMATS[str as keyof typeof STATEMENT_FORMATS];
   }
 
   if (

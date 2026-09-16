@@ -10,7 +10,7 @@ export default async function Page() {
 
   const [executors, clients, bankAccounts] = await Promise.all([
     prisma.executor.findMany({
-      select: { id: true, name: true, status: true },
+      select: { id: true, name: true, status: true, type: true },
       orderBy: { name: "asc" },
     }),
     prisma.client.findMany({

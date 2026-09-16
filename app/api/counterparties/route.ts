@@ -12,6 +12,7 @@ import {
   COUNTERPARTY_PAYMENT_METHODS,
   COUNTERPARTY_ALIAS_SOURCES,
 } from "@/lib/statuses";
+import { inferPaymentMethod } from "@/lib/counterparty-requisites";
 
 export async function GET(req: Request) {
   const me = await getSessionUser();
@@ -26,21 +27,34 @@ export async function GET(req: Request) {
   }
 
   if (!isAdmin(me)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  return NextResponse.json(await listCounterparties());
+  return NextResponse.json(
+    await listCounterparties({
+      executorId: searchParams.get("executorId") ?? undefined,
+      clientId: searchParams.get("clientId") ?? undefined,
+      bankAccountId: searchParams.get("bankAccountId") ?? undefined,
+    })
+  );
 }
 
-const requisiteSchema = z.object({
-  paymentMethod: z.enum(
-    Object.keys(COUNTERPARTY_PAYMENT_METHODS) as [string, ...string[]]
-  ),
-  taxId: z.string().nullable().optional(),
-  bic: z.string().nullable().optional(),
-  bankName: z.string().nullable().optional(),
-  accountNumber: z.string().nullable().optional(),
-  cardNumber: z.string().nullable().optional(),
-  status: z.enum(["active", "archived"]).optional(),
-  comment: z.string().nullable().optional(),
-});
+const paymentMethodSchema = z.enum(
+  Object.keys(COUNTERPARTY_PAYMENT_METHODS) as [string, ...string[]]
+);
+
+const requisiteSchema = z
+  .object({
+    paymentMethod: paymentMethodSchema.optional(),
+    taxId: z.string().nullable().optional(),
+    bic: z.string().nullable().optional(),
+    bankName: z.string().nullable().optional(),
+    accountNumber: z.string().nullable().optional(),
+    cardNumber: z.string().nullable().optional(),
+    status: z.enum(["active", "archived"]).optional(),
+    comment: z.string().nullable().optional(),
+  })
+  .transform((row) => ({
+    ...row,
+    paymentMethod: row.paymentMethod ?? inferPaymentMethod(row),
+  }));
 
 const createSchema = z.object({
   name: z.string().min(1, "Введите название контрагента"),
@@ -49,6 +63,8 @@ const createSchema = z.object({
     .nullable()
     .optional(),
   comment: z.string().nullable().optional(),
+  uniqueProjectId: z.string().nullable().optional(),
+  uniqueWorkTypeId: z.string().nullable().optional(),
   executorId: z.string().nullable().optional(),
   clientId: z.string().nullable().optional(),
   bankAccountId: z.string().nullable().optional(),
