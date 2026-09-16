@@ -428,7 +428,7 @@ export async function bulkUpdateBankOperations(
 
   const before = await prisma.bankOperation.findMany({
     where: { id: { in: ids } },
-    include: { charges: { select: { id: true } } },
+    include: { charges: { select: { chargeId: true } } },
   });
 
   const eligible =
