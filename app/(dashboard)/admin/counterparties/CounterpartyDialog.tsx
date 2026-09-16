@@ -293,7 +293,7 @@ export function CounterpartyDialog({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: name.trim(),
-            legalType: legalType || null,
+            legalType: linkKind === "bankAccount" ? null : legalType || null,
             comment: comment.trim() || null,
             ...links,
             ...unique,
@@ -306,7 +306,7 @@ export function CounterpartyDialog({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: name.trim(),
-            legalType: legalType || null,
+            legalType: linkKind === "bankAccount" ? null : legalType || null,
             comment: comment.trim() || null,
             ...links,
             ...unique,
@@ -492,7 +492,7 @@ export function CounterpartyDialog({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="cp-name">Название (юридический получатель)</Label>
+              <Label htmlFor="cp-name">Название контрагента</Label>
               <Input
                 id="cp-name"
                 value={name}
@@ -502,18 +502,20 @@ export function CounterpartyDialog({
               />
             </div>
 
-            <div className="space-y-2">
-              <Label>Юрлицо</Label>
-              <SearchableSelect
-                value={legalType}
-                onValueChange={setLegalType}
-                options={Object.entries(COUNTERPARTY_LEGAL_TYPES).map(([value, label]) => ({
-                  value,
-                  label,
-                }))}
-                placeholder="Не указано"
-              />
-            </div>
+            {linkKind !== "bankAccount" && (
+              <div className="space-y-2">
+                <Label>Юрлицо</Label>
+                <SearchableSelect
+                  value={legalType}
+                  onValueChange={setLegalType}
+                  options={Object.entries(COUNTERPARTY_LEGAL_TYPES).map(([value, label]) => ({
+                    value,
+                    label,
+                  }))}
+                  placeholder="Не указано"
+                />
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="cp-comment">Комментарий</Label>

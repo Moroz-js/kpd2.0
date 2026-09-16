@@ -120,6 +120,25 @@ export function counterpartyLabel(op: BankOperation): string | null {
   return op.counterpartyLinkedName ?? op.counterpartyName;
 }
 
+/** В таблице и фильтре — только справочник. Пусто, пока не определился. */
+export function catalogCounterpartyName(op: BankOperation): string | null {
+  if (!op.counterpartyId) return null;
+  return op.counterpartyLinkedName ?? op.counterpartyName;
+}
+
+/** Назначение из банка, иначе описание из разбора. */
+export function operationPurpose(op: BankOperation): string | null {
+  return op.paymentPurpose ?? op.raw.purpose ?? op.workDescription;
+}
+
+export function canConfirmOperation(op: BankOperation): boolean {
+  if (op.status === "confirmed") return false;
+  if (op.kind === "incoming" && !op.isInternalTransfer) {
+    return op.chargeMatch === "confirmed" && op.charges.length > 0;
+  }
+  return true;
+}
+
 /**
  * Пара внутреннего перевода показывается одной строкой — списанием.
  * Поступление-близнец скрывается, чтобы перевод не удваивал оборот.

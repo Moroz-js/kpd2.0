@@ -51,6 +51,25 @@ export const LINK_LABELS: Record<LinkKind, string> = {
   bankAccount: "Счёт КПД",
 };
 
+export function linkedEntityId(row: {
+  executorId: string | null;
+  clientId: string | null;
+  bankAccountId: string | null;
+}): string | null {
+  return row.executorId ?? row.clientId ?? row.bankAccountId;
+}
+
+export function linkedEntityKind(row: {
+  executorId: string | null;
+  clientId: string | null;
+  bankAccountId: string | null;
+}): LinkKind | null {
+  if (row.executorId) return "executor";
+  if (row.clientId) return "client";
+  if (row.bankAccountId) return "bankAccount";
+  return null;
+}
+
 export function linkedEntityHref(row: {
   executorId: string | null;
   clientId: string | null;

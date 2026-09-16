@@ -283,6 +283,13 @@ export async function updateBankOperation(
   if (!before) throw new Error("Bank operation not found");
 
   const { rememberBy, ...fields } = patch;
+  const unlocking =
+    before.status === "confirmed" &&
+    fields.status !== undefined &&
+    fields.status !== "confirmed";
+  if (before.status === "confirmed" && !unlocking) {
+    throw new Error("Подтверждённую операцию нельзя редактировать");
+  }
 
   const data: Record<string, unknown> = { ...fields };
 
@@ -368,6 +375,16 @@ export async function updateBankOperation(
   }
 
   if (fields.status === "confirmed") {
+    const nextKind = (fields.kind ?? before.kind) as string;
+    const nextInternal = fields.isInternalTransfer ?? before.isInternalTransfer;
+    if (nextKind === "incoming" && !nextInternal) {
+      const chargeCount = await prisma.bankOperationCharge.count({
+        where: { bankOperationId: id },
+      });
+      if (before.chargeMatch !== "confirmed" || chargeCount === 0) {
+        throw new Error("Нельзя подтвердить поступление без начисления или внутреннего перевода");
+      }
+    }
     data.confirmedAt = new Date();
     data.confirmedByName = await resolveUserName(userId);
   } else if (fields.status !== undefined && before.status === "confirmed") {
@@ -406,10 +423,29 @@ export async function bulkUpdateBankOperations(
   ids: string[],
   patch: BulkBankOperationPatch,
   userId: string
-): Promise<number> {
-  if (!ids.length) return 0;
+): Promise<{ updated: number; skipped: number }> {
+  if (!ids.length) return { updated: 0, skipped: 0 };
 
-  const before = await prisma.bankOperation.findMany({ where: { id: { in: ids } } });
+  const before = await prisma.bankOperation.findMany({
+    where: { id: { in: ids } },
+    include: { charges: { select: { id: true } } },
+  });
+
+  const eligible =
+    patch.status === "confirmed"
+      ? before.filter((row) => {
+          if (row.status === "confirmed") return false;
+          if (row.kind === "incoming" && !row.isInternalTransfer) {
+            return row.chargeMatch === "confirmed" && row.charges.length > 0;
+          }
+          return true;
+        })
+      : before;
+
+  const skipped = before.length - eligible.length;
+  const eligibleIds = eligible.map((row) => row.id);
+  if (!eligibleIds.length) return { updated: 0, skipped };
+
   const data: Record<string, unknown> = { ...patch };
 
   if (patch.status === "confirmed") {
@@ -419,9 +455,9 @@ export async function bulkUpdateBankOperations(
   if (patch.projectId !== undefined) data.traceProject = patch.projectId ? "проставлен вручную" : null;
   if (patch.workTypeId !== undefined) data.traceWorkType = patch.workTypeId ? "проставлен вручную" : null;
 
-  const result = await prisma.bankOperation.updateMany({ where: { id: { in: ids } }, data });
+  const result = await prisma.bankOperation.updateMany({ where: { id: { in: eligibleIds } }, data });
 
-  for (const row of before) {
+  for (const row of eligible) {
     await logActivity({
       userId,
       action: patch.status ? "status_change" : "update",
@@ -432,7 +468,7 @@ export async function bulkUpdateBankOperations(
     });
   }
 
-  return result.count;
+  return { updated: result.count, skipped };
 }
 
 export type ChargeLinkInput = {
@@ -454,6 +490,9 @@ export async function setBankOperationCharges(
     include: { charges: true },
   });
   if (!before) throw new Error("Bank operation not found");
+  if (before.status === "confirmed") {
+    throw new Error("Подтверждённую операцию нельзя редактировать");
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.bankOperationCharge.deleteMany({ where: { bankOperationId: operationId } });

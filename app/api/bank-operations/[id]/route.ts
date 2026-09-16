@@ -42,6 +42,9 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     if (msg.includes("not found")) {
       return NextResponse.json({ error: "Операция не найдена" }, { status: 404 });
     }
+    if (msg.includes("Нельзя подтвердить") || msg.includes("нельзя редактировать")) {
+      return NextResponse.json({ error: msg }, { status: 400 });
+    }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

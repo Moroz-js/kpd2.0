@@ -24,7 +24,10 @@ import {
 } from "@/components/PersistedInterfaceState";
 import { CounterpartyDialog } from "./CounterpartyDialog";
 import {
+  LINK_LABELS,
   linkedEntityHref,
+  linkedEntityId,
+  linkedEntityKind,
   linkedEntityLabel,
   type Counterparty,
   type LinkOption,
@@ -61,6 +64,7 @@ export function CounterpartiesClient({
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<string[]>(["active"]);
   const [legalTypeFilter, setLegalTypeFilter] = React.useState<string[]>([]);
+  const [linkedFilter, setLinkedFilter] = React.useState<string[]>([]);
   const [sort, setSort] = React.useState<{ field: SortField; dir: SortDir }>({
     field: "name",
     dir: "asc",
@@ -71,28 +75,37 @@ export function CounterpartiesClient({
   const [unarchiveTarget, setUnarchiveTarget] = React.useState<Counterparty | null>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
 
+  const showEstimate = activeTab !== "client" && activeTab !== "own_account";
+  const showLegalType = activeTab !== "client" && activeTab !== "own_account";
+  const colSpan = 3 + (showEstimate ? 1 : 0) + (showLegalType ? 1 : 0) + 1;
+
   const hasActiveFilters =
-    search.trim() !== "" || statusFilter.length > 0 || legalTypeFilter.length > 0;
+    search.trim() !== "" ||
+    statusFilter.length > 0 ||
+    (showLegalType && legalTypeFilter.length > 0) ||
+    linkedFilter.length > 0;
 
   function resetFilters() {
     setSearch("");
     setStatusFilter([]);
     setLegalTypeFilter([]);
+    setLinkedFilter([]);
   }
 
   usePersistedInterfaceState(
     "counterparties",
-    { activeTab, statusFilter, legalTypeFilter, sort },
+    { activeTab, statusFilter, legalTypeFilter, linkedFilter, sort },
     (stored) => {
       if (stored.activeTab !== undefined) setActiveTab(stored.activeTab);
       if (stored.statusFilter) setStatusFilter(stored.statusFilter);
       if (stored.legalTypeFilter) setLegalTypeFilter(stored.legalTypeFilter);
+      if (stored.linkedFilter) setLinkedFilter(stored.linkedFilter);
       if (stored.sort) setSort(stored.sort);
     }
   );
   usePersistedScroll(scrollRef, `counterparties-table:${activeTab}`, {
     enabled: !isLoading && !!data,
-    signature: { activeTab, statusFilter, legalTypeFilter, sort },
+    signature: { activeTab, statusFilter, legalTypeFilter, linkedFilter, sort },
   });
 
   const tabCounts = React.useMemo(
@@ -106,12 +119,42 @@ export function CounterpartiesClient({
     [rowsAll]
   );
 
+  const tabRows = React.useMemo(
+    () => (activeTab === "all" ? rowsAll : rowsAll.filter((r) => r.kind === activeTab)),
+    [rowsAll, activeTab]
+  );
+
+  const linkedOptions = React.useMemo(() => {
+    const map = new Map<string, { label: string; group?: string }>();
+    for (const r of tabRows) {
+      const id = linkedEntityId(r);
+      const label = linkedEntityLabel(r);
+      const kind = linkedEntityKind(r);
+      if (!id || !label || !kind) continue;
+      if (!map.has(id)) {
+        map.set(id, {
+          label,
+          group: activeTab === "all" ? LINK_LABELS[kind] : undefined,
+        });
+      }
+    }
+    return [...map.entries()]
+      .sort((a, b) => a[1].label.localeCompare(b[1].label, "ru"))
+      .map(([value, item]) => ({ value, label: item.label, group: item.group }));
+  }, [tabRows, activeTab]);
+
   const rows = React.useMemo(() => {
-    let list = activeTab === "all" ? rowsAll : rowsAll.filter((r) => r.kind === activeTab);
+    let list = tabRows;
 
     if (statusFilter.length) list = list.filter((r) => statusFilter.includes(r.status));
-    if (legalTypeFilter.length)
+    if (showLegalType && legalTypeFilter.length)
       list = list.filter((r) => r.legalType && legalTypeFilter.includes(r.legalType));
+    if (linkedFilter.length) {
+      list = list.filter((r) => {
+        const id = linkedEntityId(r);
+        return id !== null && linkedFilter.includes(id);
+      });
+    }
 
     if (search.trim()) {
       list = list.filter((r) =>
@@ -137,7 +180,7 @@ export function CounterpartiesClient({
       const cmp = String(a[sort.field]).localeCompare(String(b[sort.field]), "ru");
       return sort.dir === "asc" ? cmp : -cmp;
     });
-  }, [rowsAll, activeTab, statusFilter, legalTypeFilter, search, sort]);
+  }, [tabRows, showLegalType, statusFilter, legalTypeFilter, linkedFilter, search, sort]);
 
   function handleSort(field: string, dir: SortDir) {
     setSort({ field: field as SortField, dir });
@@ -199,14 +242,23 @@ export function CounterpartiesClient({
         <div className="ml-auto flex items-center gap-2">
           <FilterResetButton active={hasActiveFilters} onClick={resetFilters} />
           <MultiSelectFilter
-            label="Юрлицо"
-            options={Object.entries(COUNTERPARTY_LEGAL_TYPES).map(([value, label]) => ({
-              value,
-              label,
-            }))}
-            value={legalTypeFilter}
-            onChange={setLegalTypeFilter}
+            label="Связан с"
+            options={linkedOptions}
+            value={linkedFilter}
+            onChange={setLinkedFilter}
+            popoverClassName="w-80"
           />
+          {showLegalType && (
+            <MultiSelectFilter
+              label="Юрлицо"
+              options={Object.entries(COUNTERPARTY_LEGAL_TYPES).map(([value, label]) => ({
+                value,
+                label,
+              }))}
+              value={legalTypeFilter}
+              onChange={setLegalTypeFilter}
+            />
+          )}
           <MultiSelectFilter
             label="Статус"
             options={Object.entries(ENTITY_STATUSES).map(([value, { label }]) => ({
@@ -231,13 +283,16 @@ export function CounterpartiesClient({
               sortBy={sort.field}
               sortDir={sort.dir}
               onSort={handleSort}
-              className={cn(compactHead, "w-64")}
+              className={cn(compactHead, "w-40")}
             >
               Контрагент
             </SortableHead>
-            <TableHead className={cn(compactHead, "w-52")}>Связан с</TableHead>
-            <TableHead className={cn(compactHead, "w-20")}>Личная смета</TableHead>
-            <TableHead className={cn(compactHead, "w-28")}>Юрлицо</TableHead>
+            {showEstimate && (
+              <TableHead className={cn(compactHead, "w-20")}>Личная смета</TableHead>
+            )}
+            {showLegalType && (
+              <TableHead className={cn(compactHead, "w-28")}>Юрлицо</TableHead>
+            )}
             <SortableHead
               field="status"
               sortBy={sort.field}
@@ -247,19 +302,20 @@ export function CounterpartiesClient({
             >
               Статус
             </SortableHead>
+            <TableHead className={cn(compactHead, "w-40")}>Связан с</TableHead>
             <TableHead className={stickyActionsHead} />
           </TableRow>
         </TableHeader>
         <TableBody>
           {isLoading ? (
             <TableRow>
-              <TableCell colSpan={6} className="py-8 text-center text-neutral-500">
+              <TableCell colSpan={colSpan} className="py-8 text-center text-neutral-500">
                 Загрузка...
               </TableCell>
             </TableRow>
           ) : rows.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="py-8 text-center text-neutral-500">
+              <TableCell colSpan={colSpan} className="py-8 text-center text-neutral-500">
                 Нет контрагентов
               </TableCell>
             </TableRow>
@@ -279,6 +335,33 @@ export function CounterpartiesClient({
                       {r.name}
                     </button>
                   </TableCell>
+                  {showEstimate && (
+                    <TableCell className={compactCell}>
+                      {r.personalEstimateUrl ? (
+                        <Link
+                          href={r.personalEstimateUrl}
+                          className="text-blue-700 hover:underline"
+                          title="Открыть личную смету"
+                        >
+                          Смета
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </TableCell>
+                  )}
+                  {showLegalType && (
+                    <TableCell className={cn(compactCell, "truncate")}>
+                      {r.legalType
+                        ? (COUNTERPARTY_LEGAL_TYPES[
+                            r.legalType as keyof typeof COUNTERPARTY_LEGAL_TYPES
+                          ] ?? r.legalType)
+                        : "—"}
+                    </TableCell>
+                  )}
+                  <TableCell className={compactCell}>
+                    <StatusBadge dict={ENTITY_STATUSES} value={r.status} />
+                  </TableCell>
                   <TableCell className={cn(compactCell, "truncate")}>
                     {linkedHref && linkedName ? (
                       <Link
@@ -292,29 +375,6 @@ export function CounterpartiesClient({
                     ) : (
                       "—"
                     )}
-                  </TableCell>
-                  <TableCell className={compactCell}>
-                    {r.personalEstimateUrl ? (
-                      <Link
-                        href={r.personalEstimateUrl}
-                        className="text-blue-700 hover:underline"
-                        title="Открыть личную смету"
-                      >
-                        Смета
-                      </Link>
-                    ) : (
-                      "—"
-                    )}
-                  </TableCell>
-                  <TableCell className={cn(compactCell, "truncate")}>
-                    {r.legalType
-                      ? (COUNTERPARTY_LEGAL_TYPES[
-                          r.legalType as keyof typeof COUNTERPARTY_LEGAL_TYPES
-                        ] ?? r.legalType)
-                      : "—"}
-                  </TableCell>
-                  <TableCell className={compactCell}>
-                    <StatusBadge dict={ENTITY_STATUSES} value={r.status} />
                   </TableCell>
                   <TableCell className={cn(stickyActionsCell)}>
                     <div className={stickyActionsInner}>

@@ -109,6 +109,13 @@ export function BankOperationCard({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (locked) return;
+    if (status === "confirmed" && kind === "incoming" && !isInternal) {
+      if (operation.chargeMatch !== "confirmed" || operation.charges.length === 0) {
+        toast.error("Нельзя подтвердить поступление без начисления или внутреннего перевода");
+        return;
+      }
+    }
     setSubmitting(true);
     const res = await fetch(`/api/bank-operations/${operation.id}`, {
       method: "PATCH",
@@ -154,21 +161,38 @@ export function BankOperationCard({
     onSaved();
   }
 
-  async function handleWithoutCharge() {
-    const res = await fetch(`/api/bank-operations/${operation.id}/charges`, {
-      method: "PUT",
+  async function handleMarkInternal() {
+    const res = await fetch(`/api/bank-operations/${operation.id}`, {
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ charges: [], withoutCharge: true }),
+      body: JSON.stringify({ isInternalTransfer: true }),
     });
     if (!res.ok) {
-      toast.error("Не удалось изменить привязку");
+      toast.error("Не удалось отметить внутренний перевод");
       return;
     }
-    toast.success("Операция помечена «без начисления»");
+    toast.success("Отмечено как внутренний перевод");
+    onSaved();
+  }
+
+  async function handleReturnToReview() {
+    const res = await fetch(`/api/bank-operations/${operation.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "needs_review" }),
+    });
+    if (!res.ok) {
+      toast.error("Не удалось вернуть в разбор");
+      return;
+    }
+    toast.success("Операция возвращена в разбор");
     onSaved();
   }
 
   const hasSuggested = operation.charges.some((c) => c.link === "suggested");
+  const locked = operation.status === "confirmed";
+  const canConfirmIncoming =
+    isInternal || (operation.chargeMatch === "confirmed" && operation.charges.length > 0);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -232,6 +256,7 @@ export function BankOperationCard({
                 <SearchableSelect
                   value={kind}
                   onValueChange={setKind}
+                  disabled={locked}
                   options={Object.entries(BANK_OPERATION_KINDS).map(([value, label]) => ({
                     value,
                     label,
@@ -249,10 +274,19 @@ export function BankOperationCard({
                 <SearchableSelect
                   value={status}
                   onValueChange={setStatus}
-                  options={Object.entries(BANK_OPERATION_STATUSES).map(([value, { label }]) => ({
-                    value,
-                    label,
-                  }))}
+                  disabled={locked}
+                  options={Object.entries(BANK_OPERATION_STATUSES)
+                    .filter(
+                      ([value]) =>
+                        value === status ||
+                        value !== "confirmed" ||
+                        canConfirmIncoming ||
+                        kind !== "incoming"
+                    )
+                    .map(([value, { label }]) => ({
+                      value,
+                      label,
+                    }))}
                 />
               </div>
             </div>
@@ -260,6 +294,7 @@ export function BankOperationCard({
             <label className="flex items-center gap-2 text-xs text-neutral-700">
               <Checkbox
                 checked={isInternal}
+                disabled={locked}
                 onCheckedChange={(checked) => setIsInternal(!!checked)}
               />
               Внутренний перевод — не доход и не расход в кэшфлоу
@@ -274,12 +309,14 @@ export function BankOperationCard({
                   variant="ghost"
                   className="h-6 px-2 text-xs"
                   onClick={() => setCounterpartyDialogOpen(true)}
+                  disabled={locked}
                 >
                   <UserPlus className="mr-1 h-3.5 w-3.5" /> Создать из операции
                 </Button>
               </div>
               <SearchableSelect
                 value={counterpartyId}
+                disabled={locked}
                 onValueChange={(value) => {
                   setCounterpartyId(value);
                   const picked = counterparties.find((c) => c.id === value);
@@ -301,7 +338,7 @@ export function BankOperationCard({
                 placeholder="Не определён"
                 searchPlaceholder="Имя, ИНН, номер счёта..."
               />
-              {selectedCounterparty ? (
+              {selectedCounterparty && (
                 <p className="text-xs text-neutral-500">
                   Тип из карточки:{" "}
                   {BANK_COUNTERPARTY_TYPES[
@@ -309,12 +346,6 @@ export function BankOperationCard({
                   ] ?? selectedCounterparty.kind}
                   {selectedCounterparty.status === "archived" && " · в архиве"}
                 </p>
-              ) : (
-                operation.counterpartyName && (
-                  <p className="text-xs text-neutral-500">
-                    В выписке: {operation.counterpartyName} — в справочнике не сопоставлен
-                  </p>
-                )
               )}
               <Trace value={operation.trace.counterparty} />
             </div>
@@ -371,6 +402,7 @@ export function BankOperationCard({
               <Label>Проект</Label>
               <SearchableSelect
                 value={projectId}
+                disabled={locked}
                 onValueChange={setProjectId}
                 options={[
                   { value: NONE, label: "Не определён" },
@@ -384,6 +416,7 @@ export function BankOperationCard({
               <Label>Вид работ</Label>
               <SearchableSelect
                 value={workTypeId}
+                disabled={locked}
                 onValueChange={setWorkTypeId}
                 options={[
                   { value: NONE, label: "Не определён" },
@@ -401,6 +434,7 @@ export function BankOperationCard({
                   value={paymentOrder}
                   onChange={(e) => setPaymentOrder(e.target.value)}
                   placeholder="ПП 415"
+                  disabled={locked}
                 />
               </div>
             )}
@@ -412,6 +446,7 @@ export function BankOperationCard({
                   id="paymentPurpose"
                   value={paymentPurpose}
                   onChange={(e) => setPaymentPurpose(e.target.value)}
+                  disabled={locked}
                 />
               </div>
             )}
@@ -419,7 +454,7 @@ export function BankOperationCard({
             {isInternal && (
               <div className="space-y-1.5">
                 <Label htmlFor="basis">Основание</Label>
-                <Input id="basis" value={basis} onChange={(e) => setBasis(e.target.value)} />
+                <Input id="basis" value={basis} onChange={(e) => setBasis(e.target.value)} disabled={locked} />
                 {operation.pairedAccountName && (
                   <p className="text-xs text-neutral-500">
                     Пара найдена: {operation.bankAccountName} → {operation.pairedAccountName}
@@ -440,6 +475,7 @@ export function BankOperationCard({
                 value={workDescription}
                 onChange={(e) => setWorkDescription(e.target.value)}
                 rows={2}
+                disabled={locked}
               />
             </div>
 
@@ -449,16 +485,23 @@ export function BankOperationCard({
                 id="comment"
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
+                disabled={locked}
               />
             </div>
 
             <DialogFooter className="mx-0 mb-0 rounded-md border">
               <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
-                Отмена
+                {locked ? "Закрыть" : "Отмена"}
               </Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting ? "Сохранение..." : "Сохранить"}
-              </Button>
+              {locked ? (
+                <Button type="button" variant="outline" onClick={handleReturnToReview}>
+                  Вернуть в разбор
+                </Button>
+              ) : (
+                <Button type="submit" disabled={submitting}>
+                  {submitting ? "Сохранение..." : "Сохранить"}
+                </Button>
+              )}
             </DialogFooter>
           </form>
         </div>
@@ -481,8 +524,8 @@ export function BankOperationCard({
             {operation.charges.length === 0 ? (
               <p className="text-xs text-neutral-500">
                 {operation.chargeMatch === "no_charge"
-                  ? "Операция помечена «без начисления» и в сверку не попадает."
-                  : "Начисление не привязано — подберите вручную."}
+                  ? "Операция отмечена как внутренний перевод и в сверку не попадает."
+                  : "Начисление не привязано — подберите вручную или отметьте внутренний перевод."}
               </p>
             ) : (
               <div className="space-y-1.5">
@@ -508,6 +551,7 @@ export function BankOperationCard({
               </div>
             )}
 
+            {!locked && (
             <div className="mt-3 flex flex-wrap gap-2">
               {hasSuggested && (
                 <Button size="sm" onClick={handleConfirmSuggested}>
@@ -517,12 +561,11 @@ export function BankOperationCard({
               <Button size="sm" variant="outline" onClick={() => setChargeDialogOpen(true)}>
                 {operation.charges.length ? "Изменить привязку" : "Привязать начисление"}
               </Button>
-              {operation.chargeMatch !== "no_charge" && (
-                <Button size="sm" variant="ghost" onClick={handleWithoutCharge}>
-                  Без начисления
-                </Button>
-              )}
+              <Button size="sm" variant="ghost" onClick={handleMarkInternal}>
+                Внутренний перевод
+              </Button>
             </div>
+            )}
           </div>
         )}
 

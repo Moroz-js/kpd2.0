@@ -26,6 +26,6 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Validation", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const updated = await bulkUpdateBankOperations(parsed.data.ids, parsed.data.patch, me.id);
-  return NextResponse.json({ updated });
+  const result = await bulkUpdateBankOperations(parsed.data.ids, parsed.data.patch, me.id);
+  return NextResponse.json(result);
 }

@@ -167,7 +167,7 @@ export type RuleMatchField = keyof typeof RULE_MATCH_FIELDS;
 
 /** Состояние привязки пополнения к начислениям. Связь ставит только человек. */
 export const BANK_CHARGE_MATCH_STATES = {
-  no_charge:  { label: "Без начисления",     tone: "slate"  as BadgeTone },
+  no_charge:  { label: "Внутренний перевод", tone: "blue"   as BadgeTone },
   not_linked: { label: "Не привязано",       tone: "gray"   as BadgeTone },
   confirmed:  { label: "Подтверждено",       tone: "green"  as BadgeTone },
   suggested:  { label: "Предложено",         tone: "yellow" as BadgeTone },
