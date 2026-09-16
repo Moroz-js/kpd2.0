@@ -123,7 +123,7 @@ export const COUNTERPARTY_LEGAL_TYPES = {
 } as const;
 export type CounterpartyLegalType = keyof typeof COUNTERPARTY_LEGAL_TYPES;
 
-/** Способ оплаты реквизита — внутренний признак, в карточке больше не редактируется. */
+/** Способ оплаты реквизита. В карточке правится во вкладке «Вариант 2». */
 export const COUNTERPARTY_PAYMENT_METHODS = {
   bank_transfer: "Банковский перевод",
   crypto: "Криптокошелёк",

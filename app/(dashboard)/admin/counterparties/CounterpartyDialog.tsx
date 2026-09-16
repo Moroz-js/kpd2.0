@@ -12,8 +12,13 @@ import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { DepartmentCombobox } from "@/components/ui-custom/DepartmentCombobox";
 import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
-import { COUNTERPARTY_ALIAS_SOURCES, COUNTERPARTY_LEGAL_TYPES } from "@/lib/statuses";
 import {
+  COUNTERPARTY_ALIAS_SOURCES,
+  COUNTERPARTY_LEGAL_TYPES,
+  COUNTERPARTY_PAYMENT_METHODS,
+} from "@/lib/statuses";
+import {
+  inferPaymentMethod,
   splitRequisites,
   type AccountDraft,
   type CardDraft,
@@ -29,11 +34,85 @@ import {
 
 type AliasDraft = { id: string; isNew: boolean; value: string; source: string };
 type OptionRow = { id: string; name: string; status?: string };
+type MethodDraft = {
+  id: string;
+  isNew: boolean;
+  paymentMethod: string;
+  taxId: string;
+  bic: string;
+  bankName: string;
+  accountNumber: string;
+  cardNumber: string;
+  comment: string;
+};
+type RequisiteTab = "v1" | "v2";
+type Prefill = { name?: string; alias?: string; taxId?: string; accountNumber?: string };
 
 let draftSeq = 0;
 const nextDraftId = () => `draft-${++draftSeq}`;
 
-type Prefill = { name?: string; alias?: string; taxId?: string; accountNumber?: string };
+const TABS: { id: RequisiteTab; label: string }[] = [
+  { id: "v1", label: "Вариант 1" },
+  { id: "v2", label: "Вариант 2" },
+];
+
+function emptyMethod(): MethodDraft {
+  return {
+    id: nextDraftId(),
+    isNew: true,
+    paymentMethod: "bank_transfer",
+    taxId: "",
+    bic: "",
+    bankName: "",
+    accountNumber: "",
+    cardNumber: "",
+    comment: "",
+  };
+}
+
+function methodDraftsFrom(row: Counterparty | null, prefill?: Prefill): MethodDraft[] {
+  if (row) {
+    return row.requisites.map((r) => ({
+      id: r.id,
+      isNew: false,
+      paymentMethod: r.paymentMethod || inferPaymentMethod(r),
+      taxId: r.taxId ?? "",
+      bic: r.bic ?? "",
+      bankName: r.bankName ?? "",
+      accountNumber: r.accountNumber ?? "",
+      cardNumber: r.cardNumber ?? "",
+      comment: r.comment ?? "",
+    }));
+  }
+  if (prefill?.taxId || prefill?.accountNumber) {
+    return [
+      {
+        ...emptyMethod(),
+        taxId: prefill.taxId ?? "",
+        accountNumber: prefill.accountNumber ?? "",
+      },
+    ];
+  }
+  return [];
+}
+
+function isMethodFilled(r: MethodDraft) {
+  return [r.taxId, r.bic, r.bankName, r.accountNumber, r.cardNumber, r.comment].some((v) =>
+    v.trim()
+  );
+}
+
+function methodPayload(r: MethodDraft) {
+  return {
+    paymentMethod: r.paymentMethod,
+    taxId: r.taxId.trim() || null,
+    bic: r.bic.trim() || null,
+    bankName: r.bankName.trim() || null,
+    accountNumber: r.accountNumber.trim() || null,
+    cardNumber: r.cardNumber.trim() || null,
+    comment: r.comment.trim() || null,
+  };
+}
 
 function prefillAliases(prefill?: Prefill): AliasDraft[] {
   if (!prefill?.alias) return [];
@@ -109,6 +188,9 @@ export function CounterpartyDialog({
   const [removedRequisites, setRemovedRequisites] = React.useState<string[]>(
     initialSections.leftoverIds
   );
+  const [tab, setTab] = React.useState<RequisiteTab>("v1");
+  const [methods, setMethods] = React.useState<MethodDraft[]>(() => methodDraftsFrom(row, prefill));
+  const [removedMethods, setRemovedMethods] = React.useState<string[]>([]);
   const [aliases, setAliases] = React.useState<AliasDraft[]>(() =>
     row
       ? row.aliases.map((a) => ({ id: a.id, isNew: false, value: a.value, source: a.source }))
@@ -131,11 +213,15 @@ export function CounterpartyDialog({
       if (b.name.trim()) names.add(b.name.trim());
     }
     for (const n of extraBanks) if (n.trim()) names.add(n.trim());
-    for (const n of [...accounts.map((a) => a.bankName), ...cards.map((c) => c.bankName)]) {
+    for (const n of [
+      ...accounts.map((a) => a.bankName),
+      ...cards.map((c) => c.bankName),
+      ...methods.map((m) => m.bankName),
+    ]) {
       if (n.trim()) names.add(n.trim());
     }
     return [...names].sort((a, b) => a.localeCompare(b, "ru"));
-  }, [directoryBanks, extraBanks, accounts, cards]);
+  }, [directoryBanks, extraBanks, accounts, cards, methods]);
 
   async function addBankOption(name: string) {
     const trimmed = name.trim();
@@ -224,26 +310,29 @@ export function CounterpartyDialog({
             comment: comment.trim() || null,
             ...links,
             ...unique,
-            requisites: [
-              ...taxIds
-                .filter((r) => r.taxId.trim())
-                .map((r) => ({ paymentMethod: "bank_transfer", taxId: r.taxId.trim() })),
-              ...accounts
-                .filter((r) => r.accountNumber.trim() || r.bankName.trim() || r.bic.trim())
-                .map((r) => ({
-                  paymentMethod: "bank_transfer",
-                  accountNumber: r.accountNumber.trim() || null,
-                  bankName: r.bankName.trim() || null,
-                  bic: r.bic.trim() || null,
-                })),
-              ...cards
-                .filter((r) => r.cardNumber.trim() || r.bankName.trim())
-                .map((r) => ({
-                  paymentMethod: "card",
-                  cardNumber: r.cardNumber.trim() || null,
-                  bankName: r.bankName.trim() || null,
-                })),
-            ],
+            requisites:
+              tab === "v2"
+                ? methods.filter(isMethodFilled).map(methodPayload)
+                : [
+                    ...taxIds
+                      .filter((r) => r.taxId.trim())
+                      .map((r) => ({ paymentMethod: "bank_transfer", taxId: r.taxId.trim() })),
+                    ...accounts
+                      .filter((r) => r.accountNumber.trim() || r.bankName.trim() || r.bic.trim())
+                      .map((r) => ({
+                        paymentMethod: "bank_transfer",
+                        accountNumber: r.accountNumber.trim() || null,
+                        bankName: r.bankName.trim() || null,
+                        bic: r.bic.trim() || null,
+                      })),
+                    ...cards
+                      .filter((r) => r.cardNumber.trim() || r.bankName.trim())
+                      .map((r) => ({
+                        paymentMethod: "card",
+                        cardNumber: r.cardNumber.trim() || null,
+                        bankName: r.bankName.trim() || null,
+                      })),
+                  ],
             aliases: aliases
               .filter((a) => a.value.trim())
               .map((a) => ({ value: a.value.trim(), source: a.source })),
@@ -254,53 +343,61 @@ export function CounterpartyDialog({
       }
 
       if (row) {
-        for (const id of removedRequisites) {
+        const deleteIds = tab === "v2" ? removedMethods : removedRequisites;
+        for (const id of deleteIds) {
           await fetch(`/api/counterparties/requisites/${id}`, { method: "DELETE" });
         }
-        const updates = [
-          ...taxIds
-            .filter((r) => r.taxId.trim())
-            .map((r) => ({
-              id: r.id,
-              isNew: r.isNew,
-              payload: {
-                paymentMethod: "bank_transfer",
-                taxId: r.taxId.trim(),
-                accountNumber: null,
-                cardNumber: null,
-                bankName: null,
-                bic: null,
-              },
-            })),
-          ...accounts
-            .filter((r) => r.accountNumber.trim() || r.bankName.trim() || r.bic.trim())
-            .map((r) => ({
-              id: r.id,
-              isNew: r.isNew,
-              payload: {
-                paymentMethod: "bank_transfer",
-                taxId: null,
-                accountNumber: r.accountNumber.trim() || null,
-                bankName: r.bankName.trim() || null,
-                bic: r.bic.trim() || null,
-                cardNumber: null,
-              },
-            })),
-          ...cards
-            .filter((r) => r.cardNumber.trim() || r.bankName.trim())
-            .map((r) => ({
-              id: r.id,
-              isNew: r.isNew,
-              payload: {
-                paymentMethod: "card",
-                taxId: null,
-                accountNumber: null,
-                bic: null,
-                cardNumber: r.cardNumber.trim() || null,
-                bankName: r.bankName.trim() || null,
-              },
-            })),
-        ];
+        const updates =
+          tab === "v2"
+            ? methods.filter(isMethodFilled).map((r) => ({
+                id: r.id,
+                isNew: r.isNew,
+                payload: methodPayload(r),
+              }))
+            : [
+                ...taxIds
+                  .filter((r) => r.taxId.trim())
+                  .map((r) => ({
+                    id: r.id,
+                    isNew: r.isNew,
+                    payload: {
+                      paymentMethod: "bank_transfer",
+                      taxId: r.taxId.trim(),
+                      accountNumber: null,
+                      cardNumber: null,
+                      bankName: null,
+                      bic: null,
+                    },
+                  })),
+                ...accounts
+                  .filter((r) => r.accountNumber.trim() || r.bankName.trim() || r.bic.trim())
+                  .map((r) => ({
+                    id: r.id,
+                    isNew: r.isNew,
+                    payload: {
+                      paymentMethod: "bank_transfer",
+                      taxId: null,
+                      accountNumber: r.accountNumber.trim() || null,
+                      bankName: r.bankName.trim() || null,
+                      bic: r.bic.trim() || null,
+                      cardNumber: null,
+                    },
+                  })),
+                ...cards
+                  .filter((r) => r.cardNumber.trim() || r.bankName.trim())
+                  .map((r) => ({
+                    id: r.id,
+                    isNew: r.isNew,
+                    payload: {
+                      paymentMethod: "card",
+                      taxId: null,
+                      accountNumber: null,
+                      bic: null,
+                      cardNumber: r.cardNumber.trim() || null,
+                      bankName: r.bankName.trim() || null,
+                    },
+                  })),
+              ];
         for (const item of updates) {
           if (item.isNew) {
             await fetch(`/api/counterparties/${counterpartyId}/requisites`, {
@@ -456,6 +553,27 @@ export function CounterpartyDialog({
             </div>
           </div>
 
+          <div className="border-b border-neutral-200">
+            <nav className="flex gap-0 overflow-x-auto">
+              {TABS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setTab(item.id)}
+                  className={`whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+                    tab === item.id
+                      ? "border-blue-600 text-blue-600"
+                      : "border-transparent text-neutral-500 hover:border-neutral-300 hover:text-neutral-800"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </nav>
+          </div>
+
+          {tab === "v1" && (
+            <>
           <RequisiteSection
             title="ИНН / ИИК / IBAN"
             addLabel="Значение"
@@ -575,6 +693,106 @@ export function CounterpartyDialog({
               </div>
             ))}
           </RequisiteSection>
+            </>
+          )}
+
+          {tab === "v2" && (
+            <RequisiteSection
+              title="Реквизиты — куда переводим"
+              addLabel="Реквизит"
+              empty="Реквизитов нет. Способ оплаты и реквизиты — отдельные строки."
+              onAdd={() => setMethods((prev) => [...prev, emptyMethod()])}
+            >
+              {methods.map((item) => (
+                <div key={item.id} className="space-y-2 rounded-md border border-neutral-200 p-3">
+                  <div className="flex items-center gap-2">
+                    <SearchableSelect
+                      value={item.paymentMethod}
+                      onValueChange={(paymentMethod) =>
+                        setMethods((prev) =>
+                          prev.map((x) => (x.id === item.id ? { ...x, paymentMethod } : x))
+                        )
+                      }
+                      options={Object.entries(COUNTERPARTY_PAYMENT_METHODS).map(([value, label]) => ({
+                        value,
+                        label,
+                      }))}
+                      placeholder="Способ оплаты"
+                      triggerClassName="flex-1"
+                    />
+                    <IconRemove
+                      onClick={() => {
+                        setMethods((prev) => prev.filter((x) => x.id !== item.id));
+                        if (!item.isNew) setRemovedMethods((prev) => [...prev, item.id]);
+                      }}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input
+                      value={item.bic}
+                      onChange={(e) =>
+                        setMethods((prev) =>
+                          prev.map((x) => (x.id === item.id ? { ...x, bic: e.target.value } : x))
+                        )
+                      }
+                      placeholder="БИК"
+                    />
+                    <DepartmentCombobox
+                      value={item.bankName}
+                      onValueChange={(bankName) =>
+                        setMethods((prev) =>
+                          prev.map((x) => (x.id === item.id ? { ...x, bankName } : x))
+                        )
+                      }
+                      options={bankOptions}
+                      onAddOption={addBankOption}
+                      placeholder="Банк"
+                    />
+                    <Input
+                      value={item.cardNumber}
+                      onChange={(e) =>
+                        setMethods((prev) =>
+                          prev.map((x) =>
+                            x.id === item.id ? { ...x, cardNumber: e.target.value } : x
+                          )
+                        )
+                      }
+                      placeholder="Номер карты"
+                    />
+                    <Input
+                      value={item.comment}
+                      onChange={(e) =>
+                        setMethods((prev) =>
+                          prev.map((x) => (x.id === item.id ? { ...x, comment: e.target.value } : x))
+                        )
+                      }
+                      placeholder="Комментарий"
+                    />
+                    <Input
+                      value={item.taxId}
+                      onChange={(e) =>
+                        setMethods((prev) =>
+                          prev.map((x) => (x.id === item.id ? { ...x, taxId: e.target.value } : x))
+                        )
+                      }
+                      placeholder="ИНН / ИИК / IBAN"
+                    />
+                    <Input
+                      value={item.accountNumber}
+                      onChange={(e) =>
+                        setMethods((prev) =>
+                          prev.map((x) =>
+                            x.id === item.id ? { ...x, accountNumber: e.target.value } : x
+                          )
+                        )
+                      }
+                      placeholder="Номер счёта"
+                    />
+                  </div>
+                </div>
+              ))}
+            </RequisiteSection>
+          )}
 
           <RequisiteSection
             title="Имена в выписке"
