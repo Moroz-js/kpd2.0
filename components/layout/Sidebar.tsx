@@ -17,7 +17,6 @@ import {
   FileText,
   Building2,
   Contact,
-  BookOpen,
   Wallet,
   Wrench,
   ShoppingCart,
@@ -66,7 +65,6 @@ const ADMIN_NAV: NavGroup[] = [
       { label: "Банковские транзакции", href: "/admin/bank-transactions", icon: ArrowLeftRight },
       { label: "Задачи", href: "/admin/tasks", icon: CheckSquare },
       { label: "История действий", href: "/admin/activity", icon: Hourglass },
-      { label: "Справочник", href: "/admin/catalog", icon: BookOpen },
     ],
   },
   {
