@@ -85,6 +85,7 @@ export function ClientsClient() {
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const searchParams = useSearchParams();
   const openId = searchParams.get("open");
+  const openTab = searchParams.get("tab") === "counterparties" ? "counterparties" : "settings";
   const urlRow = openId ? (data?.find((item) => item.id === openId) ?? null) : null;
   const currentEditing = editing === undefined ? urlRow : editing;
 
@@ -305,6 +306,7 @@ export function ClientsClient() {
         <ClientEditDialog
           key={currentEditing === "new" ? "new" : currentEditing.id}
           row={currentEditing === "new" ? null : currentEditing}
+          initialTab={currentEditing === "new" || editing !== undefined ? "settings" : openTab}
           existingDepartments={existingDepartments}
           departmentUsage={departmentUsage}
           onClose={() => setEditing(null)}
@@ -342,17 +344,22 @@ export function ClientsClient() {
 
 function ClientEditDialog({
   row,
+  initialTab = "settings",
   existingDepartments,
   departmentUsage,
   onClose,
   onSaved,
 }: {
   row: Row | null;
+  initialTab?: "settings" | "counterparties";
   existingDepartments: string[];
   departmentUsage: Record<string, number>;
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const [dialogTab, setDialogTab] = React.useState<"settings" | "counterparties">(
+    row ? initialTab : "settings"
+  );
   const [company, setCompany] = React.useState(row?.company ?? "");
   const [department, setDepartment] = React.useState(row?.department ?? "");
   const [extraDepartments, setExtraDepartments] = React.useState<string[]>([]);
@@ -415,6 +422,34 @@ function ClientEditDialog({
         <DialogHeader>
           <DialogTitle>{row ? "Редактировать клиента" : "Новый клиент"}</DialogTitle>
         </DialogHeader>
+        {row && (
+          <div className="border-b border-neutral-200">
+            <nav className="flex gap-0">
+              {(
+                [
+                  { id: "settings", label: "Настройки" },
+                  { id: "counterparties", label: "Контрагенты" },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setDialogTab(tab.id)}
+                  className={`whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+                    dialogTab === tab.id
+                      ? "border-blue-600 text-blue-600"
+                      : "border-transparent text-neutral-500 hover:border-neutral-300 hover:text-neutral-800"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+          </div>
+        )}
+        {dialogTab === "counterparties" && row ? (
+          <LinkedCounterpartiesSection linkKind="client" linkId={row.id} />
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="department">Департамент</Label>
@@ -443,7 +478,6 @@ function ClientEditDialog({
               <span className="font-medium">{preview}</span>
             </div>
           )}
-          {row && <LinkedCounterpartiesSection linkKind="client" linkId={row.id} />}
           {row && (
             <EntityActivityHistory entityType="Client" entityId={row.id} />
           )}
@@ -456,6 +490,7 @@ function ClientEditDialog({
             </Button>
           </DialogFooter>
         </form>
+        )}
       </DialogContent>
     </Dialog>
   );

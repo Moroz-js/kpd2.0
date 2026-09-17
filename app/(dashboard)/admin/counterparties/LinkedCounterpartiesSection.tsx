@@ -49,7 +49,14 @@ export function LinkedCounterpartiesSection({
           {rows.map((row) => (
             <li key={row.id} className="flex items-center justify-between gap-2 px-3 py-2">
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-neutral-800">{row.name}</p>
+                <button
+                  type="button"
+                  onClick={() => setEditing(row)}
+                  className="block w-full truncate text-left text-sm font-medium text-blue-700 hover:underline"
+                  title="Настройки контрагента"
+                >
+                  {row.name}
+                </button>
                 <p className="text-[11px] text-neutral-500">
                   {row.legalType
                     ? `${COUNTERPARTY_LEGAL_TYPES[row.legalType as keyof typeof COUNTERPARTY_LEGAL_TYPES] ?? row.legalType} · `
@@ -63,7 +70,7 @@ export function LinkedCounterpartiesSection({
                   type="button"
                   size="sm"
                   variant="ghost"
-                  title="Редактировать контрагента"
+                  title="Настройки контрагента"
                   onClick={() => setEditing(row)}
                 >
                   <Pencil className="h-3.5 w-3.5" />

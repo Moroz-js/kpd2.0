@@ -329,8 +329,8 @@ export function CounterpartiesClient({
                     <button
                       type="button"
                       onClick={() => setEditing(r)}
-                      className="block w-full truncate text-left text-blue-700 hover:underline"
-                      title="Открыть карточку контрагента"
+                      className="block w-full truncate text-left font-medium text-neutral-900 hover:text-blue-700 hover:underline"
+                      title="Настройки контрагента"
                     >
                       {r.name}
                     </button>
@@ -367,7 +367,7 @@ export function CounterpartiesClient({
                       <Link
                         href={linkedHref}
                         className="inline-flex max-w-full items-center gap-1 text-blue-700 hover:underline"
-                        title="Открыть связанную сущность"
+                        title="Настройки связанной сущности"
                       >
                         <span className="truncate">{linkedName}</span>
                         <ExternalLink className="h-3 w-3 shrink-0" />
@@ -382,7 +382,7 @@ export function CounterpartiesClient({
                         size="sm"
                         variant="ghost"
                         onClick={() => setEditing(r)}
-                        title="Редактировать контрагента"
+                        title="Настройки контрагента"
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>

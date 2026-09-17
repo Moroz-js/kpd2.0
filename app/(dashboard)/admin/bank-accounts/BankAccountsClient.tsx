@@ -91,6 +91,7 @@ export function BankAccountsClient() {
   const searchParams = useSearchParams();
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const openId = searchParams.get("open");
+  const openTab = searchParams.get("tab") === "counterparties" ? "counterparties" : "settings";
   const urlRow = openId ? (data?.find((item) => item.id === openId) ?? null) : null;
   const currentEditing = editing === undefined ? urlRow : editing;
 
@@ -339,6 +340,7 @@ export function BankAccountsClient() {
         <BankAccountEditDialog
           key={currentEditing === "new" ? "new" : currentEditing.id}
           row={currentEditing === "new" ? null : currentEditing}
+          initialTab={currentEditing === "new" || editing !== undefined ? "settings" : openTab}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -381,13 +383,18 @@ export function BankAccountsClient() {
 
 function BankAccountEditDialog({
   row,
+  initialTab = "settings",
   onClose,
   onSaved,
 }: {
   row: Row | null;
+  initialTab?: "settings" | "counterparties";
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const [dialogTab, setDialogTab] = React.useState<"settings" | "counterparties">(
+    row ? initialTab : "settings"
+  );
   const [name, setName] = React.useState(row?.name ?? "");
   const [details, setDetails] = React.useState(row?.details ?? "");
   const [comment, setComment] = React.useState(row?.comment ?? "");
@@ -455,6 +462,34 @@ function BankAccountEditDialog({
         <DialogHeader>
           <DialogTitle>{row ? "Редактировать счёт" : "Новый счёт"}</DialogTitle>
         </DialogHeader>
+        {row && (
+          <div className="border-b border-neutral-200">
+            <nav className="flex gap-0">
+              {(
+                [
+                  { id: "settings", label: "Настройки" },
+                  { id: "counterparties", label: "Контрагенты" },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setDialogTab(tab.id)}
+                  className={`whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+                    dialogTab === tab.id
+                      ? "border-blue-600 text-blue-600"
+                      : "border-transparent text-neutral-500 hover:border-neutral-300 hover:text-neutral-800"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+          </div>
+        )}
+        {dialogTab === "counterparties" && row ? (
+          <LinkedCounterpartiesSection linkKind="bankAccount" linkId={row.id} />
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="name">Название счёта</Label>
@@ -508,7 +543,6 @@ function BankAccountEditDialog({
               Казахстан и Черногория приходят другой структурой — от формата зависит определение ветки.
             </p>
           </div>
-          {row && <LinkedCounterpartiesSection linkKind="bankAccount" linkId={row.id} />}
           {row && (
             <EntityActivityHistory entityType="BankAccount" entityId={row.id} />
           )}
@@ -521,6 +555,7 @@ function BankAccountEditDialog({
             </Button>
           </DialogFooter>
         </form>
+        )}
       </DialogContent>
     </Dialog>
   );

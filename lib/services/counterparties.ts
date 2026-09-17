@@ -114,7 +114,9 @@ function toRow(cp: CounterpartyWithRelations): CounterpartyListRow {
     uniqueWorkTypeId: cp.uniqueWorkTypeId,
     uniqueWorkTypeName: cp.uniqueWorkType?.name ?? null,
     personalEstimateUrl:
-      cp.executor && hasPersonalSmeta(cp.executor) ? `/admin/executors/${cp.executor.id}` : null,
+      cp.executor && hasPersonalSmeta(cp.executor)
+        ? `/admin/executors/${cp.executor.id}?tab=works`
+        : null,
     requisites: cp.requisites.map((r) => ({
       id: r.id,
       paymentMethod: r.paymentMethod,

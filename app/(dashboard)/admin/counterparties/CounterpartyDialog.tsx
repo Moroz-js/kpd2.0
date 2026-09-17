@@ -485,7 +485,7 @@ export function CounterpartyDialog({
                   href={linkedHref}
                   className="inline-flex items-center gap-1 text-xs text-blue-700 hover:underline"
                 >
-                  Открыть связанную сущность
+                  Открыть настройки
                   <ExternalLink className="h-3 w-3" />
                 </Link>
               )}
