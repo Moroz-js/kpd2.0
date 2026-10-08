@@ -79,6 +79,14 @@ export const CHARGE_STATUSES = {
 } as const;
 export type ChargeStatus = keyof typeof CHARGE_STATUSES;
 
+// ─── PAYMENT PROBABILITY ──────────────────────────────────────
+export const PAYMENT_PROBABILITIES = {
+  high:   { label: "Высокая", tone: "green"  as BadgeTone },
+  medium: { label: "Средняя", tone: "yellow" as BadgeTone },
+  low:    { label: "Низкая",  tone: "red"    as BadgeTone },
+} as const;
+export type PaymentProbability = keyof typeof PAYMENT_PROBABILITIES;
+
 // ─── BANK OPERATION STATUSES ──────────────────────────────────
 export const BANK_OPERATION_STATUSES = {
   new:          { label: "Новая",            tone: "gray"   as BadgeTone },

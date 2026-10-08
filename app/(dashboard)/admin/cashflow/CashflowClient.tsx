@@ -3,12 +3,13 @@
 import React, { useState, useRef } from "react";
 import useSWR from "swr";
 import Link from "next/link";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { getISOWeek, getISOWeekYear, firstVisibleCashflowWeek, isoWeekStart } from "@/lib/iso-weeks";
+import { getISOWeek, getISOWeekYear, isoWeekStart, toLocalDateString } from "@/lib/iso-weeks";
+import { defaultCashflowRange, rangeToQuery, type CashflowRange } from "@/lib/cashflow-range";
+import { CashflowRangePicker } from "./CashflowRangePicker";
 import { formatMoneyWhole } from "@/lib/format";
 import { CashflowChart } from "./CashflowChart";
 import { CashflowCommentCell } from "@/components/ui-custom/CashflowCommentCell";
@@ -55,7 +56,7 @@ function fmtManualBalance(n: number | null) {
   return formatMoneyWhole(n);
 }
 
-type WeekHeader = { week: number; month: number; monthName: string };
+type WeekHeader = { week: number; month: number; monthName: string; year: number };
 
 type SummaryRows = {
   balanceStart: number[];
@@ -91,10 +92,9 @@ type Aggregates = {
 };
 
 type CashflowData = {
-  year: number;
-  weeksInYear: number;
   weeks: WeekHeader[];
   openingBalance: number;
+  openingBalances: Record<number, number>;
   summary: SummaryRows;
   projects: ProjectRow[];
   externalProjects: ProjectRow[];
@@ -390,6 +390,7 @@ function ManualBalanceInput({
 type DiscrepancyModalState = {
   weekIdx: number;
   week: number;
+  year: number;
 } | null;
 
 export function CashflowClient() {
@@ -397,29 +398,24 @@ export function CashflowClient() {
   const now = new Date();
   const currentISOWeek = getISOWeek(now);
   const currentISOYear = getISOWeekYear(now);
-  const [year, setYear] = useState(currentISOYear);
-  const [openingBalance, setOpeningBalance] = useState<number | null>(null);
+  const [range, setRange] = useState<CashflowRange>(() => defaultCashflowRange());
+  const rangeQuery = rangeToQuery(range);
   const [activeTab, setActiveTab] = useState<"table" | "chart">("table");
   const [discrepancyModal, setDiscrepancyModal] = useState<DiscrepancyModalState>(null);
-  const YEARS = [currentISOYear - 2, currentISOYear - 1, currentISOYear, currentISOYear + 1];
 
   const { data, mutate } = useSWR<CashflowResponse>(
-    `/api/cashflow?year=${year}&source=${encodeURIComponent(comparison.activeSource)}`,
-    fetcher,
-    {
-    onSuccess: d => {
-      if (!("error" in d)) setOpeningBalance(d.openingBalance);
-    },
-    }
+    `/api/cashflow?${rangeQuery}&source=${encodeURIComponent(comparison.activeSource)}`,
+    fetcher
   );
 
   const { data: cellMeta, mutate: mutateCellMeta } = useSWR<Record<string, CashflowCellMeta>>(
-    comparison.readOnly ? null : `/api/cashflow/comments?year=${year}`,
+    comparison.readOnly ? null : `/api/cashflow/comments?${rangeQuery}`,
     fetcher
   );
 
   async function saveCellMeta(
     rowKey: string,
+    year: number,
     week: number,
     payload: { text: string; highlight: string | null }
   ) {
@@ -439,40 +435,48 @@ export function CashflowClient() {
     await mutateCellMeta();
   }
 
-  function getCellMeta(rowKey: string, week: number): CashflowCellMeta | undefined {
-    return cellMeta?.[cashflowCommentMapKey(rowKey, week)];
+  function getCellMeta(rowKey: string, year: number, week: number): CashflowCellMeta | undefined {
+    return cellMeta?.[cashflowCommentMapKey(rowKey, year, week)];
   }
 
   const [showOldWeeks, setShowOldWeeks] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement>(null);
   usePersistedInterfaceState(
     "cashflow",
-    { year, activeTab, showOldWeeks },
+    { range, activeTab, showOldWeeks },
     (stored) => {
-      if (stored.year !== undefined) setYear(stored.year);
+      if (stored.range !== undefined) setRange(stored.range);
       if (stored.activeTab !== undefined) setActiveTab(stored.activeTab);
       if (stored.showOldWeeks !== undefined) setShowOldWeeks(stored.showOldWeeks);
     }
   );
   usePersistedScroll(tableScrollRef, `cashflow-table:${activeTab}`, {
     enabled: !!data,
-    signature: { year, activeTab, showOldWeeks },
+    signature: { range, activeTab, showOldWeeks },
   });
 
   const weeks = React.useMemo(
     () => (data && !("error" in data) ? data.weeks : []),
     [data]
   );
-  const collapsedWeeks =
-    !showOldWeeks && year === currentISOYear && weeks.length > 0;
+  // Свёрнуты все недели раньше «текущая − 4».
+  const cutoffKey = React.useMemo(() => {
+    const d = isoWeekStart(currentISOYear, currentISOWeek);
+    d.setDate(d.getDate() - 4 * 7);
+    return toLocalDateString(d);
+  }, [currentISOYear, currentISOWeek]);
+  const isOldWeek = React.useCallback(
+    (wh: WeekHeader) => toLocalDateString(isoWeekStart(wh.year, wh.week)) < cutoffKey,
+    [cutoffKey]
+  );
+  const oldWeeksCount = React.useMemo(() => weeks.filter(isOldWeek).length, [weeks, isOldWeek]);
   const visibleWeeks = React.useMemo(() => {
-    if (!weeks.length || !collapsedWeeks) return weeks;
-    const fromWeek = firstVisibleCashflowWeek(currentISOWeek);
-    return weeks.filter((wh) => wh.week >= fromWeek);
-  }, [weeks, collapsedWeeks, currentISOWeek]);
+    if (showOldWeeks) return weeks;
+    return weeks.filter((wh) => !isOldWeek(wh));
+  }, [weeks, showOldWeeks, isOldWeek]);
 
   const visibleWeekIndices = React.useMemo(
-    () => visibleWeeks.map((vw) => weeks.findIndex((w) => w.week === vw.week)),
+    () => visibleWeeks.map((vw) => weeks.findIndex((w) => w.week === vw.week && w.year === vw.year)),
     [visibleWeeks, weeks]
   );
 
@@ -517,14 +521,11 @@ export function CashflowClient() {
     "sticky left-0 z-[15] bg-neutral-50 border-r border-neutral-200 shadow-[1px_0_0_0_#e5e7eb] px-2.5 py-0.5 text-[10px] font-semibold text-neutral-500 tracking-wide uppercase whitespace-nowrap overflow-hidden text-ellipsis w-[240px] min-w-[200px] max-w-[240px]";
   const stickyTotalHdr = "bg-neutral-100 px-2 py-0.5 text-right text-xs font-semibold text-neutral-600 whitespace-nowrap min-w-[104px] border-r border-neutral-200";
   const stickyTotal = "bg-neutral-50 px-2 py-0.5 text-right text-[11px] tabular-nums whitespace-nowrap font-medium border-r border-neutral-200 min-w-[104px]";
-  const isFuture = (wIdx: number) =>
-    year > currentISOYear ||
-    (year === currentISOYear && (weeks[wIdx]?.week ?? 0) > currentISOWeek);
-  const isCurrent = (wIdx: number) =>
-    year === currentISOYear && weeks[wIdx]?.week === currentISOWeek;
-  const isPast = (wIdx: number) =>
-    year < currentISOYear ||
-    (year === currentISOYear && (weeks[wIdx]?.week ?? 0) < currentISOWeek);
+  const weekOrder = (wIdx: number) => (weeks[wIdx]?.year ?? 0) * 100 + (weeks[wIdx]?.week ?? 0);
+  const currentOrder = currentISOYear * 100 + currentISOWeek;
+  const isFuture = (wIdx: number) => weekOrder(wIdx) > currentOrder;
+  const isCurrent = (wIdx: number) => weekOrder(wIdx) === currentOrder;
+  const isPast = (wIdx: number) => weekOrder(wIdx) < currentOrder;
 
   function weekCellClass(idx: number, extra?: string, compact?: boolean) {
     return cn(
@@ -550,8 +551,9 @@ export function CashflowClient() {
     compact?: boolean
   ) {
     const week = weeks[idx]?.week;
+    const wYear = weeks[idx]?.year ?? 0;
     if (week == null) return null;
-    const meta = getCellMeta(rowKey, week);
+    const meta = getCellMeta(rowKey, wYear, week);
     const highlightClass = cashflowHighlightCellClass(meta?.highlight);
     return (
       <td
@@ -561,8 +563,8 @@ export function CashflowClient() {
         <CashflowCommentCell
           meta={meta}
           compact={compact}
-          historyUrl={cashflowCommentHistoryUrl(year, week, rowKey)}
-          onSave={(payload) => saveCellMeta(rowKey, week, payload)}
+          historyUrl={cashflowCommentHistoryUrl(wYear, week, rowKey)}
+          onSave={(payload) => saveCellMeta(rowKey, wYear, week, payload)}
         >
           {content}
         </CashflowCommentCell>
@@ -572,20 +574,20 @@ export function CashflowClient() {
 
   // Месяц начинается над ISO-неделей, которая содержит его первое число.
   const visibleMonthGroups: { label: string; count: number }[] = [];
-  const calendarMonthStarts = new Map<number, string>();
   const monthFormatter = new Intl.DateTimeFormat("ru-RU", { month: "short" });
-  for (let month = 0; month < 12; month++) {
-    calendarMonthStarts.set(
-      getISOWeek(new Date(year, month, 1)),
-      monthFormatter.format(new Date(year, month, 1))
-    );
-  }
   let activeMonthLabel: string | null = null;
   for (const wh of visibleWeeks) {
-    const label: string =
-      calendarMonthStarts.get(wh.week) ??
-      activeMonthLabel ??
-      monthFormatter.format(isoWeekStart(year, wh.week));
+    const start = isoWeekStart(wh.year, wh.week);
+    let label: string | null = null;
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      if (d.getDate() === 1) {
+        label = `${monthFormatter.format(d)} ${d.getFullYear()}`;
+        break;
+      }
+    }
+    label = label ?? activeMonthLabel ?? `${monthFormatter.format(start)} ${start.getFullYear()}`;
     activeMonthLabel = label;
     const last = visibleMonthGroups[visibleMonthGroups.length - 1];
     if (last && last.label === label) last.count++;
@@ -622,10 +624,7 @@ export function CashflowClient() {
             <p className="text-xs text-neutral-500">Исторический снимок · только чтение</p>
           )}
         </div>
-        <Select value={String(year)} onValueChange={v => v && setYear(parseInt(v))}>
-          <SelectTrigger className="w-24 h-8 text-sm"><SelectValue /></SelectTrigger>
-          <SelectContent>{YEARS.map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}</SelectContent>
-        </Select>
+        <CashflowRangePicker range={range} onChange={setRange} />
       </div>
 
       {/* Tab bar */}
@@ -657,14 +656,14 @@ export function CashflowClient() {
             projects={chartProjects}
             currentISOWeek={currentISOWeek}
             currentISOYear={currentISOYear}
-            year={year}
+            range={range}
           />
         </div>
       )}
 
       {activeTab === "table" && (
       <div className="flex flex-col flex-1 min-h-0 rounded-lg border border-neutral-200 bg-white overflow-hidden">
-        {year === currentISOYear && weeks.length > visibleWeeks.length && (
+        {oldWeeksCount > 0 && (
           <div className="shrink-0 px-3 pt-2 pb-0">
             <button
               className="text-xs text-neutral-400 hover:text-neutral-700 hover:underline underline-offset-2"
@@ -672,7 +671,7 @@ export function CashflowClient() {
             >
               {showOldWeeks
                 ? "Скрыть прошлые недели"
-                : `Показать ${weeks.length - visibleWeeks.length} прошлых недель`}
+                : `Показать ${oldWeeksCount} прошлых недель`}
             </button>
           </div>
         )}
@@ -697,11 +696,12 @@ export function CashflowClient() {
                 {visibleWeeks.map((wh, vi) => {
                   const realIdx = visibleWeekIndices[vi]!;
                   return (
-                    <th key={wh.week} className={cn(
+                    <th key={`${wh.year}-${wh.week}`} className={cn(
                       thCls,
                       isCurrent(realIdx) ? "!bg-blue-50 font-semibold text-neutral-900" : isPast(realIdx) ? "text-neutral-400 bg-neutral-50/30" : "bg-neutral-50"
                     )}>
                       {wh.week}
+                      <span className="block text-[9px] font-normal leading-none text-neutral-400">{wh.year}</span>
                     </th>
                   );
                 })}
@@ -743,31 +743,32 @@ export function CashflowClient() {
                       <RowLabelTooltip label={def.label} tooltip={ROW_TOOLTIPS[def.key]} />
                     </td>
                     <td className={cn(stickyTotal, valueCls, def.highlight && "font-medium")}>
-                      {def.key === "balanceStart" ? fmt(openingBalance ?? 0) : ("signed" in def && def.signed ? fmtSign(total) : fmt(total))}
+                      {def.key === "balanceStart" ? fmt(summary.balanceStart[0] ?? 0) : ("signed" in def && def.signed ? fmtSign(total) : fmt(total))}
                     </td>
                     {visibleWeekIndices.map((idx) => {
                       // Первая неделя строки «Баланс на начало» — редактируемый input
-                      if (def.key === "balanceStart" && idx === 0) {
+                      if (def.key === "balanceStart" && weeks[idx]?.week === 1) {
                         const week = weeks[idx]?.week;
+                        const wYear = weeks[idx]?.year ?? 0;
                         if (week == null) return null;
-                        const meta = getCellMeta(`summary:${def.key}`, week);
+                        const meta = getCellMeta(`summary:${def.key}`, wYear, week);
                         const highlightClass = cashflowHighlightCellClass(meta?.highlight);
                         return (
                           <td key={idx} className={weekCellClass(idx, cn(highlightClass), true)}>
                             <CashflowCommentCell
                               meta={meta}
                               compact
-                              historyUrl={cashflowCommentHistoryUrl(year, week, `summary:${def.key}`)}
-                              onSave={(payload) => saveCellMeta(`summary:${def.key}`, week, payload)}
+                              historyUrl={cashflowCommentHistoryUrl(wYear, week, `summary:${def.key}`)}
+                              onSave={(payload) => saveCellMeta(`summary:${def.key}`, wYear, week, payload)}
                             >
                               {comparison.readOnly ? (
-                                <span className="italic">{fmt(openingBalance ?? 0)}</span>
+                                <span className="italic">{fmt(summary.balanceStart[idx] ?? 0)}</span>
                               ) : (
                                 <OpeningBalanceInput
-                                  key={year}
-                                  year={year}
-                                  initial={openingBalance ?? 0}
-                                  onSaved={v => { setOpeningBalance(v); mutate(); }}
+                                  key={`${wYear}:${data.openingBalances[wYear] ?? 0}`}
+                                  year={wYear}
+                                  initial={data.openingBalances[wYear] ?? 0}
+                                  onSaved={() => { mutate(); }}
                                   compact
                                 />
                               )}
@@ -797,25 +798,26 @@ export function CashflowClient() {
                 <td className={stickyTotal}>—</td>
                 {visibleWeekIndices.map((idx) => {
                   const week = weeks[idx]?.week;
+                  const wYear = weeks[idx]?.year ?? 0;
                   if (week == null) return null;
                   const value = summary.manualBalance[idx] ?? null;
                   const rowKey = "summary:manualBalance";
-                  const meta = getCellMeta(rowKey, week);
+                  const meta = getCellMeta(rowKey, wYear, week);
                   const highlightClass = cashflowHighlightCellClass(meta?.highlight);
                   return (
                     <td key={idx} className={weekCellClass(idx, highlightClass, true)}>
                       <CashflowCommentCell
                         meta={meta}
                         compact
-                        historyUrl={cashflowCommentHistoryUrl(year, week, rowKey)}
-                        onSave={(payload) => saveCellMeta(rowKey, week, payload)}
+                        historyUrl={cashflowCommentHistoryUrl(wYear, week, rowKey)}
+                        onSave={(payload) => saveCellMeta(rowKey, wYear, week, payload)}
                       >
                         {comparison.readOnly ? (
                           <span>{fmtManualBalance(value)}</span>
                         ) : (
                           <ManualBalanceInput
-                            key={`${year}:${week}:${value ?? "null"}`}
-                            year={year}
+                            key={`${wYear}:${week}:${value ?? "null"}`}
+                            year={wYear}
                             week={week}
                             initial={value}
                             onSaved={async () => {
@@ -845,16 +847,17 @@ export function CashflowClient() {
                 {visibleWeekIndices.map((idx) => {
                   const val = balanceInAccounts[idx] ?? null;
                   const week = weeks[idx]?.week;
+                  const wYear = weeks[idx]?.year ?? 0;
                   if (week == null) return null;
-                  const meta = getCellMeta("summary:balanceInAccounts", week);
+                  const meta = getCellMeta("summary:balanceInAccounts", wYear, week);
                   const highlightClass = cashflowHighlightCellClass(meta?.highlight);
                   return (
                     <td key={idx} className={weekCellClass(idx, cn(highlightClass), true)}>
                       <CashflowCommentCell
                         meta={meta}
                         compact
-                        historyUrl={cashflowCommentHistoryUrl(year, week, "summary:balanceInAccounts")}
-                        onSave={(payload) => saveCellMeta("summary:balanceInAccounts", week, payload)}
+                        historyUrl={cashflowCommentHistoryUrl(wYear, week, "summary:balanceInAccounts")}
+                        onSave={(payload) => saveCellMeta("summary:balanceInAccounts", wYear, week, payload)}
                       >
                         {fmtNullable(val)}
                       </CashflowCommentCell>
@@ -879,17 +882,18 @@ export function CashflowClient() {
                 {visibleWeekIndices.map((idx) => {
                   const val = discrepancy[idx] ?? null;
                   const week = weeks[idx]?.week;
+                  const wYear = weeks[idx]?.year ?? 0;
                   if (week == null) return null;
                   const isNonZero = val !== null && Math.round(val) !== 0;
-                  const meta = getCellMeta("summary:discrepancy", week);
+                  const meta = getCellMeta("summary:discrepancy", wYear, week);
                   const highlightClass = cashflowHighlightCellClass(meta?.highlight);
                   return (
                     <td key={idx} className={weekCellClass(idx, cn(isNonZero && "bg-red-50", highlightClass), true)}>
                       <CashflowCommentCell
                         meta={meta}
                         compact
-                        historyUrl={cashflowCommentHistoryUrl(year, week, "summary:discrepancy")}
-                        onSave={(payload) => saveCellMeta("summary:discrepancy", week, payload)}
+                        historyUrl={cashflowCommentHistoryUrl(wYear, week, "summary:discrepancy")}
+                        onSave={(payload) => saveCellMeta("summary:discrepancy", wYear, week, payload)}
                       >
                         <span className={cn(isNonZero && "text-red-600 font-medium")}>
                           {fmtNullable(val)}
@@ -958,16 +962,17 @@ export function CashflowClient() {
                   const val = discrepancyDPFact[idx] ?? 0;
                   const isNonZero = Math.round(val) !== 0;
                   const week = weeks[idx]?.week;
+                  const wYear = weeks[idx]?.year ?? 0;
                   if (week == null) return null;
-                  const meta = getCellMeta("summary:discrepancyDPFact", week);
+                  const meta = getCellMeta("summary:discrepancyDPFact", wYear, week);
                   const highlightClass = cashflowHighlightCellClass(meta?.highlight);
                   return (
                     <td key={idx} className={weekCellClass(idx, cn(isNonZero && "bg-red-50", highlightClass), true)}>
                       <CashflowCommentCell
                         meta={meta}
                         compact
-                        historyUrl={cashflowCommentHistoryUrl(year, week, "summary:discrepancyDPFact")}
-                        onSave={(payload) => saveCellMeta("summary:discrepancyDPFact", week, payload)}
+                        historyUrl={cashflowCommentHistoryUrl(wYear, week, "summary:discrepancyDPFact")}
+                        onSave={(payload) => saveCellMeta("summary:discrepancyDPFact", wYear, week, payload)}
                       >
                         <button
                           type="button"
@@ -976,7 +981,7 @@ export function CashflowClient() {
                             isNonZero ? "text-red-600 font-medium hover:underline cursor-pointer" : "cursor-default"
                           )}
                           disabled={!isNonZero}
-                          onClick={isNonZero ? () => setDiscrepancyModal({ weekIdx: idx, week }) : undefined}
+                          onClick={isNonZero ? () => setDiscrepancyModal({ weekIdx: idx, week, year: wYear }) : undefined}
                         >
                           {fmtSign(val)}
                         </button>
@@ -1112,7 +1117,7 @@ export function CashflowClient() {
         <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              Несхождение план и факт в ДП — Неделя {discrepancyModal?.week}
+              Несхождение план и факт в ДП — Неделя {discrepancyModal?.week} {discrepancyModal?.year}
             </DialogTitle>
           </DialogHeader>
           {modalProjects.length === 0 ? (

@@ -17,6 +17,7 @@ const patchSchema = z.object({
   paidAt: z.string().nullable().optional(),
   paymentPurpose: z.string().nullable().optional(),
   status: z.enum(["planned", "to_pay", "pending_approval", "paid"]).optional(),
+  paymentProbability: z.enum(["high", "medium", "low"]).nullable().optional(),
 });
 
 export async function PATCH(req: NextRequest, { params }: Ctx) {

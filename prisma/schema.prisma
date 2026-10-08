@@ -429,6 +429,7 @@ model Charge {
   paymentPurpose String?
   status         String       @default("planned") // planned | issued | paid | overdue
   documents      String? // URL
+  paymentProbability String? // high | medium | low (вероятность оплаты, вручную)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 

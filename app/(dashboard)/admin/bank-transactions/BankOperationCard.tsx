@@ -107,14 +107,18 @@ export function BankOperationCard({
     operation.raw.inn ? { value: "inn" as const, label: "по ИНН", hint: operation.raw.inn } : null,
   ].filter((o): o is { value: RememberBy; label: string; hint: string } => o !== null);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  const confirmBlocked =
+    kind === "incoming" &&
+    !isInternal &&
+    (operation.chargeMatch !== "confirmed" || operation.charges.length === 0)
+      ? "Чтобы подтвердить, привяжите начисление или отметьте внутренний перевод"
+      : null;
+
+  async function save(nextStatus = status) {
     if (locked) return;
-    if (status === "confirmed" && kind === "incoming" && !isInternal) {
-      if (operation.chargeMatch !== "confirmed" || operation.charges.length === 0) {
-        toast.error("Нельзя подтвердить поступление без начисления или внутреннего перевода");
-        return;
-      }
+    if (nextStatus === "confirmed" && confirmBlocked) {
+      toast.error(confirmBlocked);
+      return;
     }
     setSubmitting(true);
     const res = await fetch(`/api/bank-operations/${operation.id}`, {
@@ -131,7 +135,7 @@ export function BankOperationCard({
         paymentPurpose: paymentPurpose.trim() || null,
         basis: basis.trim() || null,
         comment: comment.trim() || null,
-        status,
+        status: nextStatus,
         rememberBy: counterpartyChanged ? rememberBy : undefined,
       }),
     });
@@ -141,8 +145,13 @@ export function BankOperationCard({
       toast.error(err.error ?? "Не удалось сохранить операцию");
       return;
     }
-    toast.success("Операция сохранена");
+    toast.success(nextStatus === "confirmed" ? "Операция подтверждена" : "Операция сохранена");
     onSaved();
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    await save();
   }
 
   async function handleConfirmSuggested() {
@@ -191,8 +200,6 @@ export function BankOperationCard({
 
   const hasSuggested = operation.charges.some((c) => c.link === "suggested");
   const locked = operation.status === "confirmed";
-  const canConfirmIncoming =
-    isInternal || (operation.chargeMatch === "confirmed" && operation.charges.length > 0);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -275,19 +282,14 @@ export function BankOperationCard({
                   value={status}
                   onValueChange={setStatus}
                   disabled={locked}
-                  options={Object.entries(BANK_OPERATION_STATUSES)
-                    .filter(
-                      ([value]) =>
-                        value === status ||
-                        value !== "confirmed" ||
-                        canConfirmIncoming ||
-                        kind !== "incoming"
-                    )
-                    .map(([value, { label }]) => ({
-                      value,
-                      label,
-                    }))}
+                  options={Object.entries(BANK_OPERATION_STATUSES).map(([value, { label }]) => ({
+                    value,
+                    label,
+                  }))}
                 />
+                {!locked && confirmBlocked && (
+                  <p className="text-[11px] text-neutral-500">{confirmBlocked}</p>
+                )}
               </div>
             </div>
 
@@ -498,9 +500,20 @@ export function BankOperationCard({
                   Вернуть в разбор
                 </Button>
               ) : (
-                <Button type="submit" disabled={submitting}>
-                  {submitting ? "Сохранение..." : "Сохранить"}
-                </Button>
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={submitting}
+                    title={confirmBlocked ?? "Подтвердить операцию"}
+                    onClick={() => save("confirmed")}
+                  >
+                    Подтвердить
+                  </Button>
+                  <Button type="submit" disabled={submitting}>
+                    {submitting ? "Сохранение..." : "Сохранить"}
+                  </Button>
+                </>
               )}
             </DialogFooter>
           </form>

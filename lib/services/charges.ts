@@ -30,6 +30,7 @@ export type CreateChargeInput = {
   paidAt?: string | null;
   paymentPurpose?: string | null;
   status?: string;
+  paymentProbability?: string | null;
 };
 
 export type UpdateChargeInput = Partial<CreateChargeInput>;
@@ -91,6 +92,7 @@ export async function createCharge(input: CreateChargeInput, userId: string) {
       paidAt,
       paymentPurpose: input.paymentPurpose ?? null,
       status: paidAt ? "paid" : (input.status ?? "planned"),
+      paymentProbability: input.paymentProbability ?? null,
     },
   });
 
@@ -139,6 +141,7 @@ export async function duplicateCharges(ids: string[], userId: string) {
         issuedPlanAt: source.issuedPlanAt?.toISOString() ?? null,
         paidPlanAt: paidPlanAt.toISOString(),
         paymentPurpose: source.paymentPurpose,
+        paymentProbability: source.paymentProbability,
       },
       userId
     );
@@ -179,6 +182,7 @@ export async function updateCharge(id: string, patch: UpdateChargeInput, userId:
       ...(patch.issuedAt !== undefined && { issuedAt: patch.issuedAt ? new Date(patch.issuedAt) : null }),
       ...(patch.paidPlanAt !== undefined && { paidPlanAt: patch.paidPlanAt ? new Date(patch.paidPlanAt) : null }),
       ...(patch.paymentPurpose !== undefined && { paymentPurpose: patch.paymentPurpose }),
+      ...(patch.paymentProbability !== undefined && { paymentProbability: patch.paymentProbability }),
       paidAt: newPaidAt,
       status,
     },
@@ -208,6 +212,7 @@ export async function updateCharge(id: string, patch: UpdateChargeInput, userId:
       paidPlanAt: existing.paidPlanAt,
       paidAt: existing.paidAt,
       paymentPurpose: existing.paymentPurpose,
+      paymentProbability: existing.paymentProbability,
       status: existing.status,
     },
     {
@@ -219,6 +224,7 @@ export async function updateCharge(id: string, patch: UpdateChargeInput, userId:
       paidPlanAt: updated.paidPlanAt,
       paidAt: updated.paidAt,
       paymentPurpose: updated.paymentPurpose,
+      paymentProbability: updated.paymentProbability,
       status: updated.status,
     }
   );

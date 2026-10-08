@@ -1,5 +1,5 @@
-export function cashflowCommentMapKey(rowKey: string, week: number) {
-  return `${rowKey}_${week}`;
+export function cashflowCommentMapKey(rowKey: string, year: number, week: number) {
+  return `${rowKey}_${year}_${week}`;
 }
 
 export const CASHFLOW_HIGHLIGHT_IDS = ["yellow", "green", "red"] as const;

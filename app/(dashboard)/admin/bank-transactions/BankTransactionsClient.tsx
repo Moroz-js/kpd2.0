@@ -720,12 +720,17 @@ export function BankTransactionsClient({
             onClick={(e) => e.stopPropagation()}
           >
             <div className={stickyActionsInner}>
-              {canConfirmOperation(r) && (
+              {r.status !== "confirmed" && (
                 <Button
                   size="sm"
                   variant="ghost"
+                  disabled={!canConfirmOperation(r)}
                   onClick={() => confirmOne(r)}
-                  title="Подтвердить"
+                  title={
+                    canConfirmOperation(r)
+                      ? "Подтвердить"
+                      : "Чтобы подтвердить, привяжите начисление или отметьте внутренний перевод"
+                  }
                 >
                   <CheckCircle2 className="h-3.5 w-3.5" />
                 </Button>

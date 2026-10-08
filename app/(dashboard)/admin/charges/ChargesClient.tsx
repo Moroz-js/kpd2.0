@@ -22,7 +22,7 @@ import {
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { formatMoney, formatMoneyRub } from "@/lib/format";
 import { getISOWeek, getISOWeekYear, weekLabel, toLocalDateString } from "@/lib/iso-weeks";
-import { CHARGE_STATUSES, BADGE_TONE_CLASS } from "@/lib/statuses";
+import { CHARGE_STATUSES, PAYMENT_PROBABILITIES, BADGE_TONE_CLASS } from "@/lib/statuses";
 import {
   Table, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -58,7 +58,7 @@ import {
 const ACTIONS_COL_WIDTH = 96;
 /** table-fixed: фиксированные ширины, иначе текст залезает под sticky-действия */
 const CHARGES_COL_WIDTHS = [
-  48, 140, 100, 128, 148, 168, 84, 84, 84, 84, 72, 60, 84, 192, 100, 100, 168, ACTIONS_COL_WIDTH,
+  48, 140, 100, 128, 148, 168, 112, 84, 84, 84, 84, 72, 60, 84, 192, 100, 100, 168, ACTIONS_COL_WIDTH,
 ] as const;
 const CHARGES_TABLE_MIN_WIDTH = CHARGES_COL_WIDTHS.reduce((s, w) => s + w, 0);
 
@@ -123,6 +123,7 @@ type Charge = {
   paidPlanAt: string | null;
   paidAt: string | null;
   paymentPurpose: string | null;
+  paymentProbability: string | null;
   status: string;
   createdAt: string;
 };
@@ -264,6 +265,16 @@ function ChargeStatusBadge({ status }: { status: string }) {
   );
 }
 
+function PaymentProbabilityBadge({ value }: { value: string | null }) {
+  const entry = value ? PAYMENT_PROBABILITIES[value as keyof typeof PAYMENT_PROBABILITIES] : null;
+  if (!entry) return <span className="text-xs text-neutral-300">—</span>;
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2 py-0 text-xs font-medium whitespace-nowrap ${BADGE_TONE_CLASS[entry.tone]}`}>
+      {entry.label}
+    </span>
+  );
+}
+
 function InlineDateCell({ value, onSave, highlight }: { value: string; onSave: (v: string) => void; highlight?: boolean }) {
   const ref = useRef<HTMLInputElement>(null);
   const [editing, setEditing] = useState(false);
@@ -387,6 +398,8 @@ function InlinePurposeCell({ value, onSave }: { value: string; onSave: (v: strin
   );
 }
 
+const NO_PROBABILITY = "__none__";
+
 const MONTH_LABELS = [
   "Январь","Февраль","Март","Апрель","Май","Июнь",
   "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь",
@@ -403,6 +416,7 @@ type ChargeTableRowProps = {
   onPatchStatus: (id: string, status: string) => void;
   onPatchDate: (id: string, field: "issuedPlanAt" | "issuedAt" | "paidPlanAt" | "paidAt", value: string) => void;
   onPatchPurpose: (id: string, purpose: string) => void;
+  onPatchProbability: (id: string, probability: string | null) => void;
 };
 
 const ChargeTableRow = React.memo(function ChargeTableRow({
@@ -416,6 +430,7 @@ const ChargeTableRow = React.memo(function ChargeTableRow({
   onPatchStatus,
   onPatchDate,
   onPatchPurpose,
+  onPatchProbability,
 }: ChargeTableRowProps) {
   const pd = planDate(row);
   const overdueH = isOverdueH(row);
@@ -492,6 +507,24 @@ const ChargeTableRow = React.memo(function ChargeTableRow({
       </TableCell>
       <TableCell className={cn(compactCell, compactCellClip, cellRed(cellEmpty(row.order?.project?.name)), "whitespace-normal")}>
         {clipText(row.order?.project?.name ?? "—", row.order?.project?.name ?? undefined)}
+      </TableCell>
+      <TableCell className={compactCell}>
+        <Select
+          value={row.paymentProbability ?? NO_PROBABILITY}
+          onValueChange={(v) => onPatchProbability(row.id, !v || v === NO_PROBABILITY ? null : v)}
+        >
+          <SelectTrigger className="h-6 w-auto min-w-[80px] border-0 bg-transparent shadow-none p-0 focus:ring-0 [&>svg]:hidden">
+            <SelectValue>
+              <PaymentProbabilityBadge value={row.paymentProbability} />
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NO_PROBABILITY}>—</SelectItem>
+            {Object.entries(PAYMENT_PROBABILITIES).map(([k, v]) => (
+              <SelectItem key={k} value={k}>{v.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </TableCell>
       <TableCell className={compactCell}>
         <InlineDateCell
@@ -939,6 +972,19 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
     setRows(prev => prev.map(r => r.id === id ? { ...r, paymentPurpose: paymentPurpose || null } : r));
   }
 
+  async function patchInlineProbability(id: string, paymentProbability: string | null) {
+    setRows(prev => prev.map(r => r.id === id ? { ...r, paymentProbability } : r));
+    const res = await fetch(`/api/charges/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paymentProbability }),
+    });
+    if (!res.ok) {
+      toast.error("Не удалось изменить вероятность оплаты");
+      silentLoad();
+    }
+  }
+
   async function handleBulkApply() {
     if (!bulkStatus) return toast.error("Выберите статус");
     const ids = Array.from(selectedIds);
@@ -1003,6 +1049,10 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
     []
   );
   const onPatchPurposeCb = useCallback((id: string, purpose: string) => patchInlinePurpose(id, purpose), []);
+  const onPatchProbabilityCb = useCallback(
+    (id: string, probability: string | null) => patchInlineProbability(id, probability),
+    []
+  );
 
   const renderRow = React.useCallback(
     (index: number) => {
@@ -1018,7 +1068,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
               sum={item.sum}
               collapsed={item.collapsed}
               onToggle={() => toggleGroup(item.key)}
-              colSpan={18}
+              colSpan={19}
               stickyFirstCell
             />
           );
@@ -1038,6 +1088,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
             onPatchStatus={onPatchStatusCb}
             onPatchDate={onPatchDateCb}
             onPatchPurpose={onPatchPurposeCb}
+            onPatchProbability={onPatchProbabilityCb}
           />
         );
       }
@@ -1056,6 +1107,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
           onPatchStatus={onPatchStatusCb}
           onPatchDate={onPatchDateCb}
           onPatchPurpose={onPatchPurposeCb}
+          onPatchProbability={onPatchProbabilityCb}
         />
       );
     },
@@ -1072,6 +1124,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
       onPatchStatusCb,
       onPatchDateCb,
       onPatchPurposeCb,
+      onPatchProbabilityCb,
     ]
   );
 
@@ -1220,6 +1273,12 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
                 </SortableHead>
                 <TableHead className={compactHead}>Клиент</TableHead>
                 <TableHead className={compactHead}>Проект</TableHead>
+                <TableHead className={compactHead}>
+                  <span className="flex items-center gap-1">
+                    Вероятность оплаты
+                    <Pencil className="h-3 w-3 text-neutral-400" />
+                  </span>
+                </TableHead>
                 <SortableHead
                   field="issuedPlanAt"
                   sortBy={sort?.field ?? ""}
@@ -1294,7 +1353,7 @@ export function ChargesClient({ bankAccounts: bankAccountsProp, orders }: Props)
             <VirtualizedTableBody
               scrollRef={scrollRef}
               rowCount={flatItems ? flatItems.length : visible.length}
-              colSpan={18}
+              colSpan={19}
               renderRow={renderRow}
             />
           </Table>
@@ -1358,6 +1417,7 @@ function ChargeFormDialog({
   const [paidAt, setPaidAt] = useState(initial?.paidAt ? toLocalDateString(new Date(initial.paidAt)) : "");
   const [paymentPurpose, setPaymentPurpose] = useState(initial?.paymentPurpose ?? "");
   const [status, setStatus] = useState(initial?.status ?? "planned");
+  const [paymentProbability, setPaymentProbability] = useState(initial?.paymentProbability ?? NO_PROBABILITY);
   const [saving, setSaving] = useState(false);
 
   const isEdit = !!initial;
@@ -1404,6 +1464,7 @@ function ChargeFormDialog({
         paidPlanAt: paidPlanAt || null,
         paymentPurpose: paymentPurpose || null,
         status,
+        paymentProbability: paymentProbability === NO_PROBABILITY ? null : paymentProbability,
       };
       if (isEdit) {
         payload.issuedAt = issuedAt || null;
@@ -1488,6 +1549,20 @@ function ChargeFormDialog({
               <SelectTrigger><SelectValue>{CHARGE_STATUSES[status as keyof typeof CHARGE_STATUSES]?.label ?? status}</SelectValue></SelectTrigger>
               <SelectContent>
                 {Object.entries(CHARGE_STATUSES).map(([v, s]) => <SelectItem key={v} value={v}>{s.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5 min-w-0">
+            <Label>Вероятность оплаты</Label>
+            <Select value={paymentProbability} onValueChange={(v) => setPaymentProbability(v ?? NO_PROBABILITY)}>
+              <SelectTrigger>
+                <SelectValue>
+                  {PAYMENT_PROBABILITIES[paymentProbability as keyof typeof PAYMENT_PROBABILITIES]?.label ?? "—"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_PROBABILITY}>—</SelectItem>
+                {Object.entries(PAYMENT_PROBABILITIES).map(([v, s]) => <SelectItem key={v} value={v}>{s.label}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>

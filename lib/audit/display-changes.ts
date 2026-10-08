@@ -6,6 +6,10 @@ import {
   VACATION_STATUSES,
   ENTITY_STATUSES,
   CHARGE_STATUSES,
+  PAYMENT_PROBABILITIES,
+  BANK_OPERATION_STATUSES,
+  BANK_OPERATION_KINDS,
+  BANK_CHARGE_MATCH_STATES,
   EXECUTOR_TYPES,
   formatCompanyStatus,
   PROJECT_TYPES,
@@ -81,6 +85,17 @@ const FIELD_LABELS: Record<string, string> = {
   role: "Роль",
   segment: "Сегмент",
   oldEstimateUrl: "Ссылка на смету",
+  confirmedAt: "Дата подтверждения",
+  confirmedByName: "Подтвердил",
+  chargeMatch: "Начисление",
+  isInternalTransfer: "Внутренний перевод",
+  workDescription: "Описание работы",
+  paymentPurpose: "Назначение платежа",
+  paymentProbability: "Вероятность оплаты",
+  paymentOrder: "Платёжное поручение",
+  kind: "Ветка",
+  basis: "Основание",
+  counterpartyName: "Контрагент",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -101,6 +116,9 @@ const STATUS_LABELS: Record<string, string> = {
   ),
   ...Object.fromEntries(
     Object.entries(CHARGE_STATUSES).map(([k, v]) => [k, v.label])
+  ),
+  ...Object.fromEntries(
+    Object.entries(BANK_OPERATION_STATUSES).map(([k, v]) => [k, v.label])
   ),
 };
 
@@ -160,6 +178,18 @@ export function formatChangeValue(value: unknown, field: string): string {
   if (STATUS_LABELS[str]) return STATUS_LABELS[str];
 
   if (field === "role" && ROLE_LABELS[str]) return ROLE_LABELS[str];
+
+  if (field === "paymentProbability" && str in PAYMENT_PROBABILITIES) {
+    return PAYMENT_PROBABILITIES[str as keyof typeof PAYMENT_PROBABILITIES].label;
+  }
+
+  if (field === "kind" && str in BANK_OPERATION_KINDS) {
+    return BANK_OPERATION_KINDS[str as keyof typeof BANK_OPERATION_KINDS];
+  }
+
+  if (field === "chargeMatch" && str in BANK_CHARGE_MATCH_STATES) {
+    return BANK_CHARGE_MATCH_STATES[str as keyof typeof BANK_CHARGE_MATCH_STATES].label;
+  }
 
   if (field === "type") {
     if (str in PROJECT_TYPES) {

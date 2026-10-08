@@ -16,13 +16,15 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useComparison } from "@/components/ComparisonProvider";
+import { rangeToQuery, type CashflowRange } from "@/lib/cashflow-range";
+import { isoWeekStart, toLocalDateString } from "@/lib/iso-weeks";
 import {
   snapshotLabel,
   snapshotSourceLabel,
   type SnapshotOption,
 } from "@/lib/snapshots/labels";
 
-type WeekHeader = { week: number; month: number; monthName: string };
+type WeekHeader = { week: number; month: number; monthName: string; year: number };
 type ProjectRow = {
   id: string;
   name: string;
@@ -40,7 +42,7 @@ type Props = {
   projects: ProjectRow[];
   currentISOWeek: number;
   currentISOYear: number;
-  year: number;
+  range: CashflowRange;
 };
 type ChartSeries = {
   source: { id: string; businessDate?: string | null; cutoffAt?: string | null };
@@ -119,8 +121,9 @@ export function CashflowChart({
   projects,
   currentISOWeek,
   currentISOYear,
-  year,
+  range,
 }: Props) {
+  const rangeQuery = rangeToQuery(range);
   const globalComparison = useComparison();
   const [mode, setMode] = React.useState<"single" | "compare">("single");
   const [sourceA, setSourceA] = React.useState(globalComparison.activeSource);
@@ -134,7 +137,7 @@ export function CashflowChart({
   const [showFromStart, setShowFromStart] = React.useState(false);
 
   React.useEffect(() => {
-    fetch(`/api/cashflow/snapshots?year=${year}`)
+    fetch("/api/cashflow/snapshots")
       .then((response) => (response.ok ? response.json() : Promise.reject()))
       .then((payload: { snapshots?: SnapshotOption[] }) => {
         const options = payload.snapshots ?? [];
@@ -142,7 +145,7 @@ export function CashflowChart({
         setSourceB((current) => current === sourceA ? options.find((item) => item.id !== sourceA)?.id ?? "live" : current);
       })
       .catch(() => setSnapshots([]));
-  }, [year, sourceA]);
+  }, [sourceA]);
 
   React.useEffect(() => {
     const controller = new AbortController();
@@ -150,7 +153,7 @@ export function CashflowChart({
     if (compare && sourceA === sourceB) {
       return () => controller.abort();
     }
-    const url = `/api/cashflow/chart?year=${year}&sourceA=${encodeURIComponent(sourceA)}${
+    const url = `/api/cashflow/chart?${rangeQuery}&sourceA=${encodeURIComponent(sourceA)}${
       compare ? `&sourceB=${encodeURIComponent(sourceB)}` : ""
     }`;
     fetch(url, { signal: controller.signal })
@@ -166,7 +169,7 @@ export function CashflowChart({
         setRemoteError(error instanceof Error ? error.message : "Не удалось загрузить график");
       });
     return () => controller.abort();
-  }, [year, sourceA, sourceB, mode, globalComparison.panel]);
+  }, [rangeQuery, sourceA, sourceB, mode, globalComparison.panel]);
 
   const liveFallback: ChartSeries = {
     source: { id: "live" },
@@ -199,21 +202,26 @@ export function CashflowChart({
     const project = series.data.projects.find((item) => item.id === projectId);
     return kind === "dp" ? project?.cashflow ?? [] : project?.budgetCashflow ?? [];
   };
-  const isCurrentYear = year === currentISOYear;
-  const fromWeek = Math.max(1, currentISOWeek - 3);
+  const weekKey = (week: WeekHeader) => `${week.year}-${week.week}`;
+  const weekStartKey = (week: WeekHeader) => toLocalDateString(isoWeekStart(week.year, week.week));
+  const cutoffDate = isoWeekStart(currentISOYear, currentISOWeek);
+  cutoffDate.setDate(cutoffDate.getDate() - 3 * 7);
+  const cutoffKey = toLocalDateString(cutoffDate);
   const comparisonWeeks = React.useMemo(() => {
     const values = [...seriesA.data.weeks, ...(seriesB?.data.weeks ?? [])];
-    return [...new Map(values.map((week) => [week.week, week])).values()].sort(
-      (a, b) => a.week - b.week
+    return [...new Map(values.map((week) => [`${week.year}-${week.week}`, week])).values()].sort(
+      (a, b) => a.year - b.year || a.week - b.week
     );
   }, [seriesA, seriesB]);
+  const hasOldWeeks = comparisonWeeks.some((week) => weekStartKey(week) < cutoffKey);
   const visibleWeeks = comparisonWeeks.filter(
-    (week) => !isCurrentYear || showFromStart || week.week >= fromWeek
+    (week) => showFromStart || weekStartKey(week) >= cutoffKey
   );
   const barData = visibleWeeks.map((week) => {
-    const indexA = seriesA.data.weeks.findIndex((item) => item.week === week.week);
-    const indexB = seriesB?.data.weeks.findIndex((item) => item.week === week.week) ?? -1;
+    const indexA = seriesA.data.weeks.findIndex((item) => weekKey(item) === weekKey(week));
+    const indexB = seriesB?.data.weeks.findIndex((item) => weekKey(item) === weekKey(week)) ?? -1;
     return {
+      label: `${week.week}/${String(week.year).slice(2)}`,
       week: week.week,
       dpA: indexA >= 0 ? chartNumber(valuesFor(seriesA, "dp")[indexA]) : null,
       dpB: seriesB && indexB >= 0 ? chartNumber(valuesFor(seriesB, "dp")[indexB]) : null,
@@ -293,7 +301,7 @@ export function CashflowChart({
       <div className="mb-3 flex flex-wrap items-center gap-4 text-xs text-neutral-600">
         <label className="flex items-center gap-1.5"><Checkbox checked={showDP} onCheckedChange={(value) => setShowDP(value === true)} />Баланс из ДП</label>
         <label className="flex items-center gap-1.5"><Checkbox checked={showBudget} onCheckedChange={(value) => setShowBudget(value === true)} />Баланс из смет</label>
-        {isCurrentYear && (
+        {hasOldWeeks && (
           <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowFromStart((value) => !value)}>
             {showFromStart ? "Свернуть" : "Показать с начала"}
           </Button>
@@ -325,7 +333,7 @@ export function CashflowChart({
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
           <ReferenceLine y={0} stroke="#737373" />
-          <XAxis dataKey="week" tick={{ fontSize: 11, fill: "#737373" }} interval={0} />
+          <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#737373" }} interval={0} />
           <YAxis tickFormatter={fmt} tick={{ fontSize: 11, fill: "#737373" }} width={58} />
           <RechartsTooltip content={<ChartTooltip />} />
           {showDP && <Bar dataKey="dpA" name="ДП A" fill={COLORS.dp} radius={[2, 2, 0, 0]}><LabelList dataKey="week" position="top" className="fill-neutral-500 text-[10px]" /></Bar>}

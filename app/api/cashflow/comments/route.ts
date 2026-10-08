@@ -8,6 +8,7 @@ import {
   cashflowCommentActivityId,
 } from "@/lib/comment-history";
 import { z } from "zod";
+import { parseCashflowRange } from "@/lib/cashflow-range";
 import {
   cashflowCommentMapKey,
   CASHFLOW_HIGHLIGHT_IDS,
@@ -19,13 +20,14 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!isAdmin(user)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const yearParam = req.nextUrl.searchParams.get("year");
-  const year = yearParam ? parseInt(yearParam, 10) : new Date().getFullYear();
-  if (Number.isNaN(year)) return NextResponse.json({ error: "Invalid year" }, { status: 422 });
+  const range = parseCashflowRange(
+    req.nextUrl.searchParams.get("from"),
+    req.nextUrl.searchParams.get("to")
+  );
 
   const rows = await prisma.cashflowCellComment.findMany({
-    where: { year },
-    select: { rowKey: true, week: true, text: true, highlight: true },
+    where: { year: { gte: range.fromYear - 1, lte: range.toYear + 1 } },
+    select: { rowKey: true, year: true, week: true, text: true, highlight: true },
   });
 
   const map: Record<string, CashflowCellMeta> = {};
@@ -36,7 +38,7 @@ export async function GET(req: NextRequest) {
         ? (r.highlight as CashflowCellMeta["highlight"])
         : null;
     if (!text && !highlight) continue;
-    map[cashflowCommentMapKey(r.rowKey, r.week)] = { text, highlight };
+    map[cashflowCommentMapKey(r.rowKey, r.year, r.week)] = { text, highlight };
   }
   return NextResponse.json(map);
 }
