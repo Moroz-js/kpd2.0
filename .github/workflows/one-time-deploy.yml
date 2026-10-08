@@ -63,7 +63,7 @@ jobs:
 
             echo "[one-time] prisma db push --accept-data-loss..."
             node scripts/set-prisma-provider.mjs
-            DATABASE_URL="$(node --input-type=module -e 'import { getMigrationDatabaseUrl } from "/opt/kpd/app/scripts/database-url.mjs"; console.log(getMigrationDatabaseUrl())')" \
+            DATABASE_URL="$(node --input-type=module -e 'import { getMigrationDatabaseUrl } from "/opt/kpd/app/scripts/database-url.mjs"; console.log(getMigrationDatabaseUrl())' | tail -n 1)" \
               npx prisma db push --skip-generate --accept-data-loss
 
             echo "[one-time] Готово. Перезапустите Deploy to server (main)."
