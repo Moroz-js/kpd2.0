@@ -40,6 +40,14 @@ jobs:
             import { getMigrationDatabaseUrl } from "/opt/kpd/app/scripts/database-url.mjs";
             import { PrismaClient } from "/opt/kpd/app/node_modules/@prisma/client/default.js";
             const prisma = new PrismaClient({ datasources: { db: { url: getMigrationDatabaseUrl() } } });
+            const col = await prisma.$queryRawUnsafe(
+              "SELECT 1 AS ok FROM information_schema.columns WHERE table_name = 'bank_operations' AND column_name = 'pairedOperationId'"
+            );
+            if (col.length === 0) {
+              console.log("[one-time] Колонки pairedOperationId ещё нет — дублей быть не может, пропускаю проверку");
+              await prisma.$disconnect();
+              process.exit(0);
+            }
             const rows = await prisma.$queryRawUnsafe(
               'SELECT "pairedOperationId" AS id, count(*)::int AS n FROM bank_operations WHERE "pairedOperationId" IS NOT NULL GROUP BY 1 HAVING count(*) > 1'
             );
