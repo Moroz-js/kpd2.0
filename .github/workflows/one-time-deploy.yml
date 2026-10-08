@@ -1,0 +1,61 @@
+name: One-time DB push (unique pairedOperationId)
+
+# Разовый запуск вручную: Actions → One-time DB push → Run workflow.
+# 1) проверяет дубли bank_operations.pairedOperationId (если есть — падает, БД не трогает);
+# 2) применяет схему с --accept-data-loss (иначе db push останавливается на предупреждении
+#    про уникальный индекс).
+# После успешного запуска перезапустите "Deploy to server (main)". Этот файл можно удалить.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Введите "yes", чтобы применить схему к БД на сервере'
+        required: true
+        default: "no"
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  db-push:
+    name: DB push on server
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.confirm == 'yes' }}
+    steps:
+      - name: Check duplicates and push schema
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            set -euo pipefail
+            cd /opt/kpd/app
+
+            echo "[one-time] Проверяю дубли pairedOperationId..."
+            cat > /tmp/check-paired-duplicates.mjs <<'EOF'
+            import { getMigrationDatabaseUrl } from "/opt/kpd/app/scripts/database-url.mjs";
+            import { PrismaClient } from "/opt/kpd/app/node_modules/@prisma/client/default.js";
+            const prisma = new PrismaClient({ datasources: { db: { url: getMigrationDatabaseUrl() } } });
+            const rows = await prisma.$queryRawUnsafe(
+              'SELECT "pairedOperationId" AS id, count(*)::int AS n FROM bank_operations WHERE "pairedOperationId" IS NOT NULL GROUP BY 1 HAVING count(*) > 1'
+            );
+            await prisma.$disconnect();
+            if (rows.length > 0) {
+              console.error("[one-time] FAIL: найдены дубли pairedOperationId:", JSON.stringify(rows));
+              process.exit(1);
+            }
+            console.log("[one-time] Дублей нет");
+            EOF
+            node /tmp/check-paired-duplicates.mjs
+            rm -f /tmp/check-paired-duplicates.mjs
+
+            echo "[one-time] prisma db push --accept-data-loss..."
+            node scripts/set-prisma-provider.mjs
+            DATABASE_URL="$(node --input-type=module -e 'import { getMigrationDatabaseUrl } from "/opt/kpd/app/scripts/database-url.mjs"; console.log(getMigrationDatabaseUrl())')" \
+              npx prisma db push --skip-generate --accept-data-loss
+
+            echo "[one-time] Готово. Перезапустите Deploy to server (main)."
