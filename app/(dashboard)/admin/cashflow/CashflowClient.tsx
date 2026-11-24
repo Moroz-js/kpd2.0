@@ -8,23 +8,24 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { getISOWeek, getISOWeekYear, isoWeekStart, toLocalDateString } from "@/lib/iso-weeks";
-import { defaultCashflowRange, rangeToQuery, type CashflowRange } from "@/lib/cashflow-range";
+import { rangeToQuery, type CashflowRange } from "@/lib/cashflow-range";
 import { CashflowRangePicker } from "./CashflowRangePicker";
+import { CashflowOpeningBalance } from "./CashflowOpeningBalance";
+import { fetchCashflowJson } from "./cashflow-fetch";
+import { isCashflowId } from "./cashflow-view";
+import { useCashflowView } from "./useCashflowView";
 import { formatMoneyWhole } from "@/lib/format";
 import { CashflowChart } from "./CashflowChart";
-import { CashflowCommentCell } from "@/components/ui-custom/CashflowCommentCell";
+import { CashflowCommentCell as EditableCommentCell } from "@/components/ui-custom/CashflowCommentCell";
 import { useComparison } from "@/components/ComparisonProvider";
 import {
   cashflowCommentMapKey,
   cashflowHighlightCellClass,
   type CashflowCellMeta,
 } from "@/lib/cashflow-comments";
-import {
-  usePersistedInterfaceState,
-  usePersistedScroll,
-} from "@/components/PersistedInterfaceState";
+import { usePersistedScroll } from "@/components/PersistedInterfaceState";
 
-const fetcher = (url: string) => fetch(url).then(r => r.json());
+function ReadOnlyCell({ children }: { children: React.ReactNode }) { return <>{children}</>; }
 
 function cashflowCommentHistoryUrl(year: number, week: number, rowKey: string) {
   return `/api/activity/comment-history?${new URLSearchParams({
@@ -95,6 +96,7 @@ type CashflowData = {
   weeks: WeekHeader[];
   openingBalance: number;
   openingBalances: Record<number, number>;
+  openingBalanceOverrides: Record<number, number>;
   summary: SummaryRows;
   projects: ProjectRow[];
   externalProjects: ProjectRow[];
@@ -106,8 +108,6 @@ type CashflowData = {
   currentWeek: number;
   currentWeekYear: number;
 };
-
-type CashflowResponse = CashflowData | { error: string };
 
 type SummaryDef = {
   key: Exclude<keyof SummaryRows, "manualBalance">;
@@ -138,7 +138,7 @@ const SUMMARY_DEFS: SummaryDef[] = [
 
 const ROW_TOOLTIPS: Record<string, React.ReactNode> = {
   balanceStart:
-    "Для первой недели — значение, введённое вручную. Для последующих недель — значение строки «Баланс (сметы/ДП)» предыдущей недели",
+    "По умолчанию баланс переносится с последней недели прошлого года. В неделе 1 можно задать сумму вручную или вернуться к авторасчёту. Для следующих недель берётся «Баланс руками» предыдущей недели, а если он не задан — «Баланс (сметы/ДП)».",
   incomeFact: "Сумма начислений со статусом «Оплачено» с соответствующей неделей оплаты",
   incomePlanOnly: "Сумма начислений со статусом, отличным от «Оплачено» с соответствующей неделей оплаты",
   incomePlanFact: "Сумма всех начислений с соответствующей неделей оплаты",
@@ -195,63 +195,6 @@ const AGGREGATE_DEFS: AggregateDef[] = [
 function formatMoneyInput(n: number): string {
   if (!n && n !== 0) return "";
   return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(n);
-}
-
-function OpeningBalanceInput({
-  year,
-  initial,
-  onSaved,
-  compact,
-}: {
-  year: number;
-  initial: number;
-  onSaved: (v: number) => void;
-  compact?: boolean;
-}) {
-  const [numericValue, setNumericValue] = useState(initial || 0);
-  const [display, setDisplay] = useState(formatMoneyInput(initial || 0));
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const raw = e.target.value;
-    // Оставляем только цифры, знак минус, запятую/точку
-    const stripped = raw.replace(/[^\d,.-]/g, "").replace(",", ".");
-    const parsed = parseFloat(stripped);
-    const num = isNaN(parsed) ? 0 : parsed;
-    setNumericValue(num);
-    // Форматируем только если строка не заканчивается на разделитель (чтобы не мешать вводу)
-    if (stripped.endsWith(".") || stripped === "-" || stripped === "") {
-      setDisplay(raw.replace(/[^\d,.-]/g, ""));
-    } else {
-      setDisplay(formatMoneyInput(num));
-    }
-  }
-
-  async function save() {
-    setDisplay(formatMoneyInput(numericValue));
-    const res = await fetch("/api/cashflow/opening-balance", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ year, amount: numericValue }),
-    });
-    if (res.ok) { onSaved(numericValue); toast.success("Баланс сохранён"); }
-  }
-
-  return (
-    <input
-      ref={inputRef}
-      className={
-        compact
-          ? "w-20 text-right text-[11px] leading-snug tabular-nums italic bg-transparent border border-neutral-300 rounded px-1 py-0 outline-none focus:border-blue-400 focus:bg-white"
-          : "h-7 w-28 text-right text-xs tabular-nums border border-neutral-300 rounded px-1.5 outline-none focus:border-blue-400"
-      }
-      value={display}
-      onChange={handleChange}
-      onFocus={e => setTimeout(() => e.target.select(), 0)}
-      onBlur={save}
-      onKeyDown={e => { if (e.key === "Enter") { (e.target as HTMLInputElement).blur(); } }}
-    />
-  );
 }
 
 function ManualBalanceInput({
@@ -395,22 +338,62 @@ type DiscrepancyModalState = {
 
 export function CashflowClient() {
   const comparison = useComparison();
+  const { view, update } = useCashflowView();
   const now = new Date();
   const currentISOWeek = getISOWeek(now);
   const currentISOYear = getISOWeekYear(now);
-  const [range, setRange] = useState<CashflowRange>(() => defaultCashflowRange());
-  const rangeQuery = rangeToQuery(range);
-  const [activeTab, setActiveTab] = useState<"table" | "chart">("table");
-  const [discrepancyModal, setDiscrepancyModal] = useState<DiscrepancyModalState>(null);
+  if (!view) return <div className="m-auto text-sm text-neutral-500">Загрузка…</div>;
 
-  const { data, mutate } = useSWR<CashflowResponse>(
-    `/api/cashflow?${rangeQuery}&source=${encodeURIComponent(comparison.activeSource)}`,
-    fetcher
+  return (
+    <div className="flex flex-col h-full min-h-0 gap-3">
+      <div className="shrink-0 flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold">Кэшфлоу проектов</h1>
+          {comparison.activeSource !== "live" && (
+            <p className="text-xs text-neutral-500">Исторический снимок · только чтение</p>
+          )}
+        </div>
+        <CashflowRangePicker range={view.range} onChange={(range) => update({ range })} />
+      </div>
+      <nav className="shrink-0 flex border-b border-neutral-200">
+        {(["table", "chart"] as const).map((tab) => (
+          <button key={tab} type="button" aria-pressed={view.activeTab === tab} onClick={() => update({ activeTab: tab })}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+              view.activeTab === tab ? "border-blue-600 text-blue-600" : "border-transparent text-neutral-500 hover:text-neutral-800 hover:border-neutral-300"
+            }`}>
+            {tab === "table" ? "Таблица" : "График"}
+          </button>
+        ))}
+      </nav>
+      {view.activeTab === "chart" ? (
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <CashflowChart view={view} update={update} currentISOWeek={currentISOWeek} currentISOYear={currentISOYear} />
+        </div>
+      ) : (
+        <CashflowTable key={`${comparison.activeSource}:${rangeToQuery(view.range)}`} range={view.range}
+          showOldWeeks={view.showOldWeeks} onToggleOldWeeks={() => update({ showOldWeeks: !view.showOldWeeks })}
+          currentISOWeek={currentISOWeek} currentISOYear={currentISOYear} />
+      )}
+    </div>
   );
+}
+
+function CashflowTable({ range, showOldWeeks, onToggleOldWeeks, currentISOWeek, currentISOYear }: {
+  range: CashflowRange; showOldWeeks: boolean; onToggleOldWeeks: () => void;
+  currentISOWeek: number; currentISOYear: number;
+}) {
+  const comparison = useComparison();
+  const readOnly = comparison.readOnly || comparison.panel !== null;
+  const CashflowCommentCell = readOnly ? ReadOnlyCell : EditableCommentCell;
+  const rangeQuery = rangeToQuery(range);
+  const tableUrl = `/api/cashflow?${rangeQuery}&source=${encodeURIComponent(comparison.activeSource)}`;
+  const validSource = isCashflowId(comparison.activeSource);
+  const [discrepancyModal, setDiscrepancyModal] = useState<DiscrepancyModalState>(null);
+  const { data, error, mutate } = useSWR<CashflowData>(validSource ? tableUrl : null, fetchCashflowJson);
 
   const { data: cellMeta, mutate: mutateCellMeta } = useSWR<Record<string, CashflowCellMeta>>(
-    comparison.readOnly ? null : `/api/cashflow/comments?${rangeQuery}`,
-    fetcher
+    readOnly ? null : `/api/cashflow/comments?${rangeQuery}`,
+    fetchCashflowJson
   );
 
   async function saveCellMeta(
@@ -419,7 +402,7 @@ export function CashflowClient() {
     week: number,
     payload: { text: string; highlight: string | null }
   ) {
-    if (comparison.readOnly) {
+    if (readOnly) {
       toast.error("Исторические данные доступны только для чтения");
       return;
     }
@@ -439,26 +422,13 @@ export function CashflowClient() {
     return cellMeta?.[cashflowCommentMapKey(rowKey, year, week)];
   }
 
-  const [showOldWeeks, setShowOldWeeks] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement>(null);
-  usePersistedInterfaceState(
-    "cashflow",
-    { range, activeTab, showOldWeeks },
-    (stored) => {
-      if (stored.range !== undefined) setRange(stored.range);
-      if (stored.activeTab !== undefined) setActiveTab(stored.activeTab);
-      if (stored.showOldWeeks !== undefined) setShowOldWeeks(stored.showOldWeeks);
-    }
-  );
-  usePersistedScroll(tableScrollRef, `cashflow-table:${activeTab}`, {
+  usePersistedScroll(tableScrollRef, "cashflow-table:table", {
     enabled: !!data,
-    signature: { range, activeTab, showOldWeeks },
+    signature: { range, activeTab: "table", showOldWeeks },
   });
 
-  const weeks = React.useMemo(
-    () => (data && !("error" in data) ? data.weeks : []),
-    [data]
-  );
+  const weeks = React.useMemo(() => data?.weeks ?? [], [data]);
   // Свёрнуты все недели раньше «текущая − 4».
   const cutoffKey = React.useMemo(() => {
     const d = isoWeekStart(currentISOYear, currentISOWeek);
@@ -480,28 +450,13 @@ export function CashflowClient() {
     [visibleWeeks, weeks]
   );
 
-  const chartProjects = React.useMemo(() => {
-    if (!data || "error" in data) return [];
-    return [
-      ...(data.externalProjects ?? data.projects),
-      ...(data.internalProjects ?? []),
-    ];
-  }, [data]);
-
-  if (!data) {
-    return (
-      <div className="flex items-center justify-center h-full text-sm text-neutral-500">
-        Загрузка…
-      </div>
-    );
+  if (!validSource || error) {
+    return <div role="alert" className="m-auto text-sm text-neutral-600">
+      {!validSource ? "Некорректный идентификатор снимка" : error.message}
+      {validSource && <button type="button" className="ml-2 underline" onClick={() => void mutate()}>Повторить</button>}
+    </div>;
   }
-  if ("error" in data) {
-    return (
-      <div className="flex items-center justify-center h-full text-sm text-neutral-500">
-        {data.error}
-      </div>
-    );
-  }
+  if (!data) return <div className="m-auto text-sm text-neutral-500">Загрузка…</div>;
 
   const { summary, aggregates, balanceInAccounts, discrepancy, discrepancyDPFact } = data;
   const externalProjects = [...(data.externalProjects ?? data.projects ?? [])].sort((a, b) => a.name.localeCompare(b.name, "ru"));
@@ -616,58 +571,13 @@ export function CashflowClient() {
     : [];
 
   return (
-    <div className="flex flex-col h-full min-h-0 gap-3">
-      <div className="shrink-0 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">Кэшфлоу проектов</h1>
-          {comparison.activeSource !== "live" && (
-            <p className="text-xs text-neutral-500">Исторический снимок · только чтение</p>
-          )}
-        </div>
-        <CashflowRangePicker range={range} onChange={setRange} />
-      </div>
-
-      {/* Tab bar */}
-      <div className="shrink-0 border-b border-neutral-200">
-        <nav className="flex gap-0">
-          {(["table", "chart"] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-                activeTab === tab
-                  ? "border-blue-600 text-blue-600"
-                  : "border-transparent text-neutral-500 hover:text-neutral-800 hover:border-neutral-300"
-              }`}
-            >
-              {tab === "table" ? "Таблица" : "График"}
-            </button>
-          ))}
-        </nav>
-      </div>
-
-      {activeTab === "chart" && (
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          <CashflowChart
-            weeks={weeks}
-            manualBalance={summary.manualBalance}
-            balanceEndDP={summary.balanceEndDP}
-            balanceEndBudget={summary.balanceEndBudget}
-            projects={chartProjects}
-            currentISOWeek={currentISOWeek}
-            currentISOYear={currentISOYear}
-            range={range}
-          />
-        </div>
-      )}
-
-      {activeTab === "table" && (
+    <>
       <div className="flex flex-col flex-1 min-h-0 rounded-lg border border-neutral-200 bg-white overflow-hidden">
         {oldWeeksCount > 0 && (
           <div className="shrink-0 px-3 pt-2 pb-0">
             <button
               className="text-xs text-neutral-400 hover:text-neutral-700 hover:underline underline-offset-2"
-              onClick={() => setShowOldWeeks((v) => !v)}
+              onClick={onToggleOldWeeks}
             >
               {showOldWeeks
                 ? "Скрыть прошлые недели"
@@ -746,13 +656,15 @@ export function CashflowClient() {
                       {def.key === "balanceStart" ? fmt(summary.balanceStart[0] ?? 0) : ("signed" in def && def.signed ? fmtSign(total) : fmt(total))}
                     </td>
                     {visibleWeekIndices.map((idx) => {
-                      // Первая неделя строки «Баланс на начало» — редактируемый input
+                      // Только первая ISO-неделя года показывает источник годового баланса.
                       if (def.key === "balanceStart" && weeks[idx]?.week === 1) {
                         const week = weeks[idx]?.week;
                         const wYear = weeks[idx]?.year ?? 0;
                         if (week == null) return null;
                         const meta = getCellMeta(`summary:${def.key}`, wYear, week);
                         const highlightClass = cashflowHighlightCellClass(meta?.highlight);
+                        const amount = data.openingBalances[wYear] ?? arr[idx];
+                        const manual = data.openingBalanceOverrides ? Object.hasOwn(data.openingBalanceOverrides, wYear) : null;
                         return (
                           <td key={idx} className={weekCellClass(idx, cn(highlightClass), true)}>
                             <CashflowCommentCell
@@ -761,17 +673,13 @@ export function CashflowClient() {
                               historyUrl={cashflowCommentHistoryUrl(wYear, week, `summary:${def.key}`)}
                               onSave={(payload) => saveCellMeta(`summary:${def.key}`, wYear, week, payload)}
                             >
-                              {comparison.readOnly ? (
-                                <span className="italic">{fmt(summary.balanceStart[idx] ?? 0)}</span>
-                              ) : (
-                                <OpeningBalanceInput
-                                  key={`${wYear}:${data.openingBalances[wYear] ?? 0}`}
-                                  year={wYear}
-                                  initial={data.openingBalances[wYear] ?? 0}
-                                  onSaved={() => { mutate(); }}
-                                  compact
-                                />
-                              )}
+                              <CashflowOpeningBalance
+                                key={`${wYear}:${amount}:${manual}`}
+                                year={wYear} amount={amount} manual={manual} readOnly={readOnly}
+                                onSaved={async () => {
+                                  await mutate(() => fetchCashflowJson<CashflowData>(tableUrl), { revalidate: false });
+                                }}
+                              />
                             </CashflowCommentCell>
                           </td>
                         );
@@ -812,7 +720,7 @@ export function CashflowClient() {
                         historyUrl={cashflowCommentHistoryUrl(wYear, week, rowKey)}
                         onSave={(payload) => saveCellMeta(rowKey, wYear, week, payload)}
                       >
-                        {comparison.readOnly ? (
+                        {readOnly ? (
                           <span>{fmtManualBalance(value)}</span>
                         ) : (
                           <ManualBalanceInput
@@ -1110,7 +1018,6 @@ export function CashflowClient() {
           </table>
         </div>
       </div>
-      )}
 
       {/* Модал: расхождение план/факт в ДП по проектам */}
       <Dialog open={discrepancyModal !== null} onOpenChange={(open) => !open && setDiscrepancyModal(null)}>
@@ -1164,6 +1071,6 @@ export function CashflowClient() {
           )}
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }

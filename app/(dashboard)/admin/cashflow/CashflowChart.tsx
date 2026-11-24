@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import useSWR from "swr";
 import {
   Bar,
   BarChart,
@@ -16,47 +17,35 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useComparison } from "@/components/ComparisonProvider";
-import { rangeToQuery, type CashflowRange } from "@/lib/cashflow-range";
+import { ALL_PROJECTS, cashflowChartRequest, isCashflowId, type CashflowView } from "./cashflow-view";
+import { fetchCashflowJson } from "./cashflow-fetch";
 import { isoWeekStart, toLocalDateString } from "@/lib/iso-weeks";
-import {
-  snapshotLabel,
-  snapshotSourceLabel,
-  type SnapshotOption,
-} from "@/lib/snapshots/labels";
+import { snapshotLabel, type SnapshotOption } from "@/lib/snapshots/labels";
 
 type WeekHeader = { week: number; month: number; monthName: string; year: number };
 type ProjectRow = {
   id: string;
   name: string;
-  plan: number[];
-  charges: number[];
   cashflow: number[];
   budgetCashflow?: number[];
-  iw: number[];
 };
 type Props = {
-  weeks: WeekHeader[];
-  manualBalance: (number | null)[];
-  balanceEndDP: number[];
-  balanceEndBudget: number[];
-  projects: ProjectRow[];
+  view: CashflowView;
+  update: (patch: Partial<CashflowView>) => void;
   currentISOWeek: number;
   currentISOYear: number;
-  range: CashflowRange;
 };
 type ChartSeries = {
   source: { id: string; businessDate?: string | null; cutoffAt?: string | null };
   data: {
     weeks: WeekHeader[];
-    manualBalance: (number | null)[];
     balanceEndDP: number[];
     balanceEndBudget: number[];
     projects: ProjectRow[];
   };
 };
-type ChartResponse = { seriesA: ChartSeries; seriesB: ChartSeries | null; error?: string };
+type ChartResponse = { seriesA: ChartSeries; seriesB: ChartSeries | null };
 
-const ALL_PROJECTS = "_all";
 const COLORS = { dp: "#2563eb", budget: "#d97706" } as const;
 
 function fmt(value: number) {
@@ -92,7 +81,7 @@ function ChartTooltip({
   return (
     <div className="min-w-56 rounded-md border bg-white p-3 text-xs shadow-lg">
       <p className="mb-2 font-semibold text-neutral-800">Неделя {label}</p>
-      {groups.map((group) => (
+      {groups.filter((group) => group.a !== undefined || group.b !== undefined).map((group) => (
         <div key={group.label} className="mb-2 last:mb-0">
           <p className="font-medium text-neutral-700">{group.label}</p>
           <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-neutral-600">
@@ -113,87 +102,47 @@ function ChartTooltip({
   );
 }
 
-export function CashflowChart({
-  weeks,
-  manualBalance,
-  balanceEndDP,
-  balanceEndBudget,
-  projects,
-  currentISOWeek,
-  currentISOYear,
-  range,
-}: Props) {
-  const rangeQuery = rangeToQuery(range);
-  const globalComparison = useComparison();
-  const [mode, setMode] = React.useState<"single" | "compare">("single");
-  const [sourceA, setSourceA] = React.useState(globalComparison.activeSource);
-  const [sourceB, setSourceB] = React.useState("live");
-  const [snapshots, setSnapshots] = React.useState<SnapshotOption[]>([]);
-  const [remote, setRemote] = React.useState<ChartResponse | null>(null);
-  const [remoteError, setRemoteError] = React.useState("");
-  const [projectId, setProjectId] = React.useState(ALL_PROJECTS);
-  const [showDP, setShowDP] = React.useState(true);
-  const [showBudget, setShowBudget] = React.useState(true);
-  const [showFromStart, setShowFromStart] = React.useState(false);
-
-  React.useEffect(() => {
-    fetch("/api/cashflow/snapshots")
-      .then((response) => (response.ok ? response.json() : Promise.reject()))
-      .then((payload: { snapshots?: SnapshotOption[] }) => {
-        const options = payload.snapshots ?? [];
-        setSnapshots(options);
-        setSourceB((current) => current === sourceA ? options.find((item) => item.id !== sourceA)?.id ?? "live" : current);
-      })
-      .catch(() => setSnapshots([]));
-  }, [sourceA]);
-
-  React.useEffect(() => {
-    const controller = new AbortController();
-    const compare = mode === "compare" && !globalComparison.panel;
-    if (compare && sourceA === sourceB) {
-      return () => controller.abort();
-    }
-    const url = `/api/cashflow/chart?${rangeQuery}&sourceA=${encodeURIComponent(sourceA)}${
-      compare ? `&sourceB=${encodeURIComponent(sourceB)}` : ""
-    }`;
-    fetch(url, { signal: controller.signal })
-      .then((response) => response.json().then((payload) => ({ ok: response.ok, payload })))
-      .then(({ ok, payload }) => {
-        if (!ok) throw new Error((payload as { error?: string }).error ?? "Не удалось загрузить график");
-        setRemote(payload as ChartResponse);
-        setRemoteError("");
-      })
-      .catch((error) => {
-        if (controller.signal.aborted) return;
-        setRemote(null);
-        setRemoteError(error instanceof Error ? error.message : "Не удалось загрузить график");
-      });
-    return () => controller.abort();
-  }, [rangeQuery, sourceA, sourceB, mode, globalComparison.panel]);
-
-  const liveFallback: ChartSeries = {
-    source: { id: "live" },
-    data: { weeks, manualBalance, balanceEndDP, balanceEndBudget, projects },
-  };
-  const wantsComparison = mode === "compare" && !globalComparison.panel;
-  const matchingRemote =
-    remote?.seriesA.source.id === sourceA &&
-    (!wantsComparison || remote.seriesB?.source.id === sourceB)
-      ? remote
-      : null;
-  const seriesA = matchingRemote?.seriesA ?? liveFallback;
-  const seriesB =
-    wantsComparison && sourceA !== sourceB ? matchingRemote?.seriesB ?? null : null;
-  const displayError =
-    wantsComparison && sourceA === sourceB
-      ? "Для сравнения выберите разные даты"
-      : remoteError;
+export function CashflowChart({ view, update, currentISOWeek, currentISOYear }: Props) {
+  const { mode, projectId, showDP, showBudget, showFromStart } = view;
+  const comparison = useComparison();
+  const catalog = useSWR<{ snapshots: SnapshotOption[] }>("/api/cashflow/snapshots", fetchCashflowJson);
+  const snapshots = catalog.data?.snapshots;
+  const request = cashflowChartRequest(view, comparison.panel ? comparison.activeSource : null, snapshots);
+  const { sourceA, sourceB } = request;
+  const chart = useSWR<ChartResponse>(request.url, fetchCashflowJson, { keepPreviousData: false });
+  const remote = request.url && !chart.error ? chart.data : null;
+  const matches = remote?.seriesA?.source.id === sourceA && (remote.seriesB?.source.id ?? null) === sourceB;
+  const seriesA = matches ? remote.seriesA : null;
+  const seriesB = matches ? remote.seriesB : null;
   const allProjects = React.useMemo(() => {
-    const values = [...seriesA.data.projects, ...(seriesB?.data.projects ?? [])];
+    const values = [...(seriesA?.data.projects ?? []), ...(seriesB?.data.projects ?? [])];
     return [...new Map(values.map((project) => [project.id, project])).values()].sort((a, b) =>
       a.name.localeCompare(b.name, "ru")
     );
   }, [seriesA, seriesB]);
+  const selectedProject = allProjects.find((item) => item.id === projectId);
+  const missingProject = seriesA && projectId !== ALL_PROJECTS && !selectedProject;
+  const displayError = request.error ?? chart.error?.message ?? (
+    remote && !matches ? "Нет данных для выбранных источников" :
+    missingProject ? "Проект недоступен для выбранного периода и источников" : null
+  );
+
+  function sourceOptions(selected: string, blocked?: string) {
+    return [
+      { value: "live", label: "Актуальные данные", disabled: blocked === "live" },
+      ...(selected !== "live" && !snapshots?.some((s) => s.id === selected) ? [{
+        value: selected, disabled: true,
+        label: snapshots || catalog.error || !isCashflowId(selected) ? "Снимок недоступен" : "Загрузка снимка…",
+      }] : []),
+      ...(snapshots?.map((s) => ({ value: s.id, label: snapshotLabel(s), disabled: s.id === blocked })) ?? []),
+    ];
+  }
+
+  function enterComparison() {
+    // Choose an alternative only on a user action, never when an async list arrives or on Back.
+    const alternative = sourceA === "live" ? snapshots?.[0]?.id : "live";
+    update({ mode: "compare", sourceB: view.sourceB === sourceA ? alternative ?? view.sourceB : view.sourceB });
+  }
 
   const valuesFor = (series: ChartSeries, kind: "dp" | "budget") => {
     if (projectId === ALL_PROJECTS) {
@@ -208,7 +157,7 @@ export function CashflowChart({
   cutoffDate.setDate(cutoffDate.getDate() - 3 * 7);
   const cutoffKey = toLocalDateString(cutoffDate);
   const comparisonWeeks = React.useMemo(() => {
-    const values = [...seriesA.data.weeks, ...(seriesB?.data.weeks ?? [])];
+    const values = [...(seriesA?.data.weeks ?? []), ...(seriesB?.data.weeks ?? [])];
     return [...new Map(values.map((week) => [`${week.year}-${week.week}`, week])).values()].sort(
       (a, b) => a.year - b.year || a.week - b.week
     );
@@ -218,14 +167,14 @@ export function CashflowChart({
     (week) => showFromStart || weekStartKey(week) >= cutoffKey
   );
   const barData = visibleWeeks.map((week) => {
-    const indexA = seriesA.data.weeks.findIndex((item) => weekKey(item) === weekKey(week));
+    const indexA = seriesA?.data.weeks.findIndex((item) => weekKey(item) === weekKey(week)) ?? -1;
     const indexB = seriesB?.data.weeks.findIndex((item) => weekKey(item) === weekKey(week)) ?? -1;
     return {
       label: `${week.week}/${String(week.year).slice(2)}`,
       week: week.week,
-      dpA: indexA >= 0 ? chartNumber(valuesFor(seriesA, "dp")[indexA]) : null,
+      dpA: seriesA && indexA >= 0 ? chartNumber(valuesFor(seriesA, "dp")[indexA]) : null,
       dpB: seriesB && indexB >= 0 ? chartNumber(valuesFor(seriesB, "dp")[indexB]) : null,
-      budgetA: indexA >= 0 ? chartNumber(valuesFor(seriesA, "budget")[indexA]) : null,
+      budgetA: seriesA && indexA >= 0 ? chartNumber(valuesFor(seriesA, "budget")[indexA]) : null,
       budgetB: seriesB && indexB >= 0 ? chartNumber(valuesFor(seriesB, "budget")[indexB]) : null,
     };
   });
@@ -235,17 +184,17 @@ export function CashflowChart({
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-neutral-800">
-            {projectId === ALL_PROJECTS ? "Динамика баланса" : allProjects.find((item) => item.id === projectId)?.name}
+            {selectedProject?.name ?? "Динамика баланса"}
           </h2>
           <p className="mt-0.5 text-xs text-neutral-400">Значения на конец недели</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {!globalComparison.panel && (
+          {!comparison.panel && (
             <div className="flex rounded-md border p-0.5">
-              <Button type="button" size="sm" variant={mode === "single" ? "secondary" : "ghost"} className="h-7 text-xs" onClick={() => setMode("single")}>
+              <Button type="button" size="sm" variant={mode === "single" ? "secondary" : "ghost"} className="h-7 text-xs" onClick={() => update({ mode: "single" })}>
                 Одна дата
               </Button>
-              <Button type="button" size="sm" variant={mode === "compare" ? "secondary" : "ghost"} className="h-7 text-xs" onClick={() => setMode("compare")}>
+              <Button type="button" size="sm" variant={mode === "compare" ? "secondary" : "ghost"} className="h-7 text-xs" onClick={enterComparison}>
                 Сравнение
               </Button>
             </div>
@@ -254,43 +203,32 @@ export function CashflowChart({
             <span className="shrink-0 text-xs font-medium text-neutral-600">Дата A</span>
             <SearchableSelect
               value={sourceA}
-              onValueChange={setSourceA}
-              options={[
-                { value: "live", label: "Актуальные данные" },
-                ...(sourceA !== "live" && !snapshots.some((snapshot) => snapshot.id === sourceA)
-                  ? [{ value: sourceA, label: snapshotSourceLabel(sourceA, snapshots), disabled: true }]
-                  : []),
-                ...snapshots.map((snapshot) => ({ value: snapshot.id, label: snapshotLabel(snapshot) })),
-              ]}
+              disabled={comparison.panel !== null}
+              onValueChange={(id) => {
+                if (isCashflowId(id)) update({ sourceA: id, ...(sourceB === id ? { sourceB: sourceA } : {}) });
+              }}
+              options={sourceOptions(sourceA)}
               triggerClassName="h-8 w-52 text-xs"
             />
           </div>
-          {mode === "compare" && !globalComparison.panel && (
+          {sourceB !== null && (
             <div className="flex min-w-0 items-center gap-1.5">
               <span className="shrink-0 text-xs font-medium text-neutral-600">Дата B</span>
               <SearchableSelect
                 value={sourceB}
-                onValueChange={setSourceB}
-                options={[
-                  { value: "live", label: "Актуальные данные", disabled: sourceA === "live" },
-                  ...(sourceB !== "live" && !snapshots.some((snapshot) => snapshot.id === sourceB)
-                    ? [{ value: sourceB, label: snapshotSourceLabel(sourceB, snapshots), disabled: true }]
-                    : []),
-                  ...snapshots.map((snapshot) => ({
-                    value: snapshot.id,
-                    label: snapshotLabel(snapshot),
-                    disabled: sourceA === snapshot.id,
-                  })),
-                ]}
+                onValueChange={(id) => { if (isCashflowId(id) && id !== sourceA) update({ sourceB: id }); }}
+                options={sourceOptions(sourceB, sourceA)}
                 triggerClassName="h-8 w-52 text-xs"
               />
             </div>
           )}
           <SearchableSelect
             value={projectId}
-            onValueChange={setProjectId}
+            onValueChange={(id) => { if (isCashflowId(id)) update({ projectId: id }); }}
             options={[
               { value: ALL_PROJECTS, label: "Все проекты" },
+              ...(projectId !== ALL_PROJECTS && !selectedProject ? [{ value: projectId, disabled: true,
+                label: seriesA || displayError ? "Проект недоступен" : "Загрузка проекта…" }] : []),
               ...allProjects.map((project) => ({ value: project.id, label: project.name })),
             ]}
             triggerClassName="h-8 w-56 text-xs"
@@ -299,26 +237,32 @@ export function CashflowChart({
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-4 text-xs text-neutral-600">
-        <label className="flex items-center gap-1.5"><Checkbox checked={showDP} onCheckedChange={(value) => setShowDP(value === true)} />Баланс из ДП</label>
-        <label className="flex items-center gap-1.5"><Checkbox checked={showBudget} onCheckedChange={(value) => setShowBudget(value === true)} />Баланс из смет</label>
+        <label className="flex items-center gap-1.5"><Checkbox checked={showDP} onCheckedChange={(value) => update({ showDP: value === true })} />Баланс из ДП</label>
+        <label className="flex items-center gap-1.5"><Checkbox checked={showBudget} onCheckedChange={(value) => update({ showBudget: value === true })} />Баланс из смет</label>
         {hasOldWeeks && (
-          <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowFromStart((value) => !value)}>
+          <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => update({ showFromStart: !showFromStart })}>
             {showFromStart ? "Свернуть" : "Показать с начала"}
           </Button>
         )}
         <span className="ml-auto inline-flex items-center gap-3 text-neutral-500">
-          <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded-sm bg-blue-600" />ДП</span>
-          <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded-sm bg-amber-600" />Сметы</span>
+          {showDP && <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded-sm bg-blue-600" />ДП</span>}
+          {showBudget && <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded-sm bg-amber-600" />Сметы</span>}
           {seriesB && <span>A — сплошная, B — штриховка</span>}
         </span>
       </div>
 
-      {displayError && (
-        <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {displayError}
+      {catalog.error && <p role="alert" className="mb-2 text-xs text-red-700">
+        Не удалось загрузить список снимков. <button className="underline" type="button" onClick={() => void catalog.mutate()}>Повторить</button>
+      </p>}
+      {displayError ? (
+        <div role="alert" className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          {displayError}{chart.error && <button type="button" className="ml-2 underline" onClick={() => void chart.mutate()}>Повторить</button>}
         </div>
-      )}
-
+      ) : !seriesA ? (
+        !catalog.error && <p role="status" className="text-sm text-neutral-500">Загрузка графика…</p>
+      ) : !showDP && !showBudget ? (
+        <p className="text-sm text-neutral-500">Выберите хотя бы один ряд баланса.</p>
+      ) : (
       <ResponsiveContainer width="100%" height={390}>
         <BarChart data={barData} barGap={2} margin={{ top: 24, right: 20, left: 20, bottom: 8 }}>
           <defs>
@@ -342,6 +286,7 @@ export function CashflowChart({
           {showBudget && seriesB && <Bar dataKey="budgetB" name="Сметы B" fill="url(#budget-b-pattern)" stroke={COLORS.budget} radius={[2, 2, 0, 0]} />}
         </BarChart>
       </ResponsiveContainer>
+      )}
     </div>
   );
 }

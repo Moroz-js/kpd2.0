@@ -8,7 +8,9 @@ import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
 import { cn } from "@/lib/utils";
 import {
   defaultCashflowRange,
+  formatMonthKey,
   MAX_CASHFLOW_RANGE_MONTHS,
+  parseMonthKey,
   rangeMonths,
   type CashflowRange,
 } from "@/lib/cashflow-range";
@@ -53,6 +55,8 @@ function MonthYearPicker({
             variant="ghost"
             size="sm"
             className="h-9 w-9 p-0"
+            aria-label="Предыдущий год"
+            disabled={!parseMonthKey(formatMonthKey(viewYear - 1, 1))}
             onClick={() => setViewYear((y) => y - 1)}
           >
             <ChevronLeft className="h-4 w-4" />
@@ -63,6 +67,8 @@ function MonthYearPicker({
             variant="ghost"
             size="sm"
             className="h-9 w-9 p-0"
+            aria-label="Следующий год"
+            disabled={!parseMonthKey(formatMonthKey(viewYear + 1, 1))}
             onClick={() => setViewYear((y) => y + 1)}
           >
             <ChevronRight className="h-4 w-4" />

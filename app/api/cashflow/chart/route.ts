@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/permissions";
-import { projectCashflow } from "@/lib/snapshots/cashflow-projection.mjs";
+import { projectCashflowYears } from "@/lib/snapshots/cashflow-projection.mjs";
 import { resolveDataSource, SnapshotSourceError } from "@/lib/snapshots/data-source";
 import { SECTION_MODELS } from "@/lib/snapshots/schema";
 import {
@@ -26,9 +26,11 @@ async function buildSeries(sourceId: string, range: CashflowRange) {
   const metadata = source.metadata ?? null;
   const projectionDate = metadata?.cutoffAt ? new Date(metadata.cutoffAt) : new Date();
 
-  const parts = rangeYears(range)
+  const years = rangeYears(range);
+  const projections = projectCashflowYears(tables, years, projectionDate);
+  const parts = years
     .map((year) => {
-      const data = projectCashflow(tables, year, projectionDate);
+      const data = projections.get(year)!;
       const indices = (data.weeks as { week: number }[])
         .map((w, i) => (isWeekInRange(year, w.week, range) ? i : -1))
         .filter((i) => i >= 0);

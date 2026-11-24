@@ -78,15 +78,27 @@ function planFactWeek(plannedPayAt: Date | null, paidAt: Date | null): { week: n
   return { week: getISOWeek(d), year: d.getFullYear() };
 }
 
+type IssuedWorksDb = {
+  work: { findMany: typeof prisma.work.findMany };
+  otherExpense: { findMany: typeof prisma.otherExpense.findMany };
+};
+
 export async function listIssuedWorks(
   filter: IssuedWorksFilter = {},
-  db: {
-    work: { findMany: typeof prisma.work.findMany };
-    otherExpense: { findMany: typeof prisma.otherExpense.findMany };
-  } = prisma
+  db: IssuedWorksDb = prisma
 ): Promise<IssuedWorkRow[]> {
+  return applyFilter(await readIssuedWorks(db), filter);
+}
+
+/** Только для авторизованного дашборда проекта: включает ссылку и отчёт работы. */
+export function listProjectIssuedWorks(projectId: string, db: IssuedWorksDb) {
+  return readIssuedWorks(db, { projectId });
+}
+
+async function readIssuedWorks(db: IssuedWorksDb, projectDetailsScope?: { projectId: string }) {
   const [works, otherExpenses] = await Promise.all([
     db.work.findMany({
+      where: projectDetailsScope,
       include: {
         executor: {
           select: {
@@ -104,6 +116,7 @@ export async function listIssuedWorks(
       },
     }),
     db.otherExpense.findMany({
+      where: projectDetailsScope,
       include: {
         executor: {
           select: {
@@ -121,10 +134,10 @@ export async function listIssuedWorks(
     }),
   ]);
 
-  const personal: IssuedWorkRow[] = works.map((w) => {
+  const personal = works.map((w) => {
     const pf = planFactWeek(w.plannedPayAt, w.paidAt);
     return {
-      sourceType: "personal",
+      sourceType: "personal" as const,
       sourceId: w.id,
       number: w.issuedWorkNumber,
       numberYear: w.issuedWorkNumberYear,
@@ -150,6 +163,7 @@ export async function listIssuedWorks(
       amount: w.amount,
       description: w.techTask,
       techTask: w.techTask,
+      ...(projectDetailsScope && { link: w.link ?? null, report: w.report ?? null }),
       rate: w.rate,
       workStatus: w.workStatus,
       paymentId: w.payment?.id ?? null,
@@ -163,10 +177,10 @@ export async function listIssuedWorks(
     };
   });
 
-  const other: IssuedWorkRow[] = otherExpenses.map((o) => {
+  const other = otherExpenses.map((o) => {
     const pf = planFactWeek(o.plannedPayAt, o.paidAt);
     return {
-      sourceType: "other-expense",
+      sourceType: "other-expense" as const,
       sourceId: o.id,
       number: o.issuedWorkNumber,
       numberYear: o.issuedWorkNumberYear,
@@ -205,7 +219,7 @@ export async function listIssuedWorks(
     };
   });
 
-  return applyFilter([...personal, ...other], filter);
+  return [...personal, ...other];
 }
 
 function applyFilter(rows: IssuedWorkRow[], f: IssuedWorksFilter): IssuedWorkRow[] {

@@ -9,6 +9,7 @@ import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
 import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
 import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
+import { ProjectWorkDetails, type ProjectWorkDetailsRow } from "@/components/ui-custom/ProjectWorkDetails";
 import { WORK_STATUSES, WORK_STATUSES_SETTABLE } from "@/lib/statuses";
 import { formatMoney, formatDateShort, monthLabel } from "@/lib/format";
 import { getISOWeek, weekLabel } from "@/lib/iso-weeks";
@@ -48,28 +49,24 @@ import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner } from "@/lib/table-styles";
 import { isUnknownExecutorName } from "@/lib/executor-names";
 
-type ReviewRow = {
-  sourceType: "personal" | "other-expense";
+type ReviewRow = ProjectWorkDetailsRow & {
   sourceId: string;
   executionYear: number;
   executionMonth: number;
   executorId: string;
-  executorName: string;
   executorCanOpenEstimate: boolean;
   projectId: string;
   projectName: string;
   workTypeId: string;
-  workTypeName: string;
   responsibleExecutorId: string | null;
   responsibleExecutorName: string | null;
-  amount: number;
-  techTask: string | null;
   rate: number | null;
   workStatus: string;
   comment: string | null;
   checkedAt: string | null;
   paidAt: string | null;
   plannedPayAt: string | null;
+  canViewActivityHistory?: boolean;
 };
 
 type ExecutorRef = { id: string; name: string };
@@ -794,12 +791,13 @@ function ProjectWorkEditDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-h-[90dvh] max-w-xl grid-cols-1 overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             Редактировать работу · {row.sourceType === "personal" ? "Личная смета" : "Прочие траты"}
           </DialogTitle>
         </DialogHeader>
+        <ProjectWorkDetails row={row} />
         <form onSubmit={handleSave} className="space-y-4">
           <div className="space-y-1.5">
             <Label>Ответственный</Label>
@@ -834,10 +832,12 @@ function ProjectWorkEditDialog({
             <Button type="submit" disabled={saving}>{saving ? "Сохранение..." : "Сохранить"}</Button>
           </DialogFooter>
         </form>
-        <EntityActivityHistory
-          entityType={row.sourceType === "personal" ? "Work" : "OtherExpense"}
-          entityId={row.sourceId}
-        />
+        {row.canViewActivityHistory && (
+          <EntityActivityHistory
+            entityType={row.sourceType === "personal" ? "Work" : "OtherExpense"}
+            entityId={row.sourceId}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -857,12 +857,11 @@ function CommentPopover({
   const [open, setOpen] = React.useState(false);
   const [draft, setDraft] = React.useState(comment ?? "");
 
-  React.useEffect(() => {
-    if (open) setDraft(comment ?? "");
-  }, [open, comment]);
-
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={(next) => {
+      if (next) setDraft(comment ?? "");
+      setOpen(next);
+    }}>
       <PopoverTrigger
         disabled={disabled}
         title={comment ? comment : "Добавить комментарий"}

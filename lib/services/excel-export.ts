@@ -6,7 +6,7 @@
 import ExcelJS from "exceljs";
 import { prisma } from "@/lib/db";
 import {
-  buildCashflowYear,
+  buildCashflowYears,
   listCashflowExportYears,
   loadCashflowTables,
   type CashflowProjectRow,
@@ -230,7 +230,9 @@ export async function buildCashflowWorkbook(years: CashflowYearData[]): Promise<
 }
 
 export async function buildExportWorkbook(): Promise<Buffer> {
-  const tables = await loadCashflowTables(prisma as never);
-  const years = listCashflowExportYears(tables).map((year) => buildCashflowYear(tables, year));
-  return buildCashflowWorkbook(years);
+  const tables = await loadCashflowTables(prisma);
+  const now = new Date();
+  const years = listCashflowExportYears(tables, now);
+  const data = buildCashflowYears(tables, years, now);
+  return buildCashflowWorkbook(years.map((year) => data.get(year)!));
 }

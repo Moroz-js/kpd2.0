@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { isAdmin, isResponsible } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
-import { listIssuedWorks } from "@/lib/views/issuedWorks";
+import { listProjectIssuedWorks } from "@/lib/views/issuedWorks";
 import {
   dataSourcePrismaAdapter,
   resolveDataSource,
@@ -24,7 +24,8 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   });
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  if (!isAdmin(user) && !(isResponsible(user) && project.responsibleUserId === user.id)) {
+  const admin = isAdmin(user);
+  if (!admin && !(isResponsible(user) && project.responsibleUserId === user.id)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -41,6 +42,6 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   }
   const db = dataSourcePrismaAdapter(source);
 
-  const rows = await listIssuedWorks({ projectId: [id] }, db);
-  return NextResponse.json(rows);
+  const rows = await listProjectIssuedWorks(id, db);
+  return NextResponse.json(rows.map((row) => ({ ...row, canViewActivityHistory: admin })));
 }

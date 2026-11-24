@@ -1,5 +1,5 @@
 export const SNAPSHOT_SCHEMA_VERSION = 2;
-export const CASHFLOW_FORMULA_VERSION = "cashflow-v2";
+export { CASHFLOW_FORMULA_VERSION } from "./cashflow-projection.mjs";
 export const SNAPSHOT_TIMEZONE = "Europe/Moscow";
 
 export const SNAPSHOT_MODELS = [

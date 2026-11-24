@@ -31,6 +31,7 @@ export async function GET(req: NextRequest) {
     throw error;
   }
 
-  const tables = await loadCashflowTables(dataSourcePrismaAdapter(source) as never);
-  return NextResponse.json(buildCashflowRange(tables, range));
+  const tables = await loadCashflowTables(dataSourcePrismaAdapter(source));
+  const asOf = source.metadata?.cutoffAt ?? new Date();
+  return NextResponse.json(buildCashflowRange(tables, range, asOf));
 }
