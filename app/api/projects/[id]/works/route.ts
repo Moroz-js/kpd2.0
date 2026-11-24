@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/auth";
 import { isAdmin, isResponsible } from "@/lib/permissions";
 import { prisma } from "@/lib/db";
 import { listProjectIssuedWorks } from "@/lib/views/issuedWorks";
+import { getProjectWorkEditor } from "@/lib/services/project-work-editor";
 import {
   dataSourcePrismaAdapter,
   resolveDataSource,
@@ -41,6 +42,17 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     throw error;
   }
   const db = dataSourcePrismaAdapter(source);
+
+  const edit = req.nextUrl.searchParams.get("edit");
+  if (edit !== null) {
+    const [type, rowId, ...extra] = edit.split(":");
+    if ((type !== "personal" && type !== "other-expense") || !rowId || extra.length) {
+      return NextResponse.json({ error: "Некорректный идентификатор работы" }, { status: 400 });
+    }
+    const readOnly = source.kind !== "live" || req.nextUrl.searchParams.get("view") === "1";
+    const editor = await getProjectWorkEditor(db, id, type, rowId, user, readOnly);
+    return editor ? NextResponse.json(editor) : NextResponse.json({ error: "Работа не найдена в этом проекте" }, { status: 404 });
+  }
 
   const rows = await listProjectIssuedWorks(id, db);
   return NextResponse.json(rows.map((row) => ({ ...row, canViewActivityHistory: admin })));

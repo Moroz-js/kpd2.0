@@ -44,6 +44,8 @@ import { RowSelectCheckbox } from "@/components/ui-custom/RowSelectCheckbox";
 import { useTableRowSelection } from "@/lib/useTableRowSelection";
 import { useComparison } from "@/components/ComparisonProvider";
 import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
+import { PersonalWorkEditDialog, type PersonalWorkEditValues } from "@/components/ui-custom/PersonalWorkEditDialog";
+import { canEditPersonalWork, DateInput, MoneyInput, parseDecimal, WORK_STATUS_LABELS, WORK_STATUS_SETTABLE } from "@/components/ui-custom/PersonalWorkFields";
 import {
   usePersistedInterfaceState,
   usePersistedScroll,
@@ -74,29 +76,10 @@ type PaymentRow = {
 };
 type AllPaymentRow = PaymentRow & { periodYear: number; periodMonth: number };
 
-type WorkRow = {
-  id: string;
-  projectId: string;
-  project: Project;
-  workTypeId: string;
-  workType: WorkType;
-  executionYear: number;
-  executionMonth: number;
-  techTask: string | null;
-  report: string | null;
-  link: string | null;
-  volume: number | null;
-  rate: number | null;
-  amount: number;
-  plannedPayAt: string | null;
+type WorkRow = PersonalWorkEditValues & {
   paidAt: string | null;
-  workStatus: string;
   checkedAt: string | null;
-  comment: string | null;
-  paymentId: string | null;
   payment: PaymentRow | null;
-  responsibleExecutorId: string | null;
-  responsibleExecutor: ExecutorRef | null;
 };
 
 type Props = {
@@ -106,24 +89,10 @@ type Props = {
   bankAccounts: BankAccount[];
 };
 
-const WORK_STATUS_LABELS: Record<string, string> = {
-  submitted: "Работа выставлена",
-  checked: "Работа проверена",
-  paid: "Работа оплачена",
-  rework: "Нужно доработать",
-};
-
 const PAYMENT_STATUS_LABELS: Record<string, string> = {
   planned: "Выплата запланирована",
   paid: "Выплата оплачена",
 };
-
-/** Статусы работы, доступные для ручной смены (без «Оплачено»). */
-const WORK_STATUS_SETTABLE: [string, string][] = [
-  ["rework", "Нужно доработать"],
-  ["submitted", "Работа выставлена"],
-  ["checked", "Работа проверена"],
-];
 
 function StatusBadge({ status, type }: { status: string; type: "work" | "payment" }) {
   const dict = type === "work" ? WORK_STATUSES : PAYMENT_STATUSES;
@@ -879,7 +848,7 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
   }
 
   function WorkCells({ w }: { w: WorkRow }) {
-    const canEditWork = isAdmin || (isOwner && w.workStatus !== "checked" && w.workStatus !== "paid");
+    const canEditWork = canEditPersonalWork(w.workStatus, isAdmin, isOwner);
     const dateEditable = !w.paymentId && (isAdmin || (isOwner && w.workStatus !== "paid"));
     const respEditable = isAdmin || isOwner;
     const active = !!w.paymentId && hoverPaymentId === w.paymentId;
@@ -1167,7 +1136,7 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
                 <SelectValue>{bulkStatus ? (WORK_STATUS_LABELS[bulkStatus] ?? "Статус") : "Статус не менять"}</SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {WORK_STATUS_SETTABLE.map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+                {WORK_STATUS_SETTABLE.map((s) => <SelectItem key={s} value={s}>{WORK_STATUS_LABELS[s]}</SelectItem>)}
               </SelectContent>
             </Select>
           )}
@@ -1354,7 +1323,7 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
       )}
 
       {editWork && (
-        <EditWorkDialog
+        <PersonalWorkEditDialog
           executorId={executorId}
           work={editWork}
           isAdmin={isAdmin}
@@ -1363,7 +1332,7 @@ export function WorksTab({ executorId, isAdmin, isOwner, bankAccounts: bankAccou
           onSaved={async () => {
             // Ждём обновления данных до закрытия — иначе при быстром повторном
             // открытии той же записи форма показывает не обновлённый кэш.
-            await silentLoad();
+            await fetchData();
             setEditWork(null);
           }}
         />
@@ -1443,83 +1412,6 @@ function FilterSelect({
         {options.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
       </SelectContent>
     </Select>
-  );
-}
-
-// ─── Decimal / Money input ────────────────────────────────────────────────────
-
-/** Парсит число с учётом русской запятой и пробелов-разрядов. */
-function parseDecimal(raw: string): number {
-  const normalized = raw.replace(/[\s\u00A0]/g, "").replace(",", ".");
-  return parseFloat(normalized);
-}
-
-function MoneyInput({ value, onChange, placeholder, disabled, className }: {
-  value: string; onChange: (v: string) => void;
-  placeholder?: string; disabled?: boolean; className?: string;
-}) {
-  const [focused, setFocused] = React.useState(false);
-  const numVal = parseDecimal(value);
-  const display = !focused && value && !isNaN(numVal)
-    ? numVal.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : value;
-  return (
-    <Input
-      type="text"
-      inputMode="decimal"
-      value={display}
-      onChange={(e) => {
-        // Сохраняем ввод как есть (запятая/точка), без округления;
-        // убираем только пробелы разрядов.
-        onChange(e.target.value.replace(/[\s\u00A0]/g, ""));
-      }}
-      onFocus={() => setFocused(true)}
-      onBlur={() => {
-        setFocused(false);
-        // Нормализуем запятую → точку в состоянии, чтобы расчёт и API видели точное число
-        if (value.includes(",")) {
-          const n = parseDecimal(value);
-          if (!isNaN(n)) onChange(String(n));
-        }
-      }}
-      placeholder={placeholder}
-      disabled={disabled}
-      className={className}
-    />
-  );
-}
-
-function DateInput({
-  value,
-  onChange,
-  className,
-  onEmptyFocus,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  className?: string;
-  /** Предзаполнение при первом фокусе на пустом поле — вернуть YYYY-MM-DD */
-  onEmptyFocus?: () => string;
-}) {
-  const ref = useRef<HTMLInputElement>(null);
-  return (
-    <div
-      className="relative w-full cursor-pointer"
-      onClick={() => { ref.current?.focus(); try { ref.current?.showPicker(); } catch { /* ignore */ } }}
-    >
-      <input
-        ref={ref}
-        type="date"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onFocus={() => {
-          if (value) return;
-          const next = onEmptyFocus?.();
-          if (next) onChange(next);
-        }}
-        className={`w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer ${className ?? ""}`}
-      />
-    </div>
   );
 }
 
@@ -1755,175 +1647,6 @@ function CreateWorkDialog({ executorId, onClose, onCreated }: { executorId: stri
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Отмена</Button>
           <Button onClick={handleSave} disabled={saving}>{saving ? "Сохранение..." : "Создать"}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ─── Edit Work Dialog ──────────────────────────────────────────────────────────
-
-function EditWorkDialog({
-  executorId, work, isAdmin, permanentExecutors, onClose, onSaved,
-}: {
-  executorId: string;
-  work: WorkRow;
-  isAdmin: boolean;
-  permanentExecutors: ExecutorRef[];
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [projectId, setProjectId] = useState(work.projectId);
-  const [workTypeId, setWorkTypeId] = useState(work.workTypeId);
-  const [year, setYear] = useState(String(work.executionYear));
-  const [month, setMonth] = useState(String(work.executionMonth));
-  const [techTask, setTechTask] = useState(work.techTask ?? "");
-  const [volume, setVolume] = useState(work.volume != null ? String(work.volume) : "");
-  const [rate, setRate] = useState(work.rate != null ? String(work.rate) : "");
-  const [amount, setAmount] = useState(String(work.amount));
-  const [responsibleExecutorId, setResponsibleExecutorId] = useState(work.responsibleExecutorId ?? "");
-  const [plannedPayAt, setPlannedPayAt] = useState(work.plannedPayAt ? toLocalDateString(new Date(work.plannedPayAt)) : "");
-  const [link, setLink] = useState(work.link ?? "");
-  const [report, setReport] = useState(work.report ?? "");
-  const [workStatus, setWorkStatus] = useState(work.workStatus);
-  const [comment, setComment] = useState(work.comment ?? "");
-  const [saving, setSaving] = useState(false);
-
-  const isLinked = !!work.paymentId;
-  const [planProjects, setPlanProjects] = useState<Project[]>([]);
-  const [planWorkTypes, setPlanWorkTypes] = useState<WorkType[]>([]);
-
-  useEffect(() => {
-    fetch(`/api/executors/${executorId}/plan-projects`).then((r) => r.json()).then(setPlanProjects).catch(() => {});
-  }, [executorId]);
-  useEffect(() => {
-    if (!projectId) { setPlanWorkTypes([]); return; }
-    fetch(`/api/executors/${executorId}/plan-work-types?projectId=${projectId}`).then((r) => r.json()).then(setPlanWorkTypes).catch(() => {});
-  }, [executorId, projectId]);
-
-  useEffect(() => {
-    const v = parseDecimal(volume);
-    const r = parseDecimal(rate);
-    if (!isNaN(v) && !isNaN(r)) setAmount(String(v * r));
-  }, [volume, rate]);
-
-  const currentYear = new Date().getFullYear();
-  const years = [currentYear - 2, currentYear - 1, currentYear, currentYear + 1];
-
-  async function handleSave() {
-    setSaving(true);
-    try {
-      // Без выплаты дата план должна писаться в Work; пустое → ближайшее 5/20
-      const planDate = isLinked
-        ? undefined
-        : (plannedPayAt || toLocalDateString(nearestPaymentDate()));
-      const r = await fetch(`/api/executors/${executorId}/works/${work.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId, workTypeId,
-          executionYear: parseInt(year), executionMonth: parseInt(month),
-          techTask,
-          volume: volume ? parseDecimal(volume) : null,
-          rate: rate ? parseDecimal(rate) : null,
-          amount: parseDecimal(amount),
-          responsibleExecutorId: responsibleExecutorId || null,
-          ...(planDate !== undefined ? { plannedPayAt: planDate } : {}),
-          link: link || null, report: report || null,
-          ...(isAdmin && !isLinked ? { workStatus } : {}),
-          comment: comment || null,
-        }),
-      });
-      if (!r.ok) { const d = await r.json(); throw new Error(d.error ?? "Ошибка"); }
-      toast.success("Работа обновлена");
-      onSaved();
-    } catch (e) { toast.error(e instanceof Error ? e.message : "Ошибка"); } finally { setSaving(false); }
-  }
-
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-x-hidden overflow-y-auto">
-        <DialogHeader><DialogTitle>Редактировать работу</DialogTitle></DialogHeader>
-        {isLinked && (
-          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
-            Работа привязана к выплате: статус и даты управляются выплатой.
-          </p>
-        )}
-        <div className="min-w-0 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Год</Label>
-              <Select value={year} onValueChange={(v) => setYear(v ?? "")}>
-                <SelectTrigger><SelectValue>{year} год</SelectValue></SelectTrigger>
-                <SelectContent>{years.map((y) => <SelectItem key={y} value={String(y)}>{y} год</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Месяц</Label>
-              <Select value={month} onValueChange={(v) => setMonth(v ?? "")}>
-                <SelectTrigger><SelectValue>{MONTHS[parseInt(month) - 1]?.label}</SelectValue></SelectTrigger>
-                <SelectContent>{MONTHS.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Проект</Label>
-            <SearchableSelect
-              value={projectId}
-              onValueChange={setProjectId}
-              options={planProjects.map((project) => ({ value: project.id, label: project.name }))}
-              placeholder={work.project.name}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Вид работ</Label>
-            <SearchableSelect
-              value={workTypeId}
-              onValueChange={setWorkTypeId}
-              options={planWorkTypes.map((workType) => ({ value: workType.id, label: workType.name }))}
-              placeholder={work.workType.name}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Ответственный</Label>
-            <SearchableSelect
-              value={responsibleExecutorId}
-              onValueChange={setResponsibleExecutorId}
-              options={permanentExecutors.map((executor) => ({ value: executor.id, label: executor.name }))}
-              placeholder={work.responsibleExecutor?.name ?? "—"}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Техническое задание</Label>
-            <Textarea value={techTask} onChange={(e) => setTechTask(e.target.value)} rows={4} className="field-sizing-fixed min-w-0 resize-y break-all text-xs" />
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="space-y-1.5"><Label>Объём</Label><MoneyInput value={volume} onChange={setVolume} /></div>
-            <div className="space-y-1.5"><Label>Ставка</Label><MoneyInput value={rate} onChange={setRate} /></div>
-            <div className="space-y-1.5"><Label>Сумма</Label><MoneyInput value={amount} onChange={setAmount} /></div>
-          </div>
-          {!isLinked && (
-            <div className="space-y-1.5"><Label>Дата оплаты план</Label><DateInput value={plannedPayAt} onChange={setPlannedPayAt} onEmptyFocus={() => toLocalDateString(nearestPaymentDate())} /></div>
-          )}
-          {isAdmin && !isLinked && (
-            <div className="space-y-1.5">
-              <Label>Статус</Label>
-              <Select value={workStatus} onValueChange={(v) => setWorkStatus(v ?? "")}>
-                <SelectTrigger><SelectValue>{WORK_STATUS_LABELS[workStatus] ?? workStatus}</SelectValue></SelectTrigger>
-                <SelectContent>{WORK_STATUS_SETTABLE.map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-          )}
-          <div className="space-y-1.5"><Label>Ссылка</Label><Input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://..." /></div>
-          <div className="space-y-1.5"><Label>Отчёт</Label><Textarea value={report} onChange={(e) => setReport(e.target.value)} placeholder="Текст отчёта" rows={3} className="field-sizing-fixed min-w-0 resize-y break-words text-xs" /></div>
-          <div className="space-y-1.5"><Label>Комментарий</Label><Input value={comment} onChange={(e) => setComment(e.target.value)} /></div>
-          {isAdmin && (
-            <EntityActivityHistory entityType="Work" entityId={work.id} />
-          )}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Отмена</Button>
-          <Button onClick={handleSave} disabled={saving}>{saving ? "Сохранение..." : "Сохранить"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

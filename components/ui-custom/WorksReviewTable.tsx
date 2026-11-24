@@ -4,12 +4,13 @@ import * as React from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { toast } from "sonner";
-import { CheckCircle2, MessageSquare, ArrowUp, ArrowDown, ArrowUpDown, ExternalLink, Pencil } from "lucide-react";
+import { CheckCircle2, MessageSquare, ArrowUp, ArrowDown, ArrowUpDown, ExternalLink, Pencil, Eye } from "lucide-react";
 import { MultiSelectFilter } from "@/components/ui-custom/MultiSelectFilter";
 import { FilterResetButton } from "@/components/ui-custom/FilterResetButton";
 import { StatusBadge } from "@/components/ui-custom/StatusBadge";
-import { EntityActivityHistory } from "@/components/ui-custom/EntityActivityHistory";
-import { ProjectWorkDetails, type ProjectWorkDetailsRow } from "@/components/ui-custom/ProjectWorkDetails";
+import { ProjectWorkEditor } from "@/components/ui-custom/ProjectWorkEditor";
+import { useComparison } from "@/components/ComparisonProvider";
+import type { IssuedWorkRow } from "@/lib/views/issuedWorks";
 import { WORK_STATUSES, WORK_STATUSES_SETTABLE } from "@/lib/statuses";
 import { formatMoney, formatDateShort, monthLabel } from "@/lib/format";
 import { getISOWeek, weekLabel } from "@/lib/iso-weeks";
@@ -29,8 +30,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 import {
   Table,
   TableCell,
@@ -49,24 +48,12 @@ import { cn } from "@/lib/utils";
 import { stickyActionsHead, stickyActionsCell, stickyActionsInner } from "@/lib/table-styles";
 import { isUnknownExecutorName } from "@/lib/executor-names";
 
-type ReviewRow = ProjectWorkDetailsRow & {
-  sourceId: string;
-  executionYear: number;
-  executionMonth: number;
-  executorId: string;
-  executorCanOpenEstimate: boolean;
-  projectId: string;
-  projectName: string;
-  workTypeId: string;
-  responsibleExecutorId: string | null;
-  responsibleExecutorName: string | null;
-  rate: number | null;
-  workStatus: string;
-  comment: string | null;
-  checkedAt: string | null;
-  paidAt: string | null;
-  plannedPayAt: string | null;
-  canViewActivityHistory?: boolean;
+type ReviewRow = Pick<IssuedWorkRow,
+  "sourceType" | "sourceId" | "executionYear" | "executionMonth" | "executorId" | "executorName" |
+  "executorCanOpenEstimate" | "projectId" | "projectName" | "workTypeId" | "workTypeName" |
+  "responsibleExecutorId" | "responsibleExecutorName" | "amount" | "techTask" | "rate" |
+  "workStatus" | "paymentStatus" | "comment"> & {
+  checkedAt: string | null; paidAt: string | null; plannedPayAt: string | null;
 };
 
 type ExecutorRef = { id: string; name: string };
@@ -206,6 +193,7 @@ export function WorksReviewTable({
   showExecutorFilter = true,
   showExecutorLinks = false,
   showEditAction = false,
+  onWorkSaved,
 }: {
   fetchUrl: string;
   stateKey: string;
@@ -214,10 +202,15 @@ export function WorksReviewTable({
   showExecutorFilter?: boolean;
   showExecutorLinks?: boolean;
   showEditAction?: boolean;
+  onWorkSaved?: () => Promise<unknown>;
 }) {
-  const { data, isLoading, mutate } = useSWR<ReviewRow[]>(fetchUrl, fetcher);
+  const comparison = useComparison();
+  const readOnly = comparison.readOnly || comparison.panel !== null;
+  const source = comparison.activeSource;
+  const listUrl = showEditAction ? `${fetchUrl}?source=${encodeURIComponent(source)}` : fetchUrl;
+  const { data, isLoading, mutate } = useSWR<ReviewRow[]>(listUrl, fetcher);
   const { data: permanentExecutors } = useSWR<ExecutorRef[]>(
-    "/api/executors/active-permanent",
+    readOnly ? null : "/api/executors/active-permanent",
     fetcher
   );
 
@@ -232,6 +225,7 @@ export function WorksReviewTable({
   const [bulkBusy, setBulkBusy] = React.useState(false);
   const [sort, setSort] = React.useState<SortState>(null);
   const [editing, setEditing] = React.useState<ReviewRow | null>(null);
+  const editorUrl = editing ? `${fetchUrl}?${new URLSearchParams({ edit: rowId(editing), source, ...(readOnly ? { view: "1" } : {}) })}` : null;
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const hasActiveFilters =
     executorFilter.length > 0 || statusFilter.length > 0 || projectFilter.length > 0 ||
@@ -492,7 +486,7 @@ export function WorksReviewTable({
           size="sm"
           variant="outline"
           onClick={handleCheckAll}
-          disabled={bulkBusy || checkableRows.length === 0}
+          disabled={readOnly || bulkBusy || checkableRows.length === 0}
         >
           <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
           Проверить все{checkableRows.length > 0 ? ` (${checkableRows.length})` : ""}
@@ -642,7 +636,7 @@ export function WorksReviewTable({
                       value={r.responsibleExecutorId ?? ""}
                       onValueChange={(v) => patchRow(r, { responsibleExecutorId: v })}
                       options={(permanentExecutors ?? []).map((e) => ({ value: e.id, label: e.name }))}
-                      disabled={busy || isPaid}
+                      disabled={busy || isPaid || readOnly}
                       placeholder={r.responsibleExecutorName ?? "—"}
                       triggerClassName="h-7 text-xs"
                     />
@@ -677,7 +671,7 @@ export function WorksReviewTable({
                       <Select
                         value={r.workStatus}
                         onValueChange={(v) => v && v !== r.workStatus && patchRow(r, { workStatus: v })}
-                        disabled={busy}
+                        disabled={busy || readOnly}
                       >
                         <SelectTrigger className="h-7 text-xs">
                           <SelectValue>
@@ -712,10 +706,10 @@ export function WorksReviewTable({
                       <CommentPopover
                         comment={r.comment}
                         disabled={busy}
-                        readOnly={isPaid}
+                        readOnly={isPaid || readOnly}
                         onSave={(v) => patchRow(r, { comment: v || null })}
                       />
-                      {(r.workStatus === "submitted" || r.workStatus === "rework") && (
+                      {!readOnly && (r.workStatus === "submitted" || r.workStatus === "rework") && (
                         <Button
                           size="sm"
                           variant="ghost"
@@ -726,15 +720,15 @@ export function WorksReviewTable({
                           <CheckCircle2 className="h-3.5 w-3.5" />
                         </Button>
                       )}
-                      {showEditAction && !isPaid && (
+                      {showEditAction && (
                         <Button
                           size="sm"
                           variant="ghost"
                           disabled={busy}
                           onClick={() => setEditing(r)}
-                          title="Редактировать"
+                          title={isPaid || readOnly || r.paymentStatus === "paid" ? "Посмотреть работу" : "Редактировать"}
                         >
-                          <Pencil className="h-3.5 w-3.5" />
+                          {isPaid || readOnly || r.paymentStatus === "paid" ? <Eye className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
                         </Button>
                       )}
                     </div>
@@ -745,101 +739,16 @@ export function WorksReviewTable({
           )}
         </BulkSelectTableBody>
       </Table>
-      {editing && (
-        <ProjectWorkEditDialog
-          row={editing}
-          executors={permanentExecutors ?? []}
+      {editorUrl && (
+        <ProjectWorkEditor key={editorUrl} url={editorUrl} permanentExecutors={permanentExecutors ?? []}
           onClose={() => setEditing(null)}
-          onSave={async (patch) => {
-            await patchRow(editing, patch);
+          onSaved={async () => {
+            const updates = await Promise.allSettled([mutate(), onWorkSaved?.()]);
             setEditing(null);
-          }}
-        />
+            if (updates.some((result) => result.status === "rejected")) toast.error("Работа сохранена, но не удалось обновить данные проекта");
+          }} />
       )}
     </div>
-  );
-}
-
-function ProjectWorkEditDialog({
-  row,
-  executors,
-  onClose,
-  onSave,
-}: {
-  row: ReviewRow;
-  executors: ExecutorRef[];
-  onClose: () => void;
-  onSave: (patch: Record<string, unknown>) => Promise<void>;
-}) {
-  const [responsibleExecutorId, setResponsibleExecutorId] = React.useState(
-    row.responsibleExecutorId ?? ""
-  );
-  const [workStatus, setWorkStatus] = React.useState(row.workStatus);
-  const [comment, setComment] = React.useState(row.comment ?? "");
-  const [saving, setSaving] = React.useState(false);
-
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    await onSave({
-      responsibleExecutorId: responsibleExecutorId || null,
-      workStatus,
-      comment: comment || null,
-    });
-    setSaving(false);
-  }
-
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[90dvh] max-w-xl grid-cols-1 overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>
-            Редактировать работу · {row.sourceType === "personal" ? "Личная смета" : "Прочие траты"}
-          </DialogTitle>
-        </DialogHeader>
-        <ProjectWorkDetails row={row} />
-        <form onSubmit={handleSave} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label>Ответственный</Label>
-            <SearchableSelect
-              value={responsibleExecutorId}
-              onValueChange={setResponsibleExecutorId}
-              options={executors.map((executor) => ({ value: executor.id, label: executor.name }))}
-              placeholder="Не указан"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Статус</Label>
-            <Select value={workStatus} onValueChange={(value) => setWorkStatus(value ?? "")}>
-              <SelectTrigger>
-                <SelectValue>
-                  {WORK_STATUSES[workStatus as keyof typeof WORK_STATUSES]?.label ?? workStatus}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {WORK_STATUSES_SETTABLE.map((value) => (
-                  <SelectItem key={value} value={value}>{WORK_STATUSES[value].label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Комментарий</Label>
-            <Textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={3} />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose} disabled={saving}>Отмена</Button>
-            <Button type="submit" disabled={saving}>{saving ? "Сохранение..." : "Сохранить"}</Button>
-          </DialogFooter>
-        </form>
-        {row.canViewActivityHistory && (
-          <EntityActivityHistory
-            entityType={row.sourceType === "personal" ? "Work" : "OtherExpense"}
-            entityId={row.sourceId}
-          />
-        )}
-      </DialogContent>
-    </Dialog>
   );
 }
 

@@ -1626,6 +1626,7 @@ export function ProjectDashboardClient({ projectId, isAdmin, canManagePlan }: { 
           showProjectColumn={false}
           showExecutorLinks={isAdmin}
           showEditAction
+          onWorkSaved={() => mutate()}
         />
       </CollapsibleSection>
 

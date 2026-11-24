@@ -14,6 +14,9 @@ vi.mock("@/lib/snapshots/data-source", () => ({
   SnapshotSourceError: class extends Error {},
 }));
 
+const formOptions = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/services/other-expense-form-options", () => ({ loadOtherExpenseFormOptions: formOptions }));
+
 const common = {
   projectId: "p1", project: { id: "p1", name: "Проект", type: "project" },
   executor: { name: "Иван", accessEmail: null }, workType: { name: "Дизайн" }, amount: 1500,
@@ -21,11 +24,11 @@ const common = {
 const work = { ...common, id: "w1", techTask: "Первая строка\nВторая", link: "https://example.com/task", report: "Готово" };
 const expense = { ...common, id: "e1", description: "Бумага для печати" };
 const snapshotDb = {
-  work: { findMany: vi.fn().mockResolvedValue([work]) },
-  otherExpense: { findMany: vi.fn().mockResolvedValue([expense]) },
+  work: { findMany: vi.fn().mockResolvedValue([work]), findUnique: vi.fn() },
+  otherExpense: { findMany: vi.fn().mockResolvedValue([expense]), findUnique: vi.fn() },
 };
-function getProjectWorks() {
-  return GET(new NextRequest("http://localhost/api/projects/p1/works?source=s1"), {
+function getProjectWorks(query = "source=s1") {
+  return GET(new NextRequest(`http://localhost/api/projects/p1/works?${query}`), {
     params: Promise.resolve({ id: "p1" }),
   });
 }
@@ -76,5 +79,72 @@ describe("project work details read path", () => {
       expect(row).not.toHaveProperty("report");
       expect(row).not.toHaveProperty("canViewActivityHistory");
     }
+  });
+});
+
+describe("полный редактор строки проекта", () => {
+  const fields = {
+    ...common, executionYear: 2027, executionMonth: 2, executorId: "e1", executor: { id: "e1", name: "GOOGLE" },
+    workTypeId: "wt", workType: { id: "wt", name: "Услуги" }, workStatus: "submitted", responsibleExecutorId: "manager",
+    responsibleExecutor: { id: "manager", name: "Ответственный" }, plannedPayAt: "2027-03-05T00:00:00.000Z", comment: "Текст",
+  };
+  beforeEach(() => {
+    session.mockResolvedValue({ id: "a1", role: "admin" });
+    resolveSource.mockResolvedValue({ kind: "live" });
+    snapshotDb.work.findUnique.mockResolvedValue({ ...fields, ...work, volume: 1.5, rate: 200, paymentId: "pay1" });
+    snapshotDb.otherExpense.findUnique.mockResolvedValue({ ...fields, ...expense, createdById: "owner", preferredPayMethod: "Бизнес-картой КЗ",
+      bankAccountId: "b1", bankAccount: { id: "b1", name: "Казахстан", details: "private" }, paymentAmount: 1550, paymentStatus: null });
+    formOptions.mockResolvedValue({ projects: [], executors: [], permanentExecutors: [], workTypes: [], bankAccounts: [] });
+  });
+
+  it("opens the full native work record, including a linked payment, without reading the executor's whole estimate", async () => {
+    const response = await getProjectWorks("edit=personal:w1");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ sourceType: "personal", mode: "source", initial: { id: "w1", volume: 1.5, rate: 200,
+      techTask: work.techTask, report: work.report, link: work.link, paymentId: "pay1", plannedPayAt: fields.plannedPayAt,
+      executionYear: 2027, executionMonth: 2, responsibleExecutorId: "manager" } });
+    expect(snapshotDb.work.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "w1", projectId: "p1" } }));
+    expect(snapshotDb.work.findMany).not.toHaveBeenCalled();
+    expect(formOptions).not.toHaveBeenCalled();
+  });
+
+  it("returns the expense's distinct amounts, payment method and account; references only for native edit", async () => {
+    const { initial, mode } = await (await getProjectWorks("edit=other-expense:e1")).json();
+    expect(mode).toBe("source");
+    expect(initial).toMatchObject({ description: expense.description, amount: 1500, paymentAmount: 1550, preferredPayMethod: "Бизнес-картой КЗ",
+      bankAccount: { id: "b1", name: "Казахстан" }, plannedPayAt: fields.plannedPayAt, workStatus: "submitted" });
+    expect(initial.bankAccount).not.toHaveProperty("details");
+    expect(initial).not.toHaveProperty("createdById");
+    expect(formOptions).toHaveBeenCalledOnce();
+  });
+
+  it.each(["personal:w1", "other-expense:e1"])("keeps project-only review rights for %s", async (id) => {
+    session.mockResolvedValue({ id: "rp1", role: "responsible" });
+    expect(await (await getProjectWorks(`edit=${id}`)).json()).toMatchObject({ mode: "review", isAdmin: false });
+    expect(formOptions).not.toHaveBeenCalled();
+  });
+
+  it("a responsible person with native expense edit rights can use the native form", async () => {
+    session.mockResolvedValue({ id: "rp1", role: "responsible", executorId: "manager" });
+    expect(await (await getProjectWorks("edit=other-expense:e1")).json()).toMatchObject({ mode: "source", isAdmin: false, canRework: true });
+  });
+
+  it("never fetches live reference lists or enables writes in snapshot/comparison/paid mode", async () => {
+    resolveSource.mockResolvedValueOnce({ kind: "snapshot" });
+    for (const query of ["source=s1&edit=other-expense:e1", "view=1&edit=other-expense:e1"]) {
+      expect(await (await getProjectWorks(query)).json()).toMatchObject({ mode: "view", options: null });
+    }
+    snapshotDb.otherExpense.findUnique.mockResolvedValueOnce({ ...fields, id: "other", paymentStatus: "paid", workStatus: "paid" });
+    expect(await (await getProjectWorks("edit=other-expense:other")).json()).toMatchObject({ mode: "view", options: null });
+    expect(formOptions).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid source, a row outside the requested project, or a project outside the user's ACL", async () => {
+    expect((await getProjectWorks("edit=unknown:w1")).status).toBe(400);
+    snapshotDb.work.findUnique.mockResolvedValueOnce(null);
+    expect((await getProjectWorks("edit=personal:foreign")).status).toBe(404);
+    session.mockResolvedValue({ id: "rp2", role: "responsible" });
+    expect((await getProjectWorks("edit=other-expense:e1")).status).toBe(403);
+    expect(snapshotDb.otherExpense.findUnique).not.toHaveBeenCalled();
   });
 });
